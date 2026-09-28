@@ -1,0 +1,11 @@
+{
+  "id": "database",
+  "label": "Data Management",
+  "icon": "database",
+  "order": 1,
+  "html": "database.html",
+  "mount": "#files-database-main",
+  "entry": "ui/admin-tools/database/database-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

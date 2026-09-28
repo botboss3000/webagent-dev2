@@ -1,0 +1,24 @@
+{
+  "id": "main-panel-pages",
+  "label": "Main Panel Pages",
+  "icon": "layout",
+  "description": "Arrange and rename the pages a visitor switches between in the main panel.",
+  "keywords": [
+    "pages",
+    "tabs",
+    "dashboard",
+    "genui",
+    "browser",
+    "sessions",
+    "catalog",
+    "name",
+    "icon",
+    "order"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "main-panel-pages",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

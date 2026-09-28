@@ -1,0 +1,9 @@
+{
+  "id": "stargaze",
+  "name": "Stargaze",
+  "description": "Twinkling parallax starfield with drifting nebula glows, shooting stars and cursor constellations. The app's classic background.",
+  "icon": "sparkles",
+  "status": "stable",
+  "order": 10,
+  "themes": ["dark", "light"]
+}

@@ -1,0 +1,180 @@
+/* ── Session dropdown — trigger (session-row chip) + menu ────────────────
+   Used in header/footer. Trigger is a full session-row matching the dropdown
+   menu rows (icon + title left, status + kebab + delete right). Menu is the
+   dropdown list.                                                                 */
+#session-dropdown { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.session-dropdown-react-host { display: contents; }
+/* Keep the detached menu and its title row on one shared corner radius.
+   The menu is portaled to body while open, so both elements own the value. */
+#session-dropdown,
+#session-dropdown-menu {
+  --session-selector-radius: 14px;
+}
+
+.session-dropdown-menu {
+  min-width: 248px;
+  max-width: 420px;
+  max-height: 0;
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--session-selector-radius, 8px);
+  box-shadow: 0 8px 24px rgba(var(--shadow-rgb),0.4);
+  z-index: 10001;
+  position: fixed;
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+
+/* Other popovers reuse .session-dropdown-menu; keep this radius local to the
+   session selector itself. */
+#session-dropdown-menu { border-radius: var(--session-selector-radius, 14px); }
+
+  transform-origin: top center;
+  will-change: height, max-height, transform, opacity;
+  transition:
+    max-height .32s ease,
+    height .32s ease,
+    opacity .2s ease,
+    transform .2s ease;
+}
+.session-dropdown-menu.flip-up {
+  transform: translateY(4px);
+  transform-origin: bottom center;
+}
+.session-dropdown-menu[data-state] { display: block; }
+.session-dropdown-menu[data-state="open"] {
+  max-height: var(--session-menu-open-height, min(400px, 50vh));
+  opacity: 1;
+  transform: translateY(0);
+  overflow-y: auto;
+  transition:
+    max-height .38s ease,
+    height .38s ease,
+    opacity .2s ease,
+    transform .2s ease;
+}
+/* While data is intentionally deferred, animate the empty shell to its final
+   viewport cap instead of letting the skeleton row count determine its size. */
+.session-dropdown-menu[data-loading="true"][data-state="opening"] {
+  height: 0;
+}
+.session-dropdown-menu[data-loading="true"][data-state="open"] {
+  height: var(--session-menu-open-height, 0px);
+}
+
+.session-dropdown-menu[data-state="open"].opening {
+  overflow: hidden;
+}
+.session-dropdown-menu[data-state="closing"] {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  transition-duration: .32s, .32s, .2s, .2s;
+}
+
+.session-dropdown-menu > .session-row,
+.session-dropdown-menu > .session-dropdown-empty,
+.session-dropdown-menu > .session-dropdown-loading-row,
+.session-dropdown-menu > .session-dropdown-sync,
+.session-dropdown-menu > .session-manage-row {
+  opacity: 0;
+  animation-fill-mode: forwards;
+  animation-duration: .18s;
+  animation-timing-function: ease-out;
+}
+
+/* Sync status row. Rendered as a real element at the BOTTOM of the menu, just
+   above the manage footer, while cached rows are re-verified against the
+   server. (Previously a ::before pinned to the top.) This status is
+   intentionally independent of the row content so a slow/offline handshake
+   never replaces real data with a loading skeleton. */
+.session-dropdown-sync {
+  display: block;
+  padding: 4px 10px;
+  color: var(--fg-3);
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(6px);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+.session-dropdown-menu.opening > .session-row,
+.session-dropdown-menu.opening > .session-dropdown-empty,
+.session-dropdown-menu.opening > .session-dropdown-loading-row,
+.session-dropdown-menu.opening > .session-dropdown-sync,
+.session-dropdown-menu.opening > .session-manage-row {
+  animation-name: session-dropdown-row-enter;
+}
+.session-dropdown-menu.closing > .session-row,
+.session-dropdown-menu.closing > .session-dropdown-empty,
+.session-dropdown-menu.closing > .session-dropdown-loading-row,
+.session-dropdown-menu.closing > .session-dropdown-sync,
+.session-dropdown-menu.closing > .session-manage-row {
+  animation-name: session-dropdown-row-hide;
+}
+.session-dropdown-menu[data-state="open"]:not(.opening):not(.closing) > * {
+  opacity: 1;
+  transform: none;
+}
+
+.session-dropdown-loading-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+.session-dropdown-loading-icon,
+.session-dropdown-loading-line {
+  background: linear-gradient(90deg, var(--bg-elev) 25%, var(--bg-elev-2) 37%, var(--bg-elev) 63%);
+  background-size: 400% 100%;
+  animation: session-dropdown-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+.session-dropdown-loading-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.session-dropdown-loading-line {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+}
+
+@keyframes session-dropdown-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+@keyframes session-dropdown-row-enter {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes session-dropdown-row-hide {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-dropdown-menu {
+    transition: none;
+  }
+  .session-dropdown-loading-icon,
+  .session-dropdown-loading-line {
+    animation: none;
+  }
+  .session-dropdown-menu > .session-row,
+  .session-dropdown-menu > .session-dropdown-empty,
+  .session-dropdown-menu > .session-dropdown-loading-row,
+  .session-dropdown-menu > .session-dropdown-sync,
+  .session-dropdown-menu > .session-manage-row {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

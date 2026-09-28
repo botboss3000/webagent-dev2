@@ -1,0 +1,12 @@
+{
+  "display_name": "LinkedIn",
+  "kind": "oauth",
+  "icon": "linkedin",
+  "color": "#bb9af7",
+  "description": "Posting and reading LinkedIn content.",
+  "note": "Free OAuth — posting requires LinkedIn Community/Marketing API approval.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 3
+}

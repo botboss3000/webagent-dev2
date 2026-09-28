@@ -1,0 +1,22 @@
+{
+  "display_name": "Remote Tunnel",
+  "kind": "ability",
+  "icon": "globe",
+  "color": "#7aa2f7",
+  "description": "Lets the agent open a public Cloudflare quick tunnel to this machine and read back the live trycloudflare.com address. Exposes the host to the internet, so it ships OFF — grant per agent with care.",
+  "skill_summary": "How to expose this machine over a public Cloudflare quick tunnel and report the address: call start_tunnel to launch it and get the URL, get_tunnel_url to re-read the current URL/status. Load when the user asks to 'start a tunnel', 'expose the app', or 'give me the public URL'.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "default_enabled": false,
+  "tools": [
+    "start_tunnel",
+    "get_tunnel_url"
+  ],
+  "tool_metadata": {
+    "start_tunnel": {"stages": ["execute_tools"], "destructive": true},
+    "get_tunnel_url": {"stages": ["execute_tools"], "destructive": false}
+  },
+  "order": 5
+}

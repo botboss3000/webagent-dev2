@@ -1,0 +1,8 @@
+{
+  "id": "overview",
+  "label": "Overview",
+  "icon": "house",
+  "description": "Connection, server, and device details.",
+  "group": "app-pages",
+  "runtime": "overview"
+}

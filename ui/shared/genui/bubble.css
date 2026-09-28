@@ -1,0 +1,77 @@
+/* ════════════════════════════════════════════
+   shared/genui/bubble.css — AI chat bubble styles
+   Served at /ui/shared/genui/bubble.css
+   Injected dynamically by the genui on mount.
+   Uses inherited design-token vars only.
+   ════════════════════════════════════════════ */
+
+.ai-bubble {
+  position: fixed; z-index: 9999; width: 320px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow-lg), var(--shadow-glow);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  display: none; flex-direction: column; overflow: hidden;
+  animation: bubbleIn .25s cubic-bezier(.22,.61,.36,1);
+}
+.ai-bubble.visible { display: flex; }
+.ai-bubble.closing { animation: bubbleOut .18s ease forwards; pointer-events: none; }
+@keyframes bubbleIn  { from { opacity: 0; transform: scale(0.88) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes bubbleOut { from { opacity: 1; transform: scale(1) translateY(0); }  to { opacity: 0; transform: scale(0.88) translateY(8px); } }
+
+.ai-bubble-arrow {
+  position: absolute; width: 12px; height: 12px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-right: none; border-bottom: none; transform: rotate(45deg);
+}
+.ai-bubble-arrow.top    { top: -6px; }
+.ai-bubble-arrow.bottom { bottom: -6px; transform: rotate(225deg); }
+
+.ai-bubble-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 16px 10px; border-bottom: var(--border-width) solid var(--border-soft);
+}
+.ai-bubble-header svg { width: 16px; height: 16px; color: var(--accent); flex-shrink: 0; }
+.ai-bubble-header .ctx {
+  font-size: 0.78rem; font-weight: 600; color: var(--fg-2);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ai-bubble-close {
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  background: transparent; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; color: var(--fg-3);
+  transition: all .15s; flex-shrink: 0;
+}
+.ai-bubble-close:hover { background: var(--bg-tint); color: var(--fg-1); }
+.ai-bubble-close svg { width: 14px; height: 14px; }
+
+.ai-bubble-body { padding: 12px 16px; }
+.ai-bubble-body textarea {
+  width: 100%; min-height: 72px; max-height: 140px;
+  background: var(--bg-tint); border: var(--border-width) solid var(--border);
+  border-radius: 10px; padding: 10px 12px;
+  font-family: var(--font-sans); font-size: 0.85rem; color: var(--fg-1);
+  resize: vertical; outline: none; transition: border-color .2s; line-height: 1.45;
+}
+.ai-bubble-body textarea:focus { border-color: var(--accent); }
+.ai-bubble-body textarea::placeholder { color: var(--fg-4); }
+
+.ai-bubble-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px 14px; gap: 8px;
+}
+.ai-bubble-footer .char-count { font-size: 0.7rem; color: var(--fg-4); }
+.ai-bubble-send {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: 20px; border: none;
+  background: var(--accent); color: #fff;
+  font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  transition: all .2s; font-family: var(--font-sans);
+}
+.ai-bubble-send:hover { filter: brightness(1.12); }
+.ai-bubble-send:active { transform: scale(0.96); }
+.ai-bubble-send.sent { background: var(--success); pointer-events: none; }
+.ai-bubble-send svg { width: 14px; height: 14px; }
+
+.ai-backdrop { position: fixed; inset: 0; z-index: 9998; background: transparent; display: none; }
+.ai-backdrop.visible { display: block; }

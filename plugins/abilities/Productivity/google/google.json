@@ -1,0 +1,12 @@
+{
+  "display_name": "Google",
+  "kind": "oauth",
+  "icon": "chrome",
+  "color": "#4285F4",
+  "description": "Gmail, Drive, Docs, and Calendar.",
+  "note": "Free — create a Google Cloud OAuth app. Grants Gmail, Drive, Docs, and Calendar.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 2
+}

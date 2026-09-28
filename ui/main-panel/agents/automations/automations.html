@@ -1,0 +1,81 @@
+<!-- Automations Dashboard — table view
+     Mirrors the Sessions table (ui/main-panel/agents/sessions/sessions.html): a single
+     flat table of every automation (scheduled tasks, event triggers, worker
+     spawns, clones, webhooks) with check · agent · automation · status on the
+     left, then automation-specific columns (type · trigger · last · next ·
+     count · enabled). Rendered by js/automations.js.
+     ---- HARMONY: this toolbar (trash→recycle/bin logic, back + restore) mirrors
+     ---- sessions.html and ui/main-panel/agents/agents.html. Keep them in sync.
+     ---- The per-table Select-all / Deselect-all is the header check-all cell
+     ---- (#automations-check-all), so there are no toolbar select buttons here. -->
+
+<div id="automations-toolbar">
+  <div id="automations-toolbar-left">
+    <button type="button" id="automations-back-btn" title="Back to Automations" style="display:none;">
+      <i data-lucide="arrow-left" style="width:16px;height:16px;"></i>
+    </button>
+    <span id="automations-toolbar-title">Automations</span>
+    <span id="automations-toolbar-sub"> &middot; scheduled tasks &middot; event triggers &middot; worker spawns &middot; webhooks</span>
+  </div>
+  <div id="automations-toolbar-actions">
+    <select id="automations-filter-agent" class="auto-filter-select" title="Filter by agent">
+      <option value="">All agents</option>
+    </select>
+    <button type="button" id="automations-refresh-btn" class="auto-tb-btn auto-tb-icon" title="Refresh">
+      <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
+    </button>
+    <!-- Completed view (active view only). A sibling of the recycling bin: swaps
+         into a history of finished automations so the main list shows only the
+         in-process/future ones. Count badge filled from /dashboard completed_count. -->
+    <button type="button" id="automations-completed-btn" class="auto-tb-btn auto-tb-completed" title="View completed automations">
+      <i data-lucide="history" style="width:14px;height:14px;"></i><span>Completed</span><span id="automations-completed-count" class="auto-tb-count" style="display:none;">0</span>
+    </button>
+    <button type="button" id="automations-restore-btn" class="auto-tb-btn auto-tb-restore" title="Restore selected" style="display:none;">
+      <i data-lucide="archive-restore" style="width:15px;height:15px;"></i><span>Restore</span>
+    </button>
+    <!-- HARMONY: trash+bin migration mirrors agents-tb-trash / sessions-tb-trash.
+         Nothing selected → green recycle icon opens the bin. In the bin the trash
+         permanently deletes; the Restore button brings rows back. -->
+    <button type="button" id="automations-trash-btn" class="auto-tb-trash" data-state="trash" title="Open recycling bin">
+      <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
+    </button>
+  </div>
+</div>
+
+<!-- Scrollable table area -->
+<div id="automations-table-wrap">
+  <div id="automations-table-inner">
+    <table id="automations-table">
+      <thead>
+        <tr>
+          <th class="col-check">
+            <span id="automations-check-all" class="auto-check-cell" title="Select all"> </span>
+          </th>
+          <th class="col-agent col-resizable">Agent</th>
+          <th class="col-name col-resizable">Automation</th>
+          <th class="col-status">Status</th>
+          <th class="col-type col-resizable">Type</th>
+          <th class="col-trigger col-resizable">Trigger</th>
+          <th class="col-output col-resizable">Output</th>
+          <th class="col-last col-resizable">Last</th>
+          <th class="col-next col-resizable">Next</th>
+          <th class="col-count col-resizable">Count</th>
+          <th class="col-device col-resizable">Run on</th>
+          <th class="col-enabled">Enabled</th>
+        </tr>
+      </thead>
+      <tbody id="automations-table-body">
+        <!-- Populated by JS -->
+      </tbody>
+    </table>
+    <div id="automations-empty" class="auto-empty" style="display:none;">
+      <div class="auto-empty-icon"><i data-lucide="settings-2" style="width:28px;height:28px;"></i></div>
+      <div class="auto-empty-text">No automations yet</div>
+      <div class="auto-empty-hint">Create scheduled tasks or event triggers in any agent to see them here</div>
+    </div>
+    <div id="automations-loading" class="auto-loading">
+      <div class="auto-loading-spinner"></div>
+      <span>Loading automations…</span>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,17 @@
+/* ============================================================
+   Template background — colour tokens (read by _TEMPLATE.js)
+   ------------------------------------------------------------
+   Define your tokens per theme, derived from the app palette in
+   ui/shared/css/design-system.css (use var(--brand-rgb) etc.) so a
+   brand-colour swap flows through. Keep matching fallbacks in the JS.
+   ============================================================ */
+
+/* Dark theme (default) */
+:root {
+  --tmpl-rgb: var(--brand-rgb);
+}
+
+/* Light theme */
+body.light-mode {
+  --tmpl-rgb: var(--brand-rgb);
+}

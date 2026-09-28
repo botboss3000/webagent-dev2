@@ -1,0 +1,37 @@
+{
+  "id": "pro",
+  "slug": "pro",
+  "name": "Pro",
+  "description": "Expanded experience for paid individual users.",
+  "status": "published",
+  "revision": 1,
+  "is_system": true,
+  "is_locked": false,
+  "policy_schema_version": 1,
+  "policy": {
+    "schema_version": 1,
+    "pages": ["agents", "automations", "browser", "genui", "instances", "wiki"],
+    "features": ["chat", "agent_create", "agent_clone", "automations", "connectors", "model_picker", "image_input", "image_generation", "voice_llm", "attachments", "genui", "user_byod", "llm_byo"],
+    "ability_groups": ["chat_core", "memory", "user_files", "web_read", "browser_control", "image_vision", "image_generation", "model_switching", "automation", "agent_orchestration", "personal_integrations", "financial_actions", "developer_write"],
+    "agent_templates": ["*"],
+    "models": {
+      "roster_id": "roster-pro",
+      "allowed_entry_ids": [],
+      "allow_byo": true,
+      "max_byo_entries": null,
+      "max_reasoning_effort": "high"
+    },
+    "limits": {
+      "max_agents": 10,
+      "max_automations": 10,
+      "max_connections": 25,
+      "concurrent_sessions_per_user": 4,
+      "messages_per_window": 300,
+      "window_seconds": 300,
+      "weekly_credit_limit": 2500,
+    "weekly_credit_renews": true,
+      "max_attachment_bytes": 104857600,
+      "max_storage_bytes": 5368709120
+    }
+  }
+}

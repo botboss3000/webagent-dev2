@@ -1,0 +1,28 @@
+{
+  "fixture": {
+    "turns": 100,
+    "interactions": 200,
+    "characters_per_interaction": 500,
+    "iterations": 100
+  },
+  "manifest": {
+    "cold_hash_build_ms": 45.7918,
+    "post_mutation_rebuild_ms": 17.9843,
+    "warm_validation": {
+      "p50_ms": 0.328,
+      "p95_ms": 0.4829
+    },
+    "warm_sqlite_rows_read": 1,
+    "cold_sqlite_rows_read": 200,
+    "full_transcript_bytes": 126763,
+    "validated_manifest_bytes": 212,
+    "transfer_reduction_percent": 99.83,
+    "revision_advanced_after_edit": true
+  },
+  "durable_turn_reservation": {
+    "p50_ms": 27.4822,
+    "p95_ms": 41.8297,
+    "sqlite_transactions_per_reservation": 2
+  },
+  "scope": "local storage/protocol microbenchmark; excludes network, browser paint, model latency, encryption overhead, and provider latency"
+}

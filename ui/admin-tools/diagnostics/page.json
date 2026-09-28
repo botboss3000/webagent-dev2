@@ -1,0 +1,11 @@
+{
+  "id": "diagnostics",
+  "label": "Diagnostics",
+  "icon": "stethoscope",
+  "order": 7,
+  "html": "diagnostics.html",
+  "mount": "#files-diagnostics-main",
+  "entry": "ui/admin-tools/diagnostics/diagnostics-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

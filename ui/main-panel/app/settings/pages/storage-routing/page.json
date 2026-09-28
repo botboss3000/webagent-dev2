@@ -1,0 +1,22 @@
+{
+  "id": "storage-routing",
+  "label": "Storage Routing",
+  "icon": "database",
+  "description": "Map each data function to its storage backend \u2014 Browser, Server or Remote.",
+  "keywords": [
+    "data",
+    "database",
+    "indexeddb",
+    "sqlite",
+    "postgres",
+    "byod",
+    "routing",
+    "backends"
+  ],
+  "group": "data",
+  "runtime": "settings",
+  "page": "storage-routing",
+  "anchor": "",
+  "paPage": "data_settings",
+  "html": "page.html"
+}

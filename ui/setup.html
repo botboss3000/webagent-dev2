@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Setup</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<!-- Theme: load the single-source palette + the admin's live overrides so this
+     standalone first-run page follows the app theme like every other page.
+     Reference shared assets absolutely (served at /setup.html). -->
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<script src="/ui/shared/js/appearance.js"></script>
+<style>
+/* No arrow buttons on scrollbars — thumb-only pills (matches the app). */
+::-webkit-scrollbar-button { display: none; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  background: var(--bg-0);
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.setup-box {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 12px;
+  padding: 36px 32px;
+  width: 400px;
+  max-width: 94vw;
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb),0.5);
+}
+.setup-box h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--brand);
+}
+.setup-box p.sub {
+  font-size: 13px;
+  color: var(--fg-3);
+  margin-bottom: 6px;
+}
+.setup-box p.desc {
+  font-size: 12px;
+  color: var(--fg-3);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 6px;
+}
+.form-group input[type="text"],
+.form-group input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-group input:focus {
+  border-color: var(--brand);
+}
+.form-group input::placeholder {
+  color: var(--fg-4);
+}
+.btn-setup {
+  width: 100%;
+  padding: 11px;
+  background: var(--brand);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg-0);            /* page-bg used as contrast ink on the brand fill */
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-top: 4px;
+}
+.btn-setup:hover {
+  background: var(--brand-strong);
+}
+.btn-setup:disabled {
+  background: var(--bg-tint);
+  color: var(--fg-3);
+  cursor: not-allowed;
+}
+.error-msg {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 12px;
+  display: none;
+}
+.success-msg {
+  color: var(--success);
+  font-size: 13px;
+  margin-top: 12px;
+  display: none;
+}
+.loading {
+  display: none;
+  color: var(--fg-3);
+  font-size: 13px;
+  margin-top: 12px;
+  text-align: center;
+}
+.security-note {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: var(--border-width) solid var(--border);
+  font-size: 11px;
+  color: var(--fg-4);
+  text-align: center;
+  line-height: 1.4;
+}
+.lock-icon {
+  display: block;
+  font-size: 28px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+.password-hint {
+  font-size: 11px;
+  color: var(--fg-4);
+  margin-top: 4px;
+}
+/* Optional bootstrap-code paste field — paste an encrypted bundle from another
+   install (Admin Tools → Deployment → "This app") to provision this one. */
+.form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-1);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  outline: none;
+  resize: vertical;
+  word-break: break-all;
+}
+.form-group textarea:focus { border-color: var(--brand); }
+</style>
+</head>
+<body>
+<div class="setup-box">
+  <div class="lock-icon">🔐</div>
+  <h1>Welcome to WebAgent</h1>
+  <p class="sub">Create your admin account</p>
+  <p class="desc">This is your first time running the app. Set up a strong password to secure your admin account. You can change this later in Account settings.</p>
+
+  <form id="setup-form" autocomplete="off">
+    <div class="form-group">
+      <label for="username">Login Username</label>
+      <input type="text" id="username" value="admin" autocomplete="username" required>
+      <div class="password-hint">The name you'll sign in with. Leave as <code>admin</code> or pick your own.</div>
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="At least 6 characters" autocomplete="new-password" required>
+    </div>
+    <div class="form-group">
+      <label for="confirm-password">Confirm Password</label>
+      <input type="password" id="confirm-password" placeholder="Repeat your password" autocomplete="new-password" required>
+    </div>
+    <div class="form-group">
+      <label for="setup-code">Bootstrap code <span style="color:var(--fg-4);">(optional)</span></label>
+      <textarea id="setup-code" rows="3" placeholder="Paste a WABOOT1… code from another WebAgent"></textarea>
+      <div class="password-hint">Paste a bootstrap code created in another install’s <strong>Admin Tools → Deployment → “This app”</strong> to copy its database, AI model + key, and secrets vault here. The <strong>Password</strong> above must be that install’s admin password — it unlocks the code and becomes this admin’s password.</div>
+    </div>
+    <button type="submit" class="btn-setup" id="setup-btn">Complete Setup</button>
+    <div class="error-msg" id="error-msg"></div>
+    <div class="success-msg" id="success-msg">Account created! Redirecting…</div>
+    <div class="loading" id="loading">Setting up your admin account…</div>
+  </form>
+
+  <div class="security-note">This page appears only on a brand-new install, until the first admin is created — after that it closes for good and everyone goes to the sign-in screen. Whoever reaches it first sets the admin password, so on a public server open it and complete setup right away. To skip this page entirely, pre-set the password at deploy time (the <strong>Deploy</strong> panel’s “set the password now” option, or the <code>BOOTSTRAP_ADMIN_PASSWORD</code> environment variable) and the admin is created automatically on first boot.</div>
+</div>
+
+<script>
+// ── Check if already initialized ──
+(async function checkInit() {
+  try {
+    const res = await fetch('/api/v1/auth/setup-status');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.initialized) {
+        window.location.href = '/login.html';
+        return;
+      }
+    }
+  } catch (e) {}
+})();
+
+// ── Setup form submit ──
+document.getElementById('setup-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim() || 'admin';
+  const displayName = 'Admin';
+  const password = document.getElementById('password').value;
+  const confirm = document.getElementById('confirm-password').value;
+  const setupCode = (document.getElementById('setup-code').value || '').trim();
+  const btn = document.getElementById('setup-btn');
+  const error = document.getElementById('error-msg');
+  const loading = document.getElementById('loading');
+  const success = document.getElementById('success-msg');
+
+  error.style.display = 'none';
+  success.style.display = 'none';
+
+  // Client-side validation
+  if (password.length < 6) {
+    error.textContent = 'Password must be at least 6 characters.';
+    error.style.display = 'block';
+    return;
+  }
+  if (password !== confirm) {
+    error.textContent = 'Passwords do not match.';
+    error.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  loading.style.display = 'block';
+  // A pasted setup code takes the bundle path: the password unlocks it AND
+  // becomes the admin password. Otherwise the plain create-admin path runs.
+  loading.textContent = setupCode
+    ? 'Unlocking your setup code…'
+    : 'Setting up your admin account…';
+
+  try {
+    const res = setupCode
+      ? await fetch('/api/v1/auth/setup-bundle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: setupCode, password }),
+        })
+      : await fetch('/api/v1/auth/setup-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, display_name: displayName }),
+        });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      error.textContent = errData.detail || 'Setup failed. Are you on the local machine?';
+      error.style.display = 'block';
+      btn.disabled = false;
+      loading.style.display = 'none';
+      return;
+    }
+
+    const data = await res.json();
+
+    // Store auth token (auto-login)
+    localStorage.setItem('auth_token', data.access_token);
+    localStorage.setItem('auth_username', data.username);
+    localStorage.setItem('auth_user_id', data.user_id);
+    localStorage.setItem('auth_display_name', data.display_name);
+
+    success.style.display = 'block';
+    loading.textContent = 'Account created! Redirecting…';
+
+    // Redirect to the main app
+    setTimeout(() => { window.location.href = '/'; }, 800);
+  } catch (err) {
+    error.textContent = 'Connection error. Is the server running?';
+    error.style.display = 'block';
+    btn.disabled = false;
+    loading.style.display = 'none';
+  }
+});
+</script>
+</body>
+</html>

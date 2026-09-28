@@ -1,0 +1,12 @@
+{
+  "display_name": "WhatsApp",
+  "kind": "placeholder",
+  "icon": "phone",
+  "color": "#26A5E4",
+  "description": "Send and receive WhatsApp messages.",
+  "note": "Paid — per-conversation fees via Meta WhatsApp Business or Twilio.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 2
+}

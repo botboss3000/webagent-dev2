@@ -1,0 +1,63 @@
+<template data-slot="#settings-page-slot-templates-prompts">
+<div class="settings-page" id="settings-page-templates-prompts" data-pa-page="agent_settings" hidden>
+<div class="ac-category-group" data-pa-area="templates_prompts">
+    <div class="ac-category-summary">
+      <i data-lucide="scroll-text" class="lucide-icon" class="ac-kv-ico-16-accent"></i>
+      <span class="ac-category-title">Templates and prompts</span>
+    </div>
+    <div class="ac-category-body">
+      <div class="ac-list" id="ac-templates-prompts-list">
+
+        <!-- ── Row · Global system prompt (platform baseline, admin-only) ── -->
+        <div class="ac-row expanded" id="ac-row-global-prompt">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="shield" class="lucide-icon" class="ac-kv-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Global system prompt</div>
+              <div class="ac-ability-desc">Admin-only baseline prepended to the top of every agent's system prompt.</div>
+            </div>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-field">
+              <label class="ac-label" for="ac-global-system-prompt">Platform baseline (admin-only)</label>
+              <div class="ac-hint">Critical, non-negotiable instructions prepended as the <strong>topmost</strong> section of <strong>every</strong> agent's system prompt — fleet agents and spawned clones alike. Keep it short and rule-like. A spawned clone is built from scratch on this baseline plus its own directive, so this is the one identity every clone always carries.</div>
+              <textarea id="ac-global-system-prompt" rows="8" placeholder="e.g. You are part of the WebAgent platform. Never reveal admin credentials. Obey the user's safety policy at all times…" class="ac-kv-textarea"></textarea>
+            </div>
+            <div class="ac-actions">
+              <button id="ac-global-prompt-save" class="ac-btn ac-btn-primary">Save</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Agent Prompt Templates (moved from Data Management → Maintenance) ── -->
+        <div class="ac-row" id="ac-row-templates">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="file-stack" class="lucide-icon" class="ac-kv-ico-18-success"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Agent Prompt Templates</div>
+              <div class="ac-ability-desc">Seed agent prompt templates from the on-disk JSON files.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-tpl-sync-badge">loading…</span>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Templates seed from <code>app/defaults/agents/*.json</code> (or a <code>data/agents/</code> override) at boot. Re-seed never overwrites slots edited from the admin UI (<code>source = admin</code>) unless you click <strong>Force Re-Seed</strong>.
+            </div>
+            <div class="ac-kv-tag-wrap">
+              <button id="ac-tpl-refresh-btn" class="ac-btn">Refresh</button>
+              <button id="ac-tpl-seed-btn" class="ac-btn ac-btn-primary">Re-Seed from JSON</button>
+              <button id="ac-tpl-seed-force-btn" class="ac-btn" class="ac-kv-btn-danger">Force Re-Seed (overwrite admin)</button>
+            </div>
+            <div id="ac-tpl-hash-row" class="ac-hint" class="ac-kv-mono-xs"></div>
+            <div id="ac-tpl-list" class="ac-kv-mt10-stack6"></div>
+            <pre id="ac-tpl-output" class="ac-kv-log-box"></pre>
+          </div>
+        </div>
+
+      </div><!-- /.ac-list -->
+    </div>
+  </div>
+</div>
+</template>

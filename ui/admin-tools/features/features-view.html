@@ -1,0 +1,31 @@
+<template data-slot="#admin-tools">
+  <main class="files-main files-features-main" id="files-features-main" data-view="features" hidden></main>
+</template>
+
+<template data-slot="#main-panel">
+<div id="features-page-container" hidden>
+
+  <header id="features-page-header">
+    <div class="ac-page-title">Features</div>
+  </header>
+
+  <div id="features-page-scroll-wrap">
+  <div id="features-page-content" class="ac-stickynav">
+
+    <div class="ac-section-header">
+      <i data-lucide="layers" class="lucide-icon ac-section-icon"></i>
+      <div>
+        <p class="ac-section-desc">Everything the running app discovered — each capability, how mature it is, whether it's true drop-in, and whether the active edition switches it on. Report only: nothing is gated yet.</p>
+      </div>
+    </div>
+
+    <div id="ac-features-banner" class="ac-card" style="margin-bottom:14px;">
+      <div style="color:var(--fg-3);font-size:13px;">Loading feature catalog…</div>
+    </div>
+    <div id="ac-features-list"></div>
+
+  </div><!-- /features-page-content -->
+  </div><!-- /features-page-scroll-wrap -->
+
+</div><!-- /features-page-container -->
+</template>

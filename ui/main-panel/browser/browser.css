@@ -1,0 +1,629 @@
+/* Web page — in-app, AI-augmented browser.
+   Markup: ui/main-panel/browser/browser.html · logic: ui/main-panel/browser/js/browser.js.
+   Theme-driven (design-system variables only) so it works in dark + light.
+   #tab-browser is a .tab-content, which is `display:flex; flex-direction:column`
+   when active, so .browser-page just grows to fill it.
+
+
+   The browser stage fills available panel space. The toolbar keeps browser controls
+   and the unified input together, stacking the input above controls on narrow panels. */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / var(--accent) / var(--accent-hover) for
+   the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+.browser-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: var(--bg-0);
+  /* Query container so the toolbar stacks on the PANEL's width, not the viewport.
+     On desktop this panel can be narrow while the window is wide (sidebar + chat
+     beside it), so a viewport @media never fired — @container does. */
+  container-type: inline-size;
+  container-name: browser-panel;
+}
+
+/* ── Full-height browser stage (the live streamed page) ── */
+.browser-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg-2);
+  outline: none;
+}
+.browser-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: none;
+}
+.browser-frame.has-frame { display: block; }
+
+/* Live pixel mirror (CDP screencast). Hidden until the screencast view is
+   active; the genui is letterboxed to keep the page's aspect ratio. */
+.browser-mirror {
+  width: 100%;
+  height: 100%;
+  display: none;
+  object-fit: contain;
+  background: var(--bg-2);
+  cursor: default;
+  outline: none;
+}
+.browser-mirror.has-frame { display: block; }
+
+/* Interactive overlay layer (cursors / ripples / telegraphs) — sits over the
+   mirror genui, click-through. The overlay module (js/overlay.js) also styles
+   `.bovl-layer` on this same element + owns everything inside it; these base
+   rules just guarantee correct positioning before that style is injected. */
+.browser-overlay-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.browser-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 440px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 24px;
+  pointer-events: none;
+}
+
+/* Loading state — a centered spinner shown while a session WITH a saved page is
+   reconnecting / restoring. browser.js shows this (not .browser-empty) whenever
+   the session has somewhere to return to, so a reload no longer flashes the
+   "type a URL to start" hint over a page that's simply still loading. */
+.browser-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.browser-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: browser-spin 0.8s linear infinite;
+}
+@keyframes browser-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .browser-spinner { animation-duration: 2s; }
+}
+
+/* ── Toolbar: browser-nav chip + small chat pill, in normal flow ──
+   SINGLE row on a wide panel (nav grows on the left, pill capped on the right);
+   STACKS to a column under the breakpoint at the bottom of this file. Mirrors the
+   Gen UI footer's pill + page-controls pairing (genui-toolbar.css).
+   pointer-events:none on the wrapper + auto on the visible controls lets clicks
+   in the transparent gaps fall through to the browser stage behind it. */
+.browser-toolbar {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  z-index: 5;
+  /* Matches the Gen UI footer padding (genui-toolbar.css #genui-footer) so both
+     footers stand off the panel floor by the same amount. */
+  padding: 8px 16px 10px;
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+
+/* The browser-nav controls and the chat pill capture clicks; the rest is
+   click-through to the stage behind. */
+.browser-nav,
+.browser-prompt-row { pointer-events: auto; }
+
+/* ── Browser-nav controls ──────────────────────────────────────────────────
+   NO container: the buttons sit directly on the toolbar background — no unifying
+   chip border/fill and no per-button borders. Just a flat row of icon buttons +
+   the session menu, each with a hover halo, like a bare browser control strip.
+   Content-width so it sits on the left and lets the unified pill fill the rest of
+   the row; when the toolbar stacks it relaxes to full width. */
+.browser-nav {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.control-surface-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  flex: 0 0 auto;
+}
+.control-surface-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: background 0.13s, color 0.13s;
+}
+.control-surface-btn {
+  gap: 5px;
+  height: 24px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.control-surface-btn svg { width: 14px; height: 14px; }
+.control-surface-chip:has(.control-surface-btn.on) {
+  color: var(--fg-1);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
+}
+.control-surface-stop {
+  width: 22px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.control-surface-stop:hover { color: var(--danger); background: rgba(var(--danger-rgb), 0.1); }
+.control-surface-stop:disabled { opacity: 0.4; cursor: wait; }
+.control-surface-stop svg { width: 12px; height: 12px; pointer-events: none; }
+.browser-page.desktop-mode .control-browser-only { display: none; }
+.browser-page.desktop-mode .browser-mirror { cursor: default; }
+.browser-page.extension-mode .control-browser-only,
+.browser-page.extension-mode .control-active-only,
+.browser-page.extension-mode .browser-prompt-bar { display: none; }
+.browser-page.idle-mode .control-browser-only,
+.browser-page.idle-mode .control-active-only,
+.browser-page.idle-mode .browser-prompt-bar { display: none; }
+
+/* ── Companion extension configuration surface ─────────────────────────── */
+.extension-control-panel {
+  width: min(680px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  box-shadow: var(--shadow-md);
+  z-index: 3;
+}
+.extension-control-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.extension-control-kicker { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.extension-control-head h2 { margin: 4px 0 0; font-size: 20px; }
+.extension-connection-state { display: inline-flex; align-items: center; gap: 7px; color: var(--fg-3); font-size: 12px; }
+.extension-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); }
+.extension-connection-state.connected { color: var(--success); }
+.extension-connection-state.connected .extension-state-dot { background: var(--success); }
+.extension-control-summary, .extension-control-note { color: var(--fg-3); font-size: 13px; line-height: 1.5; }
+.extension-device-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 18px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--border); }
+.extension-device-details > div { padding: 11px 13px; background: var(--bg-1); }
+.extension-device-details dt { color: var(--fg-3); font-size: 11px; }
+.extension-device-details dd { margin: 3px 0 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.extension-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; }
+.extension-settings label { display: flex; align-items: center; gap: 8px; color: var(--fg-2); font-size: 13px; }
+.extension-settings input { accent-color: var(--accent); }
+.extension-settings input:disabled { opacity: 0.5; }
+.extension-control-actions { display: flex; gap: 8px; margin-top: 16px; }
+.extension-control-actions .browser-btn { border: 1px solid var(--border); background: var(--bg-1); }
+@container browser-panel (max-width: 560px) {
+  .extension-device-details, .extension-settings { grid-template-columns: 1fr; }
+}
+
+/* Base action button — flat, transparent, hover halo. Sized to the Gen UI
+   footer's 28px control buttons (genui-toolbar.css) so both footers stand at the
+   same height. */
+.browser-btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: background 0.13s, color 0.13s;
+}
+.browser-btn:hover { background: var(--bg-elev-2); color: var(--fg-1); }
+.browser-btn:active { transform: translateY(1px); }
+/* Lucide swaps <i data-lucide> for an inline <svg>; keep clicks on the button. */
+.browser-btn svg,
+.browser-btn i { pointer-events: none; }
+.browser-btn svg { width: 18px; height: 18px; }
+
+/* Round icon-only nav buttons (back / forward / reload). */
+.browser-nav-icon {
+  width: 28px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* ── Device switcher ──
+   off = in-app (in-app headless browser), on = device (the real on-device
+   browser). Mirrors the share toggle's look: neutral when off, accent-filled
+   when driving the device. The "busy" state pulses while a switch is underway. */
+.browser-device {
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: 12px;
+  color: var(--fg-2);
+}
+.browser-device svg { width: 15px; height: 15px; }
+.browser-device:hover { background: var(--bg-elev-2); }
+.browser-device.on {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev));
+  color: var(--fg-1);
+}
+.browser-device.on:hover { background: color-mix(in srgb, var(--accent) 26%, var(--bg-elev)); }
+.browser-device.busy { opacity: 0.6; pointer-events: none; }
+
+/* ── Per-tab share toggle ──
+   off = private (neutral), on = shared with the agent (accent-filled). Carries
+   a leading status dot via ::before. Design-system vars only → both themes. */
+.browser-share {
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: 12px;
+  color: var(--fg-2);
+}
+.browser-share::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-3);
+  flex: 0 0 auto;
+}
+.browser-share:hover { background: var(--bg-elev-2); }
+.browser-share.on {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev));
+  color: var(--fg-1);
+}
+.browser-share.on::before { background: var(--accent); }
+.browser-share.on:hover { background: color-mix(in srgb, var(--accent) 26%, var(--bg-elev)); }
+
+/* ── Session menu trigger ── label + chevron, mirrors the chat session dropdown ── */
+.browser-sessions { position: relative; flex: 0 0 auto; }
+.browser-session-trigger {
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: 12px;
+  color: var(--fg-1);
+  max-width: 180px;
+}
+.browser-session-trigger:hover { background: var(--bg-elev-2); }
+.browser-session-trigger-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--fg-3); }
+.browser-session-trigger-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-session-trigger-chev { width: 15px; height: 15px; flex: 0 0 auto; color: var(--fg-3); }
+.browser-session-trigger[aria-expanded="true"] .browser-session-trigger-chev { transform: rotate(180deg); }
+
+/* New-session "+" button. */
+.browser-new-session { width: 28px; padding: 0; border-radius: 50%; }
+
+/* ── Point-and-ask toggle ──
+   Icon button that arms "click a spot to ask the agent about it". Accent-filled
+   when armed (mode on, or a spot is marked awaiting the next message). */
+.browser-point.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev));
+}
+.browser-point.on:hover { background: color-mix(in srgb, var(--accent) 26%, var(--bg-elev)); }
+
+/* ── Sessions popover ──
+   Reuses the chat session-dropdown-menu CHROME (background / border / radius /
+   shadow / scrollbar / light-mode), defined in app1.css. We override only its
+   POSITION so it opens UPWARD off the trigger (the nav sits near the panel
+   floor) and anchors to the session-menu wrapper rather than the whole nav. */
+.browser-sessions-popover.session-dropdown-menu {
+  position: absolute;
+  top: auto;
+  left: auto;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 300px;
+  max-width: 80vw;
+  max-height: 340px;
+}
+.browser-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* Empty / hint line inside the popover. */
+.browser-sessions-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+/* Footer action row (mirrors the chat .session-manage-row). */
+.browser-sessions-foot {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: var(--border-width) solid var(--border-soft);
+}
+.browser-sessions-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-align: left;
+}
+.browser-sessions-new:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.browser-sessions-new svg { width: 14px; height: 14px; }
+
+/* Leading icon inside a browser session row (reuses .session-row chrome). */
+.browser-session-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  color: var(--fg-3);
+}
+.browser-session-row-icon svg { width: 14px; height: 14px; }
+.session-row.selected .browser-session-row-icon { color: var(--accent); }
+.browser-session-row-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+/* ── Live status dot + label ── */
+.browser-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  padding-left: 4px;
+  flex: 0 0 auto;
+}
+.browser-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  flex: 0 0 auto;
+}
+.browser-dot.live { background: var(--success); }
+.browser-dot.down { background: var(--danger); }
+
+/* ── Unified browser input ──
+   The input fills the available toolbar row beside navigation controls and expands
+   to full width when the toolbar stacks. */
+.browser-prompt-row.chat-pill-1line { padding: 2px 6px; }
+
+/* Single-line address bar: the unified pill never grows past ONE row. The
+   textarea carries wrap="off", so a long URL scrolls horizontally instead of
+   wrapping onto a second line; the height is pinned to one line. Scoped to this
+   pill only — the chat-panel composer still grows multi-line. */
+.browser-prompt-row .chat-pill-input {
+  min-height: 26px;
+  padding: 4px 8px;
+  line-height: 18px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: 26px;   /* one line: 18px line-height + 4px×2 padding */
+}
+
+/* attach (+) · mic · send share the compact 28px box so the slim pill geometry
+   holds and the send glyph never clips (matches the Gen UI footer buttons). */
+.browser-prompt-row .chat-pill-attach,
+.browser-prompt-row .chat-pill-voice,
+.browser-prompt-row .chat-pill-send {
+  width: 28px;
+  height: 28px;
+}
+.browser-prompt-row .chat-pill-attach svg,
+.browser-prompt-row .chat-pill-voice svg,
+.browser-prompt-row .chat-pill-send svg {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+/* URL mode: the action icon is a globe and Enter/Send navigates the page rather
+   than messaging the agent. Tint the action button so the switch is unmistakable.
+   (The icon swap itself is driven by browser.js _setSendMode.) */
+.browser-prompt-row.url-mode .chat-pill-send {
+  color: var(--accent);
+}
+.browser-prompt-row.url-mode .chat-pill-send:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* ── Stack breakpoint (container query, not viewport) ──
+   Below this PANEL width the single toolbar row can't comfortably hold both the
+   nav controls and the pill, so the toolbar flips from a row to a COLUMN. Keyed
+   to the .browser-panel container (the panel itself) so it also stacks on desktop
+   when the panel is dragged narrow while the window stays wide. We use
+   column-REVERSE so the unified pill sits on TOP and the bare button row drops
+   BELOW it (the nav is first in the DOM, so reverse puts it at the bottom). */
+@container browser-panel (max-width: 860px) {
+  .browser-toolbar { flex-direction: column-reverse; }
+  .browser-nav {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 920px;
+  }
+  .browser-prompt-bar {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 920px;
+  }
+}
+
+/* ── "Pair extension" setup card ─────────────────────────────────────────────
+   One-time setup modal for the "My browser" (connector) backend: shows the
+   server URL + a minted token to paste into the browser extension. Built in JS
+   (openPairModal in browser.js) and appended to <body> as a fixed scrim. Theme
+   colours come entirely from design-system variables, so it is correct in dark
+   AND light — no hard-coded hex. The scrim uses the palette's shadow tint. */
+.pair-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(var(--shadow-rgb), 0.5);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.pair-modal {
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 20px 22px 22px;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-2xl);
+  box-shadow: var(--shadow-lg);
+}
+.pair-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pair-title { font-size: 16px; font-weight: 600; color: var(--fg-1); }
+.pair-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-3);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.pair-close:hover { color: var(--fg-1); background: var(--bg-2); }
+.pair-intro {
+  margin: 8px 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.pair-body { display: flex; flex-direction: column; gap: 14px; }
+.pair-field { display: flex; flex-direction: column; }
+.pair-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-3);
+}
+.pair-input-row { display: flex; gap: 8px; align-items: stretch; }
+.pair-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md);
+}
+.pair-input.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.pair-copy {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md);
+}
+.pair-copy:hover { border-color: var(--accent); color: var(--accent); }
+.pair-copy.done { color: var(--accent); border-color: var(--accent); }
+.pair-steps {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.pair-steps li { margin: 2px 0; }
+.pair-error {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}

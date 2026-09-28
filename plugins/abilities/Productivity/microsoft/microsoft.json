@@ -1,0 +1,12 @@
+{
+  "display_name": "Microsoft",
+  "kind": "oauth",
+  "icon": "monitor",
+  "color": "#4285F4",
+  "description": "Outlook, OneDrive, and Calendar.",
+  "note": "Free — register an Azure app. Grants Outlook, OneDrive, and Calendar.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 3
+}

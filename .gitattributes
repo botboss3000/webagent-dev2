@@ -1,0 +1,76 @@
+# Line-ending policy: the repository stores LF.
+#
+# * text=auto  - text files are normalized to LF in the repository on every
+#   commit, no matter what your editor saves (CRLF or LF). This is what
+#   prevents "the whole file changed" diffs like the chat-stream.js incident.
+# * The explicit eol=lf rules below keep the working tree LF for code/text
+#   files on every platform (matches what is already committed).
+# * .bat/.cmd are the exception: Windows batch files must stay CRLF to run.
+# * binary marks files that must never be converted or diffed as text.
+
+* text=auto
+
+# Code / text - force LF in the working tree
+*.js          text eol=lf
+*.mjs         text eol=lf
+*.cjs         text eol=lf
+*.py          text eol=lf
+*.css         text eol=lf
+*.html        text eol=lf
+*.htm         text eol=lf
+*.json        text eol=lf
+*.jsonc       text eol=lf
+*.md          text eol=lf
+*.txt         text eol=lf
+*.xml         text eol=lf
+*.svg         text eol=lf
+*.sql         text eol=lf
+*.kt          text eol=lf
+*.kts         text eol=lf
+*.toml        text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.ps1         text eol=lf
+# Shell scripts are executed on Linux/Android - CRLF breaks the shebang
+*.sh          text eol=lf
+*.tcss        text eol=lf
+*.properties  text eol=lf
+*.example     text eol=lf
+*.lock        text eol=lf
+*.pid         text eol=lf
+
+# Windows batch - must stay CRLF to run correctly in cmd.exe
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+
+# Binary - never converted, never diffed as text
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.webp        binary
+*.ico         binary
+*.bmp         binary
+*.woff        binary
+*.woff2       binary
+*.ttf         binary
+*.otf         binary
+*.eot         binary
+*.lnk         binary
+*.pdf         binary
+*.zip         binary
+*.gz          binary
+*.tar         binary
+*.7z          binary
+*.db          binary
+*.sqlite      binary
+*.sqlite3     binary
+*.mp3         binary
+*.mp4         binary
+*.wav         binary
+*.ogg         binary
+*.exe         binary
+*.dll         binary
+*.so          binary
+*.dylib       binary
+*.pyc         binary

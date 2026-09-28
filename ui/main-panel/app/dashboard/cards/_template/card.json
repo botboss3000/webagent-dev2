@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy this folder to cards/<your-id>/ to add a dashboard card. id MUST equal the folder name. See cards/README.md — never register data cards in dashboard.js CARD_TYPES or add builders to server.py _build_snapshot().",
+  "id": "my_card",
+  "label": "My Card",
+  "icon": "sparkles",
+  "w": 3, "h": 2,
+  "order": 50,
+  "live": true,
+  "sections": ["live"],
+  "chart": null,
+  "section": null,
+  "server": null,
+  "aiHint": "One line describing what this card shows and where its data lives."
+}

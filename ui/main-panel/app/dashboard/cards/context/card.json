@@ -1,0 +1,14 @@
+{
+  "_comment": "Dashboard card plugin descriptor (drop-in folder). Fields: id (= folder name), label, icon, w/h (grid size), order (picker sort), live (fast-poll), sections (snapshot sections it reads), chart (timeseries kind), section + server (backend). See cards/README.md — do NOT register data cards in dashboard.js CARD_TYPES or add builders to server.py _build_snapshot().",
+  "id": "context",
+  "label": "Context Window",
+  "icon": "brain",
+  "w": 3,
+  "h": 3,
+  "order": 9,
+  "sections": [
+    "context"
+  ],
+  "server": "server.py",
+  "section": "context"
+}

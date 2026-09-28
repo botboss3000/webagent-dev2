@@ -1,0 +1,46 @@
+<template data-slot="#files-sidebar">
+  <!-- Runtime Loop panel: run-history scrubber + node list.
+       loop-logic.js populates both. Click a run to replay that
+       page; click a node to focus + open its overlay. -->
+          <div class="files-sidebar-panel" id="files-panel-runtime-loop" data-view="runtime-loop" hidden>
+            <div class="files-sidebar-header">
+              <div class="files-sidebar-actions">
+                <button class="files-icon-btn" id="rl-refresh" title="Refresh"><i data-lucide="refresh-cw" class="lucide-icon"></i></button>
+              </div>
+            </div>
+            <div class="rl-body">
+              <div class="rl-section">
+                <div class="rl-section-title">Run history</div>
+                <div class="rl-pages" id="rl-pages">
+                  <div class="rl-empty">No runs yet</div>
+                </div>
+              </div>
+              <div class="rl-section">
+                <div class="rl-section-title">Nodes</div>
+                <div class="rl-nodes" id="rl-nodes"></div>
+              </div>
+            </div>
+          </div>
+</template>
+
+<template data-slot="#admin-tools">
+  <!-- Runtime Loop main (formerly the top-level Runtime Loop tab) —
+       the agent-loop graph visualizer. -->
+        <main class="files-main" id="files-runtime-loop-main" data-view="runtime-loop" hidden>
+          <div id="loop-visual-container">
+            <div id="loop-visual-toolbar">
+              <span style="color:var(--fg-3);font-size:11px;display:inline-flex;align-items:center;gap:4px;"><i data-lucide="repeat" style="width:12px;height:12px;"></i> Agent Loop</span>
+              <div id="loop-visual-pages"></div>
+              <div id="loop-visual-legend">
+                <span class="lv-legend-item"><span class="lv-legend-dot" style="background:#2a2a4a;"></span> idle</span>
+                <span class="lv-legend-item"><span class="lv-legend-dot" style="background:#7dcfff;"></span> active</span>
+                <span class="lv-legend-item"><span class="lv-legend-dot" style="background:#9ece6a;"></span> done</span>
+                <span class="lv-legend-item"><span class="lv-legend-dot" style="background:#f7768e;"></span> error</span>
+              </div>
+            </div>
+            <div id="loop-visual-graph-area">
+              <div class="loop-visual-hint">Agent loop visualizer — connect to see events light up the graph</div>
+            </div>
+          </div>
+        </main>
+</template>

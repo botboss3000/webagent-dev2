@@ -1,0 +1,21 @@
+{
+  "display_name": "BTCPay Server",
+  "kind": "ability",
+  "icon": "bitcoin",
+  "color": "#51b13e",
+  "description": "Query and create hosted Bitcoin and Lightning invoices on BTCPay Server.",
+  "note": "Connect a self-hosted or managed BTCPay Server Greenfield API token.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["btcpay_list_invoices", "btcpay_get_invoice", "btcpay_create_invoice"],
+  "order": 10,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["server_url", "store_id", "api_key"],
+    "fields": [
+      {"key": "server_url", "label": "Server URL", "type": "text", "placeholder": "https://btcpay.example.com"},
+      {"key": "store_id", "label": "Store ID", "type": "text", "placeholder": "BTCPay store ID"},
+      {"key": "api_key", "label": "Greenfield API key", "type": "password", "secret": true, "placeholder": "API token"}
+    ]
+  }
+}

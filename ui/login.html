@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Login</title>
+<link rel="icon" href="./ui/favicon.svg" type="image/svg+xml">
+<!-- Theme: load the single-source palette + the admin's live overrides so this
+     standalone gate follows the app theme (dark/light) like every other page.
+     Served at /login.html, so reference shared assets absolutely. -->
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<script src="/ui/shared/js/appearance.js"></script>
+<style>
+/* No arrow buttons on scrollbars — thumb-only pills (matches the app). */
+::-webkit-scrollbar-button { display: none; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  background: var(--bg-0);
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  height: 100dvh;
+}
+/* ── Login page ── */
+.login-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+/* Glowing bot logo (matches the app boot curtain) */
+.boot-gate-loader {
+  position: relative; width: 72px; height: 72px;
+  display: flex; align-items: center; justify-content: center;
+}
+.boot-gate-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 3px solid rgba(var(--brand-rgb), 0.16);
+  border-top-color: var(--accent);
+  animation: bootGateSpin 0.9s linear infinite;
+}
+.boot-gate-mark {
+  width: 30px; height: 30px; color: var(--accent);
+  animation: bootGatePulse 1.8s ease-in-out infinite;
+}
+@keyframes bootGateSpin { to { transform: rotate(360deg); } }
+@keyframes bootGatePulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.92); }
+  50%      { opacity: 1;   transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot-gate-ring, .boot-gate-mark { animation: none; }
+}
+/* Login card */
+.login-card {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px;
+  width: 340px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.5);
+}
+.login-card h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--fg-1);
+}
+.login-card .sub {
+  font-size: 13px;
+  color: var(--fg-3);
+  margin-bottom: 20px;
+}
+.form-group {
+  margin-bottom: 14px;
+}
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 5px;
+}
+.form-group input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-group input:focus {
+  border-color: var(--brand);
+}
+.form-group input::placeholder {
+  color: var(--fg-4);
+}
+.remember-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.remember-row input { accent-color: var(--brand); width: 15px; height: 15px; cursor: pointer; }
+.remember-row label { cursor: pointer; }
+.btn-login {
+  width: 100%;
+  padding: 11px;
+  background: var(--brand);
+  border: none;
+  border-radius: 8px;
+  color: var(--bg-0);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-login:hover { background: var(--brand-strong); }
+.btn-login:disabled {
+  background: var(--bg-tint);
+  color: var(--fg-3);
+  cursor: not-allowed;
+}
+.error-msg {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 10px;
+  display: none;
+}
+.loading {
+  display: none;
+  color: var(--fg-3);
+  font-size: 13px;
+  margin-top: 10px;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="login-page">
+  <div class="boot-gate-loader">
+    <span class="boot-gate-ring"></span>
+    <svg class="boot-gate-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 8V4H8"/>
+      <rect width="16" height="12" x="4" y="8" rx="2"/>
+      <path d="M2 14h2"/><path d="M20 14h2"/>
+      <path d="M15 13v2"/><path d="M9 13v2"/>
+    </svg>
+  </div>
+
+  <div class="login-card">
+    <h1>Sign in</h1>
+    <p class="sub">Enter your credentials to access the app.</p>
+
+    <form id="login-form" autocomplete="off">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="text" id="email" placeholder="admin or your@email.com" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="••••••" autocomplete="current-password">
+      </div>
+      <div class="remember-row">
+        <input type="checkbox" id="remember-me" checked>
+        <label for="remember-me">Remember me</label>
+      </div>
+      <button type="submit" class="btn-login" id="login-btn">Sign In</button>
+      <div class="error-msg" id="error-msg">Invalid email or password</div>
+      <div class="loading" id="loading">Signing in…</div>
+    </form>
+  </div>
+</div>
+
+<script>
+// ── Check if app needs setup first ──
+(async function checkSetup() {
+  try {
+    const res = await fetch('/api/v1/auth/setup-status');
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.initialized) {
+        window.location.href = '/setup.html';
+        return;
+      }
+    }
+  } catch (e) {}
+  // If setup check passed, proceed to auto-login
+  tryAutoLogin();
+})();
+
+// ── Try auto-login via remember token, then go home ──
+async function tryAutoLogin() {
+  const rememberToken = localStorage.getItem('remember_token');
+  if (!rememberToken) return;
+  try {
+    const res = await fetch('/api/v1/auth/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remember_token: rememberToken }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('auth_username', data.username);
+      localStorage.setItem('auth_user_id', data.user_id);
+      localStorage.setItem('auth_display_name', data.display_name);
+      window.location.href = '/';
+      return;
+    }
+    localStorage.removeItem('remember_token');
+  } catch (e) {
+    localStorage.removeItem('remember_token');
+  }
+}
+
+// ── Manual login form submit ──
+function loginDeviceId() {
+  const key = 'webagent_device_id';
+  let value = localStorage.getItem(key) || '';
+  if (!value) {
+    try {
+      const encoded = (localStorage.getItem('auth_token') || '').split('.')[1]
+        .replace(/-/g, '+').replace(/_/g, '/');
+      const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+      value = String(JSON.parse(atob(padded)).device_id || '');
+    } catch (_) {}
+  }
+  if (!value) {
+    value = globalThis.crypto?.randomUUID?.().replace(/-/g, '')
+      || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  }
+  localStorage.setItem(key, value);
+  return value;
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const rememberMe = document.getElementById('remember-me').checked;
+  const btn = document.getElementById('login-btn');
+  const error = document.getElementById('error-msg');
+  const loading = document.getElementById('loading');
+
+  error.style.display = 'none';
+  btn.disabled = true;
+  loading.style.display = 'block';
+  loading.textContent = 'Signing in…';
+
+  try {
+    const res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        remember_me: rememberMe,
+        device_id: loginDeviceId(),
+      }),
+    });
+    if (!res.ok) {
+      error.style.display = 'block';
+      btn.disabled = false;
+      loading.style.display = 'none';
+      return;
+    }
+    const data = await res.json();
+
+    localStorage.setItem('auth_token', data.access_token);
+    localStorage.setItem('auth_username', data.username);
+    localStorage.setItem('auth_user_id', data.user_id);
+    localStorage.setItem('auth_display_name', data.display_name);
+    if (data.remember_token) {
+      localStorage.setItem('remember_token', data.remember_token);
+    } else {
+      localStorage.removeItem('remember_token');
+    }
+
+    window.location.href = '/';
+  } catch (err) {
+    error.textContent = 'Connection error. Is the server running?';
+    error.style.display = 'block';
+    btn.disabled = false;
+    loading.style.display = 'none';
+  }
+});
+</script>
+</body>
+</html>

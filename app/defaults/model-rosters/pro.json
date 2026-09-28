@@ -1,0 +1,11 @@
+{
+  "id": "roster-pro",
+  "slug": "roster-pro",
+  "name": "Pro platform models",
+  "description": "Platform-funded models available to Pro users.",
+  "entries": [],
+  "default_entry_id": null,
+  "status": "published",
+  "revision": 1,
+  "source": "system-seed"
+}

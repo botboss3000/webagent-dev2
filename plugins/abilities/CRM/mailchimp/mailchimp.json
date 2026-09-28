@@ -1,0 +1,12 @@
+{
+  "display_name": "Mailchimp",
+  "kind": "placeholder",
+  "icon": "mail",
+  "color": "#bb9af7",
+  "description": "Email campaigns and audiences.",
+  "note": "Free OAuth — Mailchimp has free and paid tiers.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 3
+}

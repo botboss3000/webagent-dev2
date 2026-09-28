@@ -1,0 +1,446 @@
+<!-- FLAT HEADER CONTROL POOL — controls can be placed here with data-header-control
+     for backward compat, OR loaded dynamically from ui/chat/elements/.
+     chat-controls-config.js checks static DOM first, then falls back to the manifest. -->
+<div id="chat-header">
+  <!-- agent_name — name + agent-dropdown-menu; wrapper keeps its flex rules -->
+  <span class="chat-header-name-row" data-header-control="agent_name">
+    <span id="chat-header-agent-name" class="chat-header-agent-name" style="display:none;"></span>
+  </span>
+  <div id="agent-dropdown-menu" class="agent-dropdown-menu" role="menu" hidden></div>
+  <!-- new_session — (+) button -->
+  <button id="session-new-header-btn" class="session-new-header-btn" title="New session" type="button" data-header-control="new_session"><i data-lucide="plus" style="width:18px;height:18px;"></i></button>
+  <!-- session_prev — previous pinned session, standalone -->
+  <button id="session-prev-btn" class="session-nav-btn" title="Previous pinned session" type="button" data-header-control="session_prev"><i data-lucide="arrow-big-left" style="width:22px;height:22px;"></i></button>
+  <!-- session_next — next pinned session, standalone -->
+  <button id="session-next-btn" class="session-nav-btn" title="Next pinned session" type="button" data-header-control="session_next"><i data-lucide="arrow-big-right" style="width:22px;height:22px;"></i></button>
+  <!-- session_dropdown — the trigger IS a session-row (no chevron) matching the menu rows -->
+  <div id="session-dropdown" class="session-dropdown" data-header-control="session_dropdown">
+    <div id="session-dropdown-trigger" class="session-dropdown-trigger" role="button" tabindex="0" title="Show sessions" aria-label="Show sessions">
+      <span class="session-row-agent-icon" id="session-dropdown-icon"><i data-lucide="bot" style="width:14px;height:14px;"></i></span>
+      <span class="session-row-title" id="session-dropdown-label">—</span>
+      <span class="session-row-status" id="session-dropdown-status"></span>
+      <button class="session-row-kebab" id="session-dropdown-kebab" title="More…" data-id=""><i data-lucide="more-vertical" style="width:14px;height:14px;"></i></button>
+      <button class="session-row-delete" id="session-dropdown-delete" title="Delete session" data-id=""><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+    </div>
+    <div id="session-dropdown-menu" class="session-dropdown-menu" hidden></div>
+  </div>
+  <!-- Not a configurable header control — stays in flow, hidden/visible by other JS -->
+  <span id="tui-bridge-indicator" class="tui-bridge-indicator" style="display:none;" title="TUI agent bridge active">&#x1F5A5;&#xFE0F;</span>
+  <!-- ── Session notification panel ─────────────────────────────────────────
+     A single draggable panel (like the chat widget frame) that shows completed
+     session notifications as rows. Positioned fixed at top-right; drag the
+     header to move. Uses design-system variables for theme fidelity. ──── -->
+  <div id="session-notification-container" hidden></div>
+
+  <style>
+  /* ── Session Notification Panel ──────────────────────────────────────────
+     Single draggable panel with notification rows — reuses chat-widget
+     frame patterns: fixed positioning, drag-to-float on header pointerdown,
+     same border/shadow/header styling.                                    */
+
+  #session-notification-container {
+    position: fixed;
+    top: 110px;
+    right: 16px;
+    z-index: 8600;
+    display: flex;
+  }
+  /* The hidden attribute must win over the ID selector above, otherwise
+     the empty panel shell renders as a visible card before any notification
+     rows are added. */
+  #session-notification-container[hidden] {
+    display: none;
+  }
+  #session-notification-container:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+    width: 320px;
+    max-height: min(400px, 55vh);
+    background: var(--bg-elev);
+    border: var(--border-width) solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.35);
+    overflow: hidden;
+    pointer-events: auto;
+  }
+  body.light-mode #session-notification-container {
+    box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.15);
+  }
+  /* Floating state: explicit coords set by JS after drag */
+  #session-notification-container.sn-floating {
+    /* left/top/right/bottom set inline by JS */
+  }
+  body.sn-dragging, body.sn-dragging * { cursor: inherit !important; user-select: none !important; }
+
+  /* ── Header (draggable) ── */
+  .sn-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: var(--border-width) solid var(--border-soft);
+    flex-shrink: 0;
+    user-select: none;
+    cursor: grab;
+    touch-action: none;
+  }
+  body.sn-dragging .sn-header { cursor: grabbing; }
+
+  .sn-head-icon {
+    color: var(--success);
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .sn-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sn-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+    background: var(--bg-tint);
+    border-radius: 10px;
+    padding: 2px 8px;
+    flex-shrink: 0;
+  }
+
+  .sn-icon-btn {
+    background: none;
+    border: none;
+    color: var(--fg-3);
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: 0.15s;
+  }
+  .sn-icon-btn:hover {
+    color: var(--fg-1);
+    background: var(--bg-tint);
+  }
+
+  /* "Clear all" text action — sits immediately left of the close X in the
+     header's top-right action group. Muted by default so it reads as a
+     secondary action beside the icon button, and themed with the same
+     variables so it tracks both themes. */
+  .sn-clear-all {
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--fg-3);
+    border-radius: var(--r-xs);
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+    transition: color 0.15s, background 0.15s;
+  }
+  .sn-clear-all:hover {
+    color: var(--fg-1);
+    background: var(--bg-tint);
+  }
+  .sn-clear-all[hidden] { display: none; }
+
+  /* ── Body (rows) ── */
+  .sn-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
+  }
+
+  .sn-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .sn-row:hover {
+    background: var(--bg-tint);
+  }
+
+  /* The flag glyph — its SHAPE names the flag and its tone (below) colours it.
+     The flag rides here rather than on its own text line, so the row can lead
+     with the session name. */
+  .sn-row-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: rgba(var(--success-rgb), 0.12);
+    color: var(--success);
+  }
+
+  .sn-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  /* Line 1 — the session name. */
+  .sn-row-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-1);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Line 2 — the closer's own note for this run (its call-to-action). Hidden
+     outright when the session carries none, so the row collapses to two lines
+     rather than leaving a blank line. */
+  .sn-row-note {
+    font-size: 10px;
+    color: var(--fg-3);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sn-row-note[hidden] { display: none; }
+
+  /* Line 3 — the live relative-time counter. */
+  .sn-row-time {
+    font-size: 10px;
+    color: var(--fg-3);
+    line-height: 1.3;
+  }
+
+  /* Flag tone — the icon takes the session's RESOLVED flag hue instead of always
+     reading green. warning = needs_input / partial / unverified; danger = error;
+     neutral = stopped / running / queued. Hues track the chip tones in
+     ui/shared/css/app1.css (.session-needs-input-chip.flag-tone-*). */
+  .sn-row[data-flag="needs_input"] .sn-row-icon,
+  .sn-row[data-flag="partial"] .sn-row-icon,
+  .sn-row[data-flag="unverified"] .sn-row-icon {
+    background: rgba(var(--warning-rgb), 0.12);
+    color: var(--warning);
+  }
+
+  .sn-row[data-flag="error"] .sn-row-icon {
+    background: rgba(var(--danger-rgb), 0.12);
+    color: var(--danger);
+  }
+
+  .sn-row[data-flag="interrupted"] .sn-row-icon,
+  .sn-row[data-flag="running"] .sn-row-icon,
+  .sn-row[data-flag="queued"] .sn-row-icon {
+    background: rgba(var(--ink-rgb), 0.08);
+    color: var(--fg-3);
+  }
+
+  /* The ITEM itself takes its flag's tone, so a row reads as its flag before its
+     glyph does — the same treatment the header pills and the sessions-page chip
+     tones use. An inset accent bar carries the hue into the row's left edge
+     without changing its box, so nothing shifts. These rules sit after
+     .sn-row:hover on purpose: the tint must survive hover, and the dismiss button
+     (revealed on hover) is the affordance instead of a background swap. */
+  .sn-row[data-flag="complete"] {
+    background: rgba(var(--success-rgb), 0.07);
+    box-shadow: inset 2px 0 0 rgba(var(--success-rgb), 0.55);
+  }
+
+  .sn-row[data-flag="needs_input"],
+  .sn-row[data-flag="partial"],
+  .sn-row[data-flag="unverified"] {
+    background: rgba(var(--warning-rgb), 0.09);
+    box-shadow: inset 2px 0 0 rgba(var(--warning-rgb), 0.60);
+  }
+
+  .sn-row[data-flag="error"] {
+    background: rgba(var(--danger-rgb), 0.08);
+    box-shadow: inset 2px 0 0 rgba(var(--danger-rgb), 0.55);
+  }
+
+  .sn-row[data-flag="interrupted"],
+  .sn-row[data-flag="running"],
+  .sn-row[data-flag="queued"] {
+    background: rgba(var(--ink-rgb), 0.05);
+    box-shadow: inset 2px 0 0 rgba(var(--ink-rgb), 0.22);
+  }
+
+  .sn-row-close {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    opacity: 0;
+  }
+  .sn-row:hover .sn-row-close { opacity: 1; }
+  .sn-row-close:hover {
+    color: var(--fg-1);
+    background: var(--accent-soft);
+  }
+
+  /* ── Empty state ── */
+  .sn-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 12px;
+    font-size: 12px;
+    color: var(--fg-3);
+  }
+  </style>
+</div>
+<section id="chat-sub-header" style="display:none;" data-header-control="sub_agent_tabs" aria-label="Session tabs">
+  <button type="button" class="sub-carousel-chev left" aria-label="Scroll left">&#10094;</button>
+  <div id="chat-sub-scroll-wrap"></div>
+  <!-- Anchor navigation uses the same user-turn targets as transcript scrolling. -->
+  <div id="chat-anchor-nav" class="chat-anchor-nav" aria-label="User message navigation" hidden>
+    <button id="chat-anchor-prev-btn" class="chat-anchor-nav-btn" type="button" title="Jump to the previous user message" aria-label="Jump to the previous user message"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"></polyline></svg></button>
+    <button id="chat-anchor-next-btn" class="chat-anchor-nav-btn" type="button" title="Jump to the next user message" aria-label="Jump to the next user message"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+  </div>
+  <button type="button" class="sub-carousel-chev right" aria-label="Scroll right">&#10095;</button>
+</section>
+<div id="chat-messages">
+  <div id="chat-messages-inner">
+    <div id="chat-spinner-top" class="chat-spinner-edge" aria-hidden="true">
+      <span class="chat-spinner-icon"></span>
+      <span class="chat-spinner-label"></span>
+    </div>
+  </div>
+</div>
+<div id="chat-spinner-bottom" class="chat-spinner-edge bottom" aria-hidden="true">
+  <span class="chat-spinner-icon"></span>
+  <span class="chat-spinner-label"></span>
+</div>
+<div id="chat-input-area">
+  <div id="chat-suggest-row" class="chat-suggest-row" aria-label="Suggested replies"></div>
+  <div id="chat-above-pill" class="chat-above-pill">
+    <div id="chat-activity-panel" class="chat-activity-panel" role="region" aria-label="Tool calls this turn" hidden></div>
+    <button type="button" id="chat-activity-bar" class="chat-activity-bar" aria-expanded="false" aria-controls="chat-activity-panel" title="Show tool calls from this turn" data-header-control="activity">
+      <span class="chat-activity-text" aria-live="polite" aria-atomic="true"></span>
+      <span class="chat-activity-chevron" aria-hidden="true">&#x203A;</span>
+    </button>
+  </div>
+  <div id="chat-billing-panel" class="chat-billing-panel" hidden></div>
+  <!-- ── Agent component panel (CHAT-COMPONENT-PANEL) ───────────────────────
+     Single surface for declarative chat components (present_chat_component).
+     FULL VIEW is the panel's only open state (CHAT-COMPONENT-FULL-VIEW): the
+     panel opens as a full-height overlay pinned below the chat header tabs and
+     ABOVE the composer (the composer stays visible and usable), as wide as the
+     transcript's content width (chat_ui.json content_max_width). There is no
+     drawer state and no expand control; the header tabs open it and (—) closes
+     it. Geometry is measured by js/chat-components.js (_positionFullView).
+     Owned by js/chat-components.js. The panel itself owns its fixed-view geometry;
+     there is deliberately no transparent intermediate wrapper. -->
+  <div id="chat-component-panel" class="chat-component-panel" role="region" aria-label="Agent panel" aria-hidden="true">
+    <div class="chat-component-panel-head">
+      <span class="chat-component-panel-type-icon" id="chat-component-panel-type-icon" aria-hidden="true"></span>
+      <span class="chat-component-panel-title" id="chat-component-panel-title">Agent panel</span>
+      <button type="button" id="chat-component-panel-min" class="chat-component-panel-min" title="Close panel" aria-label="Close panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
+      </button>
+    </div>
+    <div id="chat-component-panel-body" class="chat-component-panel-body"></div>
+  </div>
+  <!-- Keep the static composer usable while boot auth and the configurable
+       controls builder settle. This is the same canonical two-row structure
+       as the hydrated active pill: textarea above, then Attach and Send in the
+       padded bottom corners. Optional active controls stay parked below and
+       hidden until the JSON-driven renderer takes ownership. -->
+  <div id="chat-composer-react-island"></div>
+  <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
+    <div id="chat-preview-bar" style="display:none;"></div>
+    <div class="chat-pill-layout-rows">
+      <div class="chat-pill-layout-row" data-pill-row="0">
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-center">
+          <textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" autocapitalize="off" autocorrect="on" spellcheck="true"></textarea>
+        </div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div>
+      </div>
+      <div class="chat-pill-layout-row" data-pill-row="1">
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-left" style="align-items:flex-end;padding:4px 2px 20px 20px;">
+          <button id="chat-attach-btn" class="chat-pill-attach" title="Attach files (or paste / drop onto the chat pill)"><i data-lucide="plus" style="width:22px;height:22px;"></i></button>
+        </div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-center"></div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-right" style="align-items:flex-end;padding:4px 20px 20px 0;">
+          <div class="chat-pill-buttons">
+            <button id="chat-voice-btn" class="chat-pill-voice" title="Voice conversation" aria-label="Voice conversation"><i data-lucide="mic" style="width:22px;height:22px;"></i></button>
+            <button id="chat-send" class="chat-pill-send" title="Send message" disabled><i data-lucide="send" style="width:22px;height:22px;"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="chat-pill-stats-row" class="chat-pill-stats-row">
+      <div id="chat-pill-stats" class="chat-pill-stats">
+        <button type="button" class="chat-stats-chev left" aria-label="Scroll left">&#10094;</button>
+        <div id="chat-pill-stats-strip" class="chat-pill-stats-strip">
+          <div id="chat-token-bar" class="chat-token-bar">
+            <span class="chat-token-label">in</span>
+            <span id="chat-tokens-in" class="chat-token-value">0</span>
+            <span id="chat-token-spinner" class="chat-token-spinner"></span>
+            <span id="chat-tokens-out" class="chat-token-value">0</span>
+            <span class="chat-token-label">out</span>
+          </div>
+          <div id="chat-model-ctx" class="chat-model-ctx" style="display:none;" title="Active model's context window and max output"></div>
+          <div id="chat-cost" class="chat-cost" style="display:none;" title="Estimated cost of this session so far (tokens used x active model's price)"></div>
+        </div>
+        <button type="button" class="chat-stats-chev right" aria-label="Scroll right">&#10095;</button>
+      </div>
+    </div>
+    <button id="chat-stop-btn" class="chat-pill-stop" title="Stop generation" data-header-control="stop" hidden><i data-lucide="octagon" style="width:18px;height:18px;"></i></button>
+    <button id="chat-continue-btn" class="chat-pill-continue" title="Continue" data-header-control="continue" hidden><i data-lucide="play" style="width:18px;height:18px;"></i></button>
+    <input type="file" id="chat-file-input" multiple accept="image/*,audio/*,video/*,.pdf,.txt,.md,.csv,.json" hidden>
+    <div id="chat-footer-handle" class="chat-footer-handle" title="Drag to show/hide footer" aria-expanded="false" aria-controls="chat-footer-row">
+      <div class="chat-footer-handle-line"></div>
+    </div>
+  </div>
+  <div id="chat-footer-row" class="chat-footer-row" hidden>
+    <button id="chat-abilities-btn" class="chat-skills-btn" title="Abilities — click to turn each on/off for this chat" data-header-control="abilities">
+      <i data-lucide="blocks" style="width:16px;height:16px;"></i>
+      <span id="chat-abilities-badge" class="csp-badge">0</span>
+    </button>
+    <button id="chat-target-btn" class="chat-target-btn" type="button" title="Remote Control — choose which device runs your next message" data-header-control="target"><i data-lucide="monitor" style="width:16px;height:16px;"></i><span class="chat-target-label"></span></button>
+    <button id="chat-mode-btn" class="chat-mode-btn" title="Cycle execution mode" data-header-control="mode">Ask</button>
+    <button id="chat-model-changer" class="chat-model-changer" data-header-control="model_changer" title="Click for model list — ◀ ▶ arrows to cycle" type="button">
+      <svg class="cmc-chev cmc-chev-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      <span class="cmc-name">model</span>
+      <span class="cmc-status"></span>
+      <svg class="cmc-chev cmc-chev-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+    </button>
+    <div id="cmc-toast" class="cmc-toast" style="display:none;"></div>
+  </div>
+</div>

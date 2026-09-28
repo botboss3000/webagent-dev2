@@ -1,0 +1,54 @@
+{
+  "display_name": "SQL Databases",
+  "kind": "ability",
+  "icon": "database",
+  "color": "#7dcfff",
+  "description": "Connect read-only business databases so the agent can inspect approved schemas, answer questions with live SQL, and recall relevant records before a turn.",
+  "skill_summary": "How to inspect and safely query connected SQL knowledge sources, distinguish live database facts from durable memory, and cite the connection, table, and row behind an answer.",
+  "skill_mode": "selectable",
+  "note": "PostgreSQL is available now. MySQL/MariaDB and SQL Server will join this same ability when their adapters are implemented. This does not configure WebAgent's own application database.",
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "entitlement_group": "memory",
+  "risk_class": "read",
+  "action_class": "read",
+  "ui_panel": "sql_connections",
+  "tools": [
+    "sql_list_connections",
+    "sql_describe",
+    "sql_search",
+    "sql_query"
+  ],
+  "config": {
+    "settings": [
+      {
+        "key": "sql_query_enabled",
+        "label": "Allow Live Queries",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Let this agent issue read-only SELECT queries against approved tables."
+      },
+      {
+        "key": "sql_recall_enabled",
+        "label": "Automatic Recall",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Search configured knowledge columns before substantive turns and inject a few cited excerpts."
+      },
+      {
+        "key": "sql_max_rows",
+        "label": "Maximum Query Rows",
+        "type": "number",
+        "default": 100,
+        "min": 1,
+        "max": 1000,
+        "ceiling": "max",
+        "hint": "Hard result cap applied even when generated SQL omits LIMIT."
+      }
+    ]
+  },
+  "order": 4
+}

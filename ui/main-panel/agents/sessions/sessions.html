@@ -1,0 +1,98 @@
+<!-- Control staging area. Stateful title-bar controls remain hidden here so
+     footer controls can preserve their listeners and current search text. -->
+<div id="sessions-toolbar" hidden>
+  <div id="sessions-header-actions" class="sessions-header-actions">
+    <i id="sessions-loading-spinner" data-lucide="loader-2" class="sessions-toolbar-spinner" style="width:13px;height:13px;display:none;"></i>
+    <span id="sessions-loading-status" class="sessions-loading-status" aria-live="polite"></span>
+    <button type="button" id="sessions-search-trigger" class="sessions-header-icon" title="Search sessions" aria-label="Search sessions" aria-expanded="false" aria-controls="sessions-search-panel">
+      <i data-lucide="search" style="width:15px;height:15px;"></i>
+    </button>
+    <button type="button" id="sessions-more-trigger" class="sessions-header-icon" title="More session options" aria-label="More session options" aria-expanded="false" aria-controls="sessions-more-panel">
+      <i data-lucide="more-vertical" style="width:16px;height:16px;"></i>
+    </button>
+    <div id="sessions-search-panel" class="sessions-header-popover sessions-search-popover" hidden>
+      <button type="button" id="sessions-search-mode-btn" class="sessions-search-mode-btn" data-mode="content" title="Search mode: Title + Content">T+C</button>
+      <div class="sessions-search-wrap">
+        <i data-lucide="search" class="sessions-search-icon" style="width:14px;height:14px;"></i>
+        <input type="text" id="sessions-search-input" class="sessions-search-input" placeholder="Search sessions" spellcheck="false" autocomplete="off">
+        <span id="sessions-msg-scanning" class="sessions-msg-scanning" title="Searching messages…"></span>
+        <button type="button" id="sessions-search-clear" class="sessions-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">
+          <i data-lucide="x" style="width:13px;height:13px;"></i>
+        </button>
+      </div>
+    </div>
+    <div id="sessions-more-panel" class="sessions-header-popover sessions-more-popover" hidden>
+      <button type="button" id="sessions-refresh-btn" class="sessions-popover-item"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i><span>Refresh</span></button>
+      <div class="sessions-popover-separator"></div>
+      <button type="button" class="sessions-popover-item sessions-view-option" data-view="sessions"><i data-lucide="message-square" style="width:15px;height:15px;"></i><span>Active Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+      <button type="button" class="sessions-popover-item sessions-view-option" data-view="recycle-bin"><i data-lucide="recycle" style="width:15px;height:15px;"></i><span>Recycled Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+      <button type="button" class="sessions-popover-item sessions-view-option" data-view="both"><i data-lucide="layers" style="width:15px;height:15px;"></i><span>All Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+    </div>
+  </div>
+</div>
+
+<aside id="sessions-selection-panel" class="sessions-selection-panel" hidden aria-label="Selected session actions">
+  <div id="sessions-selection-panel-header" class="sessions-selection-panel-header">
+    <span id="sessions-selection-count">0 sessions selected</span>
+    <i data-lucide="grip-horizontal" aria-hidden="true"></i>
+  </div>
+  <div class="sessions-selection-panel-actions">
+    <button type="button" id="sessions-undo-btn" class="sessions-selection-panel-btn" data-state="trash" title="Undo recycling selected sessions" aria-label="Undo recycling selected sessions" hidden><i data-lucide="undo-2"></i></button>
+    <button type="button" id="sessions-trash-btn" class="sessions-selection-panel-btn sessions-tb-trash" data-state="trash" title="Move selected to the recycling bin" aria-label="Delete selected sessions"><i data-lucide="trash-2"></i></button>
+    <button type="button" id="sessions-clear-selection-btn" class="sessions-selection-panel-btn" title="Clear session selection"><i data-lucide="x"></i><span>Clear</span></button>
+  </div>
+</aside>
+
+<!-- Scrollable table area -->
+<div id="sessions-table-wrap">
+  <div id="sessions-table-inner">
+    <table id="sessions-table">
+      <thead id="sessions-table-head">
+        <!-- Built dynamically from column config -->
+      </thead>
+      <tbody id="sessions-table-body">
+        <!-- Populated by JS -->
+      </tbody>
+    </table>
+  </div>
+  <div id="sessions-empty" class="sessions-empty" style="display:none;">
+    <div class="sessions-empty-icon"><i data-lucide="message-square" style="width:28px;height:28px;"></i></div>
+    <div class="sessions-empty-text">No sessions yet</div>
+    <div class="sessions-empty-hint">Start a conversation with an agent to see it here</div>
+  </div>
+  <div id="sessions-loading" class="sessions-loading" style="display:none;">
+    <i data-lucide="loader-2" style="width:18px;height:18px;" class="lucide-spin"></i>
+    <span>Loading sessions…</span>
+  </div>
+</div>
+<footer id="sessions-footer" class="session-manage-row sessions-footer" aria-label="Session management">
+  <button type="button" class="session-manage-checkbox-toggle sessions-footer-gutter-toggle" data-sessions-footer-gutter title="Hide selection column" aria-label="Hide selection column" aria-pressed="true"><i data-lucide="square" style="width:15px;height:15px;"></i></button>
+  <!-- SESSION-GUTTER-CHECK-ALL — select-all/clear-all twin of the gutter toggle.
+       Only visible while the selection column is open; painted by
+       _syncToggleButtons()/_syncFooterCheckAll() in sessions-page.js. Keep in
+       sync with ui/main-panel/agents/agents.html (#sessions-footer and
+       #agents-sessions-footer-dock). -->
+  <button type="button" class="session-manage-checkbox-toggle sessions-footer-check-all" data-sessions-footer-checkall title="Select all sessions" aria-label="Select all sessions" aria-pressed="false" hidden><i data-lucide="check-square" style="width:15px;height:15px;"></i></button>
+  <!-- SESSION-FOOTER-FILTERS — the footer carries no search FIELD of its own:
+       the shared page-chat launcher drives the table's engine input directly
+       (hiddenSearchSelector in ui/shared/js/agents-page-chat-widget.js). Only
+       the controls the launcher does not own stay here — the Title/T+C mode
+       chip and the FLAG filter. Keep in sync with the two copies in
+       ui/main-panel/agents/agents.html (#sessions-footer and
+       #agents-sessions-footer-dock). -->
+  <span class="session-manage-search">
+    <button type="button" class="session-manage-search-mode" data-sessions-footer-mode title="Search mode: Title">Title</button>
+    <button type="button" class="session-manage-flag-filter" data-sessions-footer-flag data-state="off" title="Show only sessions with a flag" aria-pressed="false">FLAG</button>
+  </span>
+  <span class="session-manage-actions">
+    <button type="button" class="session-manage-bin" data-sessions-footer-view="recycle-bin" title="Recycled sessions" aria-label="Recycled sessions"><i data-lucide="recycle" style="width:15px;height:15px;"></i></button>
+    <button type="button" class="session-manage-eye" data-sessions-footer-view="both" title="All sessions" aria-label="All sessions"><i data-lucide="eye-off" style="width:15px;height:15px;"></i></button>
+  </span>
+  <!-- SESSION-STORAGE-METER — trailing element of the left-aligned control
+       strip; keep it last. Keep in sync with
+       ui/main-panel/agents/agents.html (#sessions-footer and
+       #agents-sessions-footer-dock). -->
+  <span class="session-manage-storage" data-sessions-footer-storage role="group" aria-label="Session storage usage">
+    <span class="session-storage-track" aria-hidden="true"><span class="session-storage-fill" data-storage-fill></span></span>
+  </span>
+</footer>

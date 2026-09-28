@@ -1,0 +1,12 @@
+{
+  "display_name": "Telegram",
+  "kind": "channel",
+  "icon": "send",
+  "color": "#26A5E4",
+  "description": "Send and receive messages via Telegram bot.",
+  "note": "Free — create a bot with @BotFather; each agent supplies its own token.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 1
+}

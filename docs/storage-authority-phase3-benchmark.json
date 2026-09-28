@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-07-31T03:46:04.349712+00:00",
+  "browser_gates_changed": false,
+  "workload": {
+    "provider": "sqlite-local",
+    "provider_backed": false,
+    "encrypted_transport": false,
+    "row_count": 5000,
+    "payload_bytes_per_row": 1024,
+    "cold_manifest_ms": 538.824,
+    "warm_manifest": {
+      "p50_ms": 0.301,
+      "p95_ms": 0.664,
+      "max_ms": 0.918
+    },
+    "estimated_full_transfer_bytes": 5120000,
+    "manifest_transfer_bytes": 182,
+    "transfer_reduction_ratio": 0.999964
+  },
+  "provider_workload": {
+    "status": "not-run",
+    "reason": "Pass --provider with WEBAGENT_PHASE3_PROVIDER_DSN"
+  }
+}

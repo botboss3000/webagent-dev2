@@ -1,0 +1,92 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  .dockerignore — keep the build context lean and secrets out of the image
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ── Dependencies (rebuilt in-container) ────────────────────────────────────────
+# The builder stage re-installs from requirements.txt, so no point copying them.
+# Uncomment if you vendor dependencies locally:
+# vendor/
+
+# ── Version control ────────────────────────────────────────────────────────────
+.git/
+.gitattributes
+.gitignore
+.gitmodules
+.svn/
+
+# ── IDE / Editor ───────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing / CI ───────────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+.tox/
+test*.py
+tests/
+__tests__/
+*.test.js
+
+# Runtime tenant data, encrypted vaults, uploads, and caches are bind-mounted.
+# They must never enter an image build context.
+data/
+.source-backups/
+
+# ── Secrets & config (never ship these) ────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.cer
+config/secrets.yml
+credentials.json
+service-account.json
+
+# ── Logs & temp ────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.pid
+*.bak
+*.orig
+/logs/
+
+# ── Docker (prevent recursive issues) ──────────────────────────────────────────
+Dockerfile
+.dockerignore
+docker-compose*.yml
+docker-compose*.yaml
+
+# ── Documentation (not needed at runtime) ──────────────────────────────────────
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+docs/
+mkdocs.yml
+
+# ── Container images / archives ────────────────────────────────────────────────
+*.tar
+*.tar.gz
+*.tgz
+
+# RECORDER-HOOK: development-only application plugin, supplied by the dev bind mount.
+# Keep it out of normal images; omit the folder from production source mounts too.
+plugins/recorder/

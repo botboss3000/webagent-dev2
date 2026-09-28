@@ -1,0 +1,9 @@
+{
+  "id": "_TEMPLATE",
+  "name": "Template background",
+  "description": "Copy this folder to ui/background/<your-id>/ and edit. Auto-discovered by the Appearance selector; no registration needed.",
+  "icon": "image",
+  "status": "experimental",
+  "order": 100,
+  "themes": ["dark", "light"]
+}

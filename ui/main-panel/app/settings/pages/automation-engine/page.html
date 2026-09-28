@@ -1,0 +1,107 @@
+<template data-slot="#settings-page-slot-automation-engine">
+<div class="settings-page" id="settings-page-automation-engine" data-pa-page="agent_settings" hidden>
+<div class="ac-category-group" id="ac-cat-automation-engine" data-pa-area="automation">
+    <div class="ac-category-summary">
+      <i data-lucide="clock" class="lucide-icon" class="ac-kv-ico-16-accent"></i>
+      <span class="ac-category-title">Automation Engine</span>
+    </div>
+    <div class="ac-category-body">
+
+      <div class="ac-list" id="ac-automation-engine-list">
+
+        <!-- ── Row 1 · Scheduler (time-based triggers) ── -->
+        <div class="ac-row" id="ac-sched-row">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="cpu" class="lucide-icon" class="ac-kv-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Scheduler</div>
+              <div class="ac-ability-desc">Runs time-based scheduled tasks at their due time. Pick the provider, configure it, then save.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-sched-active-badge"></span>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <label class="ac-label">Provider</label>
+            <select id="ac-sched-provider" class="ac-input">
+              <option value="local">Local (in-process)</option>
+            </select>
+
+            <div id="ac-sched-provider-desc" class="ac-hint" class="ac-kv-mt6-fs11"></div>
+
+            <div id="ac-sched-fields" class="ac-kv-mt12-stack10"></div>
+
+            <div class="ac-kv-tag-wrap-mt14">
+              <button id="ac-sched-test" class="ac-btn">Test Connection</button>
+              <button id="ac-sched-save" class="ac-btn ac-btn-primary">Save</button>
+              <button id="ac-sched-sync" class="ac-btn">Push All Jobs</button>
+              <button id="ac-sched-refresh" class="ac-btn">Refresh Status</button>
+            </div>
+
+            <div id="ac-sched-test-result" class="ac-kv-mt8-fs11-muted"></div>
+
+            <pre id="ac-sched-status" class="ac-kv-pre-box"></pre>
+
+            <div class="ac-info-banner" class="ac-kv-mt10-fs11">
+              The fire webhook (<code>POST /api/v1/automations/fire/&lt;id&gt;?token=&lt;...&gt;</code>) must be reachable from the chosen provider. Set <code>WEBHOOK_BASE_URL</code> to your public server URL, or fill in the per-provider <code>fire_base_url</code> field above.
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row 2 · Event runtime (the in-process event loops) ── -->
+        <div class="ac-row" id="ac-events-runtime-row">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="activity" class="lucide-icon" class="ac-kv-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Event runtime</div>
+              <div class="ac-ability-desc">The background loops that poll for events and refresh push subscriptions.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-events-runtime-badge"></span>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <div id="ac-events-runtime-info" class="ac-hint" class="ac-kv-fs11"></div>
+            <div class="ac-kv-tag-wrap-mt10">
+              <button id="ac-events-refresh" class="ac-btn">Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row 3 · Event sources (one row per connected service) ── -->
+        <div class="ac-row" id="ac-events-sources-row">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="list" class="lucide-icon" class="ac-kv-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Event sources</div>
+              <div class="ac-ability-desc">Each source plugin that can fire an agent. Use <em>Re-register</em> after recreating provider infrastructure (e.g. a new Pub/Sub topic); use <em>Stop all</em> before deleting it.</div>
+            </div>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <div id="ac-events-sources" class="ac-kv-stack10">
+              <div class="ac-kv-fs12-muted-p8">Loading sources…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row 4 · Recent deliveries (event log) ── -->
+        <div class="ac-row" id="ac-events-deliveries-row">
+          <div class="ac-ability-row">
+            <span class="ac-ability-icon"><i data-lucide="scroll-text" class="lucide-icon" class="ac-kv-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Recent deliveries</div>
+              <div class="ac-ability-desc">The last 50 fired events across all agents. <code>status=test</code> means a manual test-fire from the agent UI.</div>
+            </div>
+            <span class="ac-row-chevron"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div class="ac-ability-body">
+            <div id="ac-events-deliveries" class="ac-kv-mono-scroll">
+              <div>(no deliveries yet)</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /.ac-list -->
+    </div><!-- /.ac-category-body -->
+  </div>
+</div>
+</template>

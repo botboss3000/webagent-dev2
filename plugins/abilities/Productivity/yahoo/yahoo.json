@@ -1,0 +1,12 @@
+{
+  "display_name": "Yahoo",
+  "kind": "oauth",
+  "icon": "at-sign",
+  "color": "#4285F4",
+  "description": "Account identity only.",
+  "note": "Free OAuth — Yahoo exposes account identity only (no public Mail API).",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 4
+}

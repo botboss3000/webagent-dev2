@@ -1,0 +1,1478 @@
+/* ============================================================
+   WebAgent Design System — CSS Tokens + Visual Overrides
+   Loaded after app1-3.css to apply the floaty UI kit design.
+   Based on: ui_kits/webagent/index.html + colors_and_type.css
+   ============================================================ */
+
+/* ── 1. CSS Tokens ─────────────────────────────────────────── */
+:root {
+  /* ═══════════════════════════════════════════════════════════════════
+     PALETTE — THE ONE PLACE TO RE-THEME DARK MODE.
+     ───────────────────────────────────────────────────────────────────
+     Change the raw colours in THIS block (and its light-mode twin in
+     section 2) and the ENTIRE app — every panel, button, bubble, the
+     scrollbars, AND the animated starfield background — follows. No other
+     CSS file and no JS file holds a raw brand colour; they all reference
+     these tokens by name.
+
+     Each hue has an `-rgb` triple (e.g. `--brand-rgb: 125,207,255`). Feed
+     it to rgba() as `rgba(var(--brand-rgb), 0.2)` so a hue is written
+     exactly once and any opacity can be derived from it. The semantic
+     tokens below the palette are pure WIRING — leave them alone; they
+     resolve to whatever the palette says, per theme.
+
+     FOR AGENTS ADDING NEW UI: reference these tokens (var(--brand),
+     var(--accent), rgba(var(--brand-rgb), a), var(--success|warning|danger),
+     var(--purple))   — never paste a raw hex/rgb brand colour into a CSS or JS
+     file. CSS variables also resolve inside inline styles, so JS uses them too
+     (el.style.background = 'rgba(var(--brand-rgb), 0.12)'). Need a colour that
+     doesn't exist? Add a token HERE (this block AND its body.light-mode twin),
+     then reference it. Animated BACKGROUNDS are now drop-in plugins under
+     ui/background/<id>/ and each owns its own colour tokens in its folder CSS
+     (e.g. Stargaze's --sg-* moved to ui/background/stargaze/stargaze.css) —
+     derived from this palette but self-contained, so deleting a background
+     folder removes its look and its tokens together. See docs/claude/ui-guidance.md.
+
+     KNOWN EXCEPTIONS that deliberately own their colours and will NOT follow a
+     palette swap (don't try to "fix" them): the agent-loop visualizer
+     (ui/agents/agent-loop/loop-visual.css), the terminal ANSI palette
+     (ui/shared/js/terminal.js). Full list → docs/claude/ui-guidance.md.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* Brand / accent — DARK default = white */
+  --brand:        #ffffff;
+  --brand-strong: #e6e6e6;   /* hover / emphasis */
+  --brand-rgb:    255, 255, 255;
+
+  /* Secondary tone — neutral grey */
+  --purple:       #d9d9d9;
+  --purple-strong:#bfbfbf;
+  --purple-rgb:   217, 217, 217;
+
+  /* Claude brand mark — fixed Claude orange. A BRAND CONSTANT, not part of the
+     re-skinnable palette: it stays Claude-orange in every theme (mirrored
+     identically in the light block) so the Local Claude Code agent's spark always
+     reads as the real Claude logo. Only used by `.color-claude`. */
+  --claude-orange:     #d97757;
+  --claude-orange-rgb: 217, 119, 87;
+
+  /* Codex brand mark — fixed neutral steel. A BRAND CONSTANT, not part of the
+     re-skinnable palette: it stays neutral in every theme (mirrored identically
+     in the light block) so the Local Codex agent's knot always reads as the real
+     black/white Codex logo. Only used by `.color-codex`. */
+  --codex-gray:     #9aa3b2;
+  --codex-gray-rgb: 154, 163, 178;
+
+  /* Status hues */
+  --success:     #22c55e;  --success-rgb: 34, 197, 94;
+  --warning:     #eab308;  --warning-rgb: 234, 179, 8;
+  --danger:      #ef4444;  --danger-rgb:  239, 68, 68;
+  --signout:     #ef4444;
+
+  /* Categorical CHART SERIES hues — data-viz identity colours (admin Dashboard
+     hero chart & friends). Fixed slot order, assigned per series, never cycled;
+     the status hues above are RESERVED for state and must not be series colours.
+     Validated (lightness band · chroma floor · CVD ΔE · contrast) against this
+     theme's card surface (--bg-elev) — keep the set CVD-safe if you re-theme. */
+  --chart-1: #c07c2f;   /* amber (harmonises with the dark brand) */
+  --chart-2: #5b87e0;   /* blue */
+  --chart-3: #2aa88f;   /* teal */
+  --chart-4: #9a77e8;   /* violet */
+  --chart-5: #cc5c82;   /* rose */
+  --chart-6: #8a9a3a;   /* olive */
+
+  /* Neutral "ink" — hairline borders, inset highlights, drop-shadows.
+     DARK draws white highlights over black shadows. */
+  --ink-rgb:     255, 255, 255;   /* hairlines + inset highlights */
+  --shadow-rgb:  0, 0, 0;         /* drop-shadow colour */
+
+  /* Neutral surfaces (the theme "temperature").
+     ─────────────────────────────────────────────────────────────────────
+     ONLY THREE are raw swatches the Appearance panel drives directly:
+       --bg-0 (Background) · --bg-elev (Panel) · --bg-tint (Tint).
+     Every other neutral step DERIVES from one of those (or from the text
+     anchors) via color-mix, on the unifying rule "an elevated surface moves
+     a little toward the TEXT colour" (works in both themes: text is light on
+     dark, dark on light). Because the derived tokens reference the swatch
+     vars, editing a swatch in App Settings → Appearance flows through the
+     whole neutral ramp LIVE — not just the three raw anchors. Keep new neutral
+     steps derived the same way so they stay swatch-controlled. */
+  --bg-0:        #000000;                                            /* SWATCH: Background */
+  --bg-0-rgb:    0, 0, 0;         /* page-background triple, for rgba() tints (e.g. the edge vignette) */
+  --bg-1:        color-mix(in oklab, var(--bg-0) 97%, var(--fg-1));
+  --bg-2:        color-mix(in oklab, var(--bg-0) 93%, var(--fg-1));
+  --bg-elev:     #0d0d0d;                                            /* SWATCH: Panel */
+  --bg-elev-2:   color-mix(in oklab, var(--bg-elev) 90%, var(--fg-1));
+  --bg-tint:     #1a1a1a;                                            /* SWATCH: Tint */
+  --bg-tint-2:   color-mix(in oklab, var(--bg-tint) 82%, var(--fg-1));
+  --border:        #333333;                                          /* SWATCH: Border */
+  --border-soft:   color-mix(in oklab, var(--border) 55%, var(--bg-0));
+  --border-strong: color-mix(in oklab, var(--border) 65%, var(--fg-1));
+
+  /* ── Global border THICKNESS — the one knob for line weight ──────────
+     Every neutral container / table / divider border in the app reads its
+     width from this token (written as `var(--border-width) solid var(--border)`).
+     Three controls from this one block:
+       • RECOLOUR  → change --border / --border-soft / --border-strong above
+       • THICKEN   → raise this (e.g. 2px)
+       • TURN OFF  → set this to 0 (removes every neutral border app-wide)
+     Accent/status borders (focus rings, error/drag outlines) are deliberately
+     NOT wired here — they stay their own width so they survive a "borders off". */
+  --border-width:  1px;
+
+  --fg-1: #ffffff;                                            /* SWATCH: Text */
+  --fg-2: color-mix(in oklab, var(--fg-1) 65%, var(--fg-3));
+  --fg-3: #a3a3a3;                                            /* SWATCH: Muted text */
+  --fg-4: color-mix(in oklab, var(--fg-3) 70%, var(--bg-0));
+
+  /* Ambient page-background glow. The animated BACKGROUNDS (starfield,
+     bullet-grid, …) are drop-in plugins under ui/background/<id>/ and carry
+     their own colour tokens in their folder CSS — they are NOT defined here. */
+  --ambient-2-rgb:  64, 64, 64;   /* 2nd page-background glow (bottom-right) */
+
+  /* ─── Derived semantic tokens (WIRING — do not edit to re-theme) ───
+     Each is the palette hue at a tuned opacity. Alphas may differ from
+     the light block on purpose (a tint needs more opacity over a bright
+     surface than a dark one). */
+
+  /* Accent */
+  --accent:       var(--brand);
+  --accent-hover: var(--brand-strong);
+  --accent-soft:  rgba(var(--brand-rgb), 0.08);
+  --accent-mid:   rgba(var(--brand-rgb), 0.19);
+  --accent-line:  rgba(var(--brand-rgb), 0.33);
+
+  /* Status soft fills */
+  --success-soft: rgba(var(--success-rgb), 0.19);
+  --success-mid:  rgba(var(--success-rgb), 0.40);
+  --warning-soft: rgba(var(--warning-rgb), 0.19);
+  --danger-soft:  rgba(var(--danger-rgb), 0.08);
+  --danger-mid:   rgba(var(--danger-rgb), 0.25);
+  --purple-alt:   var(--purple-strong);
+
+  /* Chat bubbles. The theme-following DEFAULT is derived at the bubble element
+     in index.css (color-mix over var(--bg-elev)), NOT here — declaring it at
+     :root would bake in the pre-theme panel colour (the "peach bubbles in every
+     theme" bug). --user-bubble-bg / --agent-bubble-bg are left UNSET on purpose:
+     the Appearance panel's "User bubble" / "Agent bubble" swatches set them only
+     when customised (blank = follow theme). Set a bubble's opacity to 0 for text
+     with no fill. */
+  --user-bubble-border:  var(--border);
+  --agent-bubble-border: var(--border);
+  --chat-pill-border:    var(--border);
+  --error-bubble-bg:     rgba(var(--danger-rgb), 0.08);
+  --error-bubble-border: rgba(var(--danger-rgb), 0.25);
+
+  /* Shadows.
+     DEPTH KNOB: every neutral drop-shadow alpha is multiplied by
+     --shadow-strength (1 = design default, 0 = flat / no depth, 2 = heavy).
+     Overridable app-wide from data/config/app-settings.json (`shadow_strength`)
+     via ui/shared/js/appearance.js. The accent --shadow-glow is left unscaled
+     (it's emphasis, like a focus ring — it should survive a "flat" setting). */
+  --shadow-strength: 1;
+  --shadow-rest:
+    0 1px 0 rgba(var(--ink-rgb), calc(0.03 * var(--shadow-strength))) inset,
+    0 1px 2px rgba(var(--shadow-rgb), calc(0.25 * var(--shadow-strength))),
+    0 8px 24px -12px rgba(var(--shadow-rgb), calc(0.45 * var(--shadow-strength)));
+  --shadow-float:
+    0 1px 0 rgba(var(--ink-rgb), calc(0.04 * var(--shadow-strength))) inset,
+    0 4px 14px -4px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-strength))),
+    0 16px 40px -16px rgba(var(--brand-rgb), calc(0.18 * var(--shadow-strength)));
+  --shadow-md:    0 8px 24px -8px rgba(var(--shadow-rgb), calc(0.55 * var(--shadow-strength)));
+  --shadow-lg:    0 14px 40px -12px rgba(var(--shadow-rgb), calc(0.55 * var(--shadow-strength)));
+  --shadow-xl:    0 18px 50px -10px rgba(var(--shadow-rgb), calc(0.6 * var(--shadow-strength)));
+  --shadow-modal: 0 30px 80px -20px rgba(var(--shadow-rgb), calc(0.6 * var(--shadow-strength)));
+  --shadow-glow:
+    0 0 0 1px rgba(var(--brand-rgb), 0.25),
+    0 12px 32px -8px rgba(var(--brand-rgb), 0.45);
+
+  /* Radii.
+     ROUNDNESS KNOB: every corner radius is its base size × --radius-scale
+     (1 = design default, 0 = fully square, 2 = extra round). Overridable
+     app-wide from data/config/app-settings.json (`radius_scale`). */
+  --radius-scale: 1;
+  --r-xs:   calc(4px   * var(--radius-scale));
+  --r-sm:   calc(6px   * var(--radius-scale));
+  --r-md:   calc(8px   * var(--radius-scale));
+  --r-lg:   calc(10px  * var(--radius-scale));
+  --r-xl:   calc(14px  * var(--radius-scale));
+  --r-2xl:  calc(18px  * var(--radius-scale));
+  --r-3xl:  calc(24px  * var(--radius-scale));
+  --r-pill: calc(999px * var(--radius-scale));
+
+  /* SIZE KNOB: scale the entire UI (data/config/app-settings.json `ui_scale`).
+     1 = normal; applied as a zoom on <body> in section 3. */
+  --ui-scale: 1;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, ui-monospace, monospace;
+}
+
+/* ── 2. Light theme overrides ──────────────────────────────── */
+/* PALETTE — THE ONE PLACE TO RE-THEME LIGHT MODE. Mirror of section 1's
+   palette; the derived/wiring tokens use the SAME formulas as dark (only
+   the raw palette values + a few tuned alphas differ). To swap light mode
+   from ocean to e.g. green, change only the raw values in this block. */
+body.light-mode {
+  /* Brand / accent — LIGHT default = black */
+  --brand:        #000000;
+  --brand-strong: #1a1a1a;
+  --brand-rgb:    0, 0, 0;
+
+  /* Secondary tone — neutral grey */
+  --purple:       #262626;
+  --purple-strong:#404040;
+  --purple-rgb:   38, 38, 38;
+
+  /* Claude brand mark — fixed Claude orange (brand constant; same in both themes,
+     mirrors the dark block above — intentionally NOT re-skinned). */
+  --claude-orange:     #d97757;
+  --claude-orange-rgb: 217, 119, 87;
+
+  /* Codex brand mark — fixed neutral steel (brand constant; same in both themes,
+     mirrors the dark block above — intentionally NOT re-skinned). */
+  --codex-gray:     #9aa3b2;
+  --codex-gray-rgb: 154, 163, 178;
+
+  /* Status hues */
+  --success:     #16a34a;  --success-rgb: 22, 163, 74;
+  --warning:     #ca8a04;  --warning-rgb: 202, 138, 4;
+  --danger:      #dc2626;  --danger-rgb:  220, 38, 38;
+  --signout:     #dc2626;
+
+  /* Categorical CHART SERIES hues — light-mode twin of the dark set (see the
+     dark block's note). Validated against the light card surface (--bg-elev). */
+  --chart-1: #1f8fbf;   /* ocean blue (the light brand) */
+  --chart-2: #8a63d2;   /* violet */
+  --chart-3: #0f8a5f;   /* green-teal */
+  --chart-4: #cc4f8e;   /* magenta */
+  --chart-5: #b3762a;   /* amber */
+  --chart-6: #5b6ee1;   /* indigo */
+
+  /* Neutral "ink" — LIGHT uses one cool grey for hairlines AND shadows */
+  --ink-rgb:     120, 124, 135;
+  --shadow-rgb:  120, 124, 135;
+
+  /* Neutral surfaces (white / grey). Only --bg-0 / --bg-elev / --bg-tint are raw
+     swatches; the rest derive from them + the text anchors via color-mix (see
+     the dark block for the full note) so the Appearance swatches drive the
+     whole light ramp live too. */
+  --bg-0:        #ffffff;                                            /* SWATCH: Background */
+  --bg-0-rgb:    255, 255, 255;   /* page-background triple, for rgba() tints (e.g. the edge vignette) */
+  --bg-1:        color-mix(in oklab, var(--bg-0) 97%, var(--fg-1));
+  --bg-2:        color-mix(in oklab, var(--bg-0) 93%, var(--fg-1));
+  --bg-elev:     #f5f5f5;                                            /* SWATCH: Panel */
+  --bg-elev-2:   color-mix(in oklab, var(--bg-elev) 90%, var(--fg-1));
+  --bg-tint:     #e8e8e8;                                            /* SWATCH: Tint */
+  --bg-tint-2:   color-mix(in oklab, var(--bg-tint) 82%, var(--fg-1));
+  --border:        #cccccc;                                          /* SWATCH: Border */
+  --border-soft:   color-mix(in oklab, var(--border) 55%, var(--bg-0));
+  --border-strong: color-mix(in oklab, var(--border) 65%, var(--fg-1));
+
+  /* Global border thickness (light) — see the dark block for the full note.
+     Same knob: recolour via --border*, thicken by raising this, 0 = off. */
+  --border-width:  1px;
+
+  --fg-1: #000000;                                            /* SWATCH: Text */
+  --fg-2: color-mix(in oklab, var(--fg-1) 65%, var(--fg-3));
+  --fg-3: #666666;                                            /* SWATCH: Muted text */
+  --fg-4: color-mix(in oklab, var(--fg-3) 70%, var(--bg-0));
+
+  /* Ambient page-background glow — LIGHT = ocean sky. Background-plugin
+     tokens (e.g. --sg-*) live in each plugin's folder CSS, not here. */
+  --ambient-2-rgb:  217, 217, 217;
+
+  /* ─── Derived semantic tokens (same formulas as dark; light needs a
+         little more opacity to read over the bright surfaces) ─── */
+  --accent:       var(--brand);
+  --accent-hover: var(--brand-strong);
+  --accent-soft:  rgba(var(--brand-rgb), 0.14);
+  --accent-mid:   rgba(var(--brand-rgb), 0.38);
+  --accent-line:  rgba(var(--brand-rgb), 0.38);
+
+  --success-soft: rgba(var(--success-rgb), 0.12);
+  --success-mid:  rgba(var(--success-rgb), 0.38);
+  --warning-soft: rgba(var(--warning-rgb), 0.19);
+  --danger-soft:  rgba(var(--danger-rgb), 0.10);
+  --danger-mid:   rgba(var(--danger-rgb), 0.25);
+  --purple-alt:   var(--purple-strong);
+
+  /* Bubble bg left UNSET — themed default derived at the element in index.css. */
+  --user-bubble-border:  var(--border);
+  --agent-bubble-border: var(--border);
+  --chat-pill-border:    var(--border);
+  --error-bubble-bg:     #fff0ee;
+  --error-bubble-border: #ffccbb;
+
+  /* Depth knob — see the dark block. Light alphas, same --shadow-strength. */
+  --shadow-strength: 1;
+  --shadow-rest:  0 1px 2px rgba(var(--shadow-rgb), calc(0.08 * var(--shadow-strength))), 0 8px 24px -12px rgba(var(--shadow-rgb), calc(0.18 * var(--shadow-strength)));
+  --shadow-float: 0 4px 14px -4px rgba(var(--shadow-rgb), calc(0.18 * var(--shadow-strength))), 0 18px 40px -16px rgba(var(--brand-rgb), calc(0.18 * var(--shadow-strength)));
+  --shadow-md:    0 8px 24px -8px rgba(var(--shadow-rgb), calc(0.18 * var(--shadow-strength)));
+  --shadow-lg:    0 14px 40px -12px rgba(var(--shadow-rgb), calc(0.22 * var(--shadow-strength)));
+  --shadow-xl:    0 18px 50px -10px rgba(var(--shadow-rgb), calc(0.22 * var(--shadow-strength)));
+  --shadow-modal: 0 30px 80px -20px rgba(var(--shadow-rgb), calc(0.30 * var(--shadow-strength)));
+  --shadow-glow:  0 0 0 1px rgba(var(--brand-rgb), 0.25), 0 12px 32px -8px rgba(var(--brand-rgb), 0.45);
+}
+
+/* ── 3. Body ────────────────────────────────────────────────── */
+/* Bottom padding intentionally trimmed so the page/chat cards finish ~8px
+   above the viewport edge instead of leaving an extra strip of dead space. */
+body {
+	  font-family: var(--font-sans);
+	  /* Palette-driven: brand glow + secondary ambient glow over the base.
+	     Auto-themes in light mode — no body.light-mode override needed. */
+	  background:
+	    radial-gradient(70% 50% at 0% 0%,   rgba(var(--brand-rgb),0.06), transparent 60%),
+	    radial-gradient(60% 50% at 100% 100%, rgba(var(--ambient-2-rgb),0.05), transparent 60%),
+	    var(--bg-0);
+	  color: var(--fg-1);
+	  padding: 6px 3px 4px;
+	  gap: 4px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* SIZE KNOB: scale the whole UI. 1 = normal; driven by --ui-scale, which is
+     overridable app-wide from data/config/app-settings.json (`ui_scale`) via
+     ui/shared/js/appearance.js. Uses `zoom` so layout (not just text) scales. */
+  zoom: var(--ui-scale, 1);
+}
+
+code,
+pre,
+.mono,
+.t-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── 4. Stage gap ───────────────────────────────────────────── */
+#stage {
+  gap: 0;
+  min-height: 0;
+}
+
+/* ── 5. Main header → pill ──────────────────────────────────── */
+#main-header {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 4px;
+  position: relative;
+  z-index: 1000;
+}
+
+body.light-mode #main-header {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ── 6. Main panel → floating card ──────────────────────────── */
+#main-panel {
+	  background:
+	    linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
+	    var(--bg-elev);
+	  border: var(--border-width) solid var(--border);
+	  border-radius: 14px;
+	  overflow: hidden;
+	  box-shadow: var(--shadow-rest);
+	}
+
+body.light-mode #main-panel {
+  background: var(--bg-elev);
+  border-color: var(--border);
+}
+
+/* Tab toolbars inside the main panel — match card,
+soft divider */
+#loop-toolbar,
+#db-toolbar,
+#loop-visual-toolbar {
+  background: transparent;
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+body.light-mode #loop-toolbar,
+body.light-mode #db-toolbar,
+body.light-mode #loop-visual-toolbar {
+  background: transparent;
+  border-bottom-color: var(--border);
+}
+
+#loop-container,
+#loop-visual-container,
+#genui-container {
+  background: transparent;
+}
+
+body.light-mode #loop-container,
+body.light-mode #loop-list {
+  background: transparent;
+}
+
+/* ── 7. Chat panel → floating card ──────────────────────────── */
+#chat-panel {
+  border-left: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
+    var(--bg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: var(--shadow-rest);
+}
+
+body.light-mode #chat-panel {
+  background: var(--bg-1);
+  border-color: var(--border);
+  border-left: none;
+}
+
+#chat-header {
+  border-bottom: none;
+}
+
+body.light-mode #chat-header {
+  border-bottom-color: transparent;
+}
+
+#chat-sub-header {
+  border-bottom: none;
+}
+
+body.light-mode #chat-sub-header {
+  border-bottom-color: transparent;
+}
+
+#chat-input-area {
+  border-top: none;
+}
+
+body.light-mode #chat-input-area {
+  border-top: none;
+}
+
+/* ── 8. Chat bubbles — asymmetric radii + shadows ────────────── */
+.chat-bubble {
+  border-radius: 16px;
+}
+
+.chat-bubble.user {
+  background: var(--user-bubble-bg);
+  border-color: var(--user-bubble-border);
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 2px 8px -4px rgba(0,0,0,0.3);
+}
+
+.chat-bubble.agent {
+  background: var(--agent-bubble-bg);
+  border-color: var(--agent-bubble-border);
+  border-bottom-left-radius: 6px;
+}
+
+.chat-bubble.error {
+  background: var(--error-bubble-bg);
+  border-color: var(--error-bubble-border);
+}
+
+.chat-bubble.agent.streaming {
+  border-color: rgba(var(--brand-rgb),0.35);
+}
+
+.chat-bubble.agent.scout-preview {
+  border-color: rgba(var(--brand-rgb),0.28);
+  border-style: dashed;
+  color: var(--fg-2);
+  opacity: 0.88;
+}
+
+.chat-bubble.info {
+  background: transparent;
+  border: none;
+  color: var(--fg-3, var(--fg-2));
+  font-size: 0.82em;
+  text-align: center;
+  align-self: center;
+  max-width: 80%;
+  padding: 6px 14px;
+  margin: 4px 0;
+  opacity: 0.75;
+  border-radius: 8px;
+}
+.chat-bubble.info .bubble-body {
+  line-height: 1.45;
+}
+/* Notice-bubble footer (time + ⋮ context menu) must stay legible on the
+   otherwise-dimmed info bubble — the ⋮ is the only way to read the
+   per-message context (e.g. the summariser prompt size on a compaction
+   notice). Centered to match the notice's centered layout. */
+.chat-bubble.info .turn-gutter {
+  opacity: 1;
+  justify-content: center;
+}
+
+/* ── System messages: retry / error / debug ────────────────────────
+   LLM errors emit two system rows:
+   • A user-facing "system:retry" or "system:error" row — always shown,
+     with retry count and a human-readable description.
+   • A "system:debug:llm_error" row — hidden unless the chat_ui.json
+     debug toggle is on.  Contains the raw provider diagnostic. */
+
+.chat-bubble.info.system-error {
+  color: var(--danger);
+  opacity: 1;
+  font-weight: 500;
+  padding: 10px 18px;
+  max-width: 90%;
+  border-radius: 10px;
+  background: var(--danger-soft, rgba(var(--danger-rgb, 220,53,69), 0.08));
+  border: var(--border-width) solid var(--danger-mid, rgba(var(--danger-rgb, 220,53,69), 0.25));
+}
+.chat-bubble.info.system-error .bubble-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.chat-bubble.info.system-usage-limit { color: var(--fg-1); opacity: 1; max-width: min(90%, 520px); padding: 10px 14px; border-radius: 10px; background: var(--bg-elev); border: var(--border-width) solid var(--warning-mid, var(--border)); }
+.chat-bubble.info.system-usage-limit .bubble-body { display: grid; gap: 3px; text-align: left; }
+.usage-limit-title { color: var(--warning); font-weight: 650; font-size: 13px; }
+.usage-limit-detail { color: var(--fg-2); font-size: 12px; line-height: 1.45; }
+
+.chat-bubble.info.system-retry {
+  color: var(--warning, var(--fg-2));
+  opacity: 1;
+  font-weight: 500;
+  padding: 10px 18px;
+  max-width: 90%;
+  border-radius: 10px;
+  background: var(--warning-soft, rgba(var(--warning-rgb, 255,193,7), 0.08));
+  border: var(--border-width) solid var(--warning-mid, rgba(var(--warning-rgb, 255,193,7), 0.25));
+}
+.chat-bubble.info.system-retry .bubble-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── Mode-change notice (Ask/Plan/Auto enabled) ──────────────────────
+   The durable twin of the live ⚠ mode row: rendered from the persisted
+   system:mode interaction on cold load / IndexedDB cache. Same warning
+   palette as system-retry so the two read as one family. */
+.chat-bubble.info.system-mode {
+  color: var(--warning, var(--fg-2));
+  opacity: 1;
+  font-weight: 500;
+  padding: 10px 18px;
+  max-width: 90%;
+  border-radius: 10px;
+  background: var(--warning-soft, rgba(var(--warning-rgb, 255,193,7), 0.08));
+  border: var(--border-width) solid var(--warning-mid, rgba(var(--warning-rgb, 255,193,7), 0.25));
+}
+.chat-bubble.info.system-mode .bubble-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.chat-bubble.info.system-mode .turn-gutter {
+  display: none !important;
+}
+
+/* ── Model-switch notice ("Switched to <model>") ─────────────────────
+   The durable twin of the live model row: rendered from the persisted
+   system:model interaction on cold load / IndexedDB cache. Accent-tinted
+   (brand) so it reads as an informational state change, distinct from the
+   warning-yellow mode notice. */
+.chat-bubble.info.system-model {
+  color: var(--accent, var(--fg-2));
+  opacity: 1;
+  font-weight: 500;
+  padding: 10px 18px;
+  max-width: 90%;
+  border-radius: 10px;
+  background: var(--accent-soft, rgba(var(--brand-rgb), 0.08));
+  border: var(--border-width) solid var(--accent-mid, rgba(var(--brand-rgb), 0.25));
+}
+.chat-bubble.info.system-model .bubble-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* Model-switch notice is a transient heads-up like the mode notice — no
+   per-message action footer. Mirrors .chat-bubble.info.system-mode. */
+.chat-bubble.info.system-model .turn-gutter {
+  display: none !important;
+}
+
+/* GenUI-originated sends (page fields/buttons) render as a green label notice.
+   The raw prompt stays agent-side and only surfaces under the debug toggle
+   (as a system-debug row) — never as a "You" bubble. Mirrors the retry/error
+   treatment above, using the success palette. */
+.chat-bubble.info.system-genui {
+  color: var(--success);
+  opacity: 1;
+  font-weight: 500;
+  padding: 10px 18px;
+  max-width: 90%;
+  border-radius: 10px;
+  background: var(--success-soft, rgba(var(--success-rgb, 34, 197, 94), 0.08));
+  border: var(--border-width) solid var(--success-mid, rgba(var(--success-rgb, 34, 197, 94), 0.25));
+}
+.chat-bubble.info.system-genui .bubble-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Output Closer — standalone final-output bubble. It remains distinct from the
+   folded working response, but intentionally has no sender/header label. */
+.chat-bubble.agent.summary-bubble {
+  background: rgba(var(--brand-rgb), 0.05);
+  border-color: rgba(var(--brand-rgb), 0.3);
+}
+
+/* Retry badge: inline pill showing "1 of 5" */
+.retry-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.85em;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border-strong);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.retry-badge svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* Debug message — only visible when debug toggle is on.
+   The reconciler / session-loader already filter system:debug: rows;
+   when debug mode IS on, these rows get this muted treatment. */
+.chat-bubble.info.system-debug {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75em;
+  opacity: 0.65;
+  max-width: 95%;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--bg-tint);
+  color: var(--fg-4, var(--fg-3));
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  border-left: 3px solid var(--border-soft);
+}
+
+body.light-mode .chat-bubble.user {
+  background: var(--user-bubble-bg);
+  border-color: var(--user-bubble-border);
+  color: var(--fg-1);
+}
+
+body.light-mode .chat-bubble.agent {
+  background: var(--agent-bubble-bg);
+  border-color: var(--agent-bubble-border);
+  color: var(--fg-2);
+}
+
+/* ── 9. Status dots — enhanced glow + scale pulse ────────────── */
+.status-dot.green {
+  box-shadow: 0 0 10px var(--brand), 0 0 3px var(--brand);
+}
+
+.status-dot.yellow {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+0%,
+100% { opacity: 1;   transform: scale(1);    }
+50% { opacity: 0.4; transform: scale(0.82); }
+}
+
+/* ── 10. Settings / config dropdown — rounded popover ───────── */
+.settings-dropdown-content {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0)),
+    var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 16px;
+  box-shadow:
+    0 14px 40px -12px rgba(0,0,0,0.6),
+    0 1px 0 rgba(255,255,255,0.04) inset;
+  padding: 8px;
+  animation: pop-in 0.18s ease;
+}
+
+@keyframes pop-in {
+from { opacity: 0; transform: translateY(-6px); }
+to { opacity: 1; transform: translateY(0);    }
+}
+
+.settings-menu-item {
+  border-radius: 10px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-menu-item:hover {
+  background: rgba(var(--brand-rgb),0.10);
+  color: #fff;
+}
+
+#btn-signout {
+  border-radius: 10px;
+}
+
+body.light-mode .settings-dropdown-content {
+  background: #ffffff;
+  border-color: var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+body.light-mode .settings-menu-item:hover {
+  background: var(--accent-soft);
+  color: var(--fg-1);
+}
+
+/* ── 11. User dropdown — rounded popover ──────────────────────
+   All dropdown panels (user menu, feedback view, login) MUST share the same
+   visual dimensions: 360px wide, 12px border-radius, var(--bg-elev) background,
+   the global border (var(--border-width) solid var(--border)), box-shadow
+   0 8px 32px rgba(0,0,0,0.5). Keep these values in sync with app1.css. */
+.user-dropdown-menu {
+  border-radius: 12px;
+  border: var(--border-width) solid var(--border);
+  background: var(--bg-elev);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: pop-in 0.18s ease;
+}
+
+body.light-mode .user-dropdown-menu {
+  background: #ffffff;
+  border-color: var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.theme-toggle-group button {
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-option[data-theme] {
+  border-radius: 999px;
+  transition: 0.15s;
+}
+
+/* ── 12. Status select (tab dropdown) ─────────────────────────── */
+.status-select,
+#main-tab-select {
+  border-radius: 999px;
+  background: rgba(13,13,26,0.7);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-1);
+  padding: 5px 10px;
+}
+
+body.light-mode .status-select,
+body.light-mode #main-tab-select {
+  background: var(--bg-1);
+  border-color: var(--border);
+  color: var(--fg-1);
+}
+
+/* ── 13. Scrollbars — branded,
+slim ─────────────────────────── */
+/* NOTE: scrollbar-width / scrollbar-color are NOT set globally — in Chromium
+   they force the native scrollbar (arrow buttons included) and DISABLE the
+   ::-webkit-scrollbar styling below, which is what draws the app's thin
+   rounded pill. Firefox (no arrow buttons ever) keeps the thin branded look
+   via the @-moz-document rule at the end of this section. */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+    rgba(var(--brand-rgb),0.38),
+    rgba(var(--brand-rgb),0.18));
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg,
+    rgba(var(--brand-rgb),0.62),
+    rgba(var(--brand-rgb),0.38));
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg,
+    rgba(var(--brand-rgb),0.82),
+    rgba(var(--brand-rgb),0.52));
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox only — thin branded scrollbar (Firefox never draws arrow buttons,
+   so scrollbar-width/color are safe here; Chromium must stay on the webkit
+   pill above to avoid native arrow buttons). */
+@-moz-document url-prefix() {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--brand-rgb),0.28) transparent;
+  }
+  body.light-mode * {
+    scrollbar-color: rgba(var(--brand-rgb),0.35) transparent;
+  }
+}
+
+body.light-mode *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+    rgba(var(--brand-rgb),0.45),
+    rgba(var(--brand-rgb),0.22));
+  background-clip: padding-box;
+}
+
+body.light-mode *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg,
+    rgba(var(--brand-rgb),0.70),
+    rgba(var(--brand-rgb),0.42));
+  background-clip: padding-box;
+}
+
+/* ── 14. Lucide icon baseline ───────────────────────────────── */
+/* Lucide renders inline SVG — this ensures correct sizing/alignment */
+.lucide-icon svg,
+[data-lucide] svg {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Icon inside menu items */
+.menu-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+/* ── Config button (pill with icon) ─────────────────────────── */
+.config-btn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.03);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-2);
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.config-btn-pill:hover {
+  color: #fff;
+  border-color: rgba(var(--brand-rgb),0.4);
+  background: rgba(var(--brand-rgb),0.08);
+}
+
+/* ── Icon-only pill button (restart) ────────────────────────── */
+.icon-btn-pill {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.04);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-2);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.icon-btn-pill:hover {
+  color: var(--accent);
+  border-color: rgba(var(--brand-rgb),0.4);
+}
+/* ── Horizontal main-tabs strip with chevron-scroll carousel ── */
+#main-tabs-wrap {
+	  position: relative;
+	  flex: 1 1 auto;
+	  min-width: 0;
+	  display: block;
+	  background: transparent;
+	}
+
+/* Optional compact main navigation (app-settings.json: mobile_mode=true). */
+.mobile-nav-toggle {
+  display: none;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.mobile-nav-toggle .lucide-icon { width: 21px; height: 21px; }
+.mobile-nav-toggle:hover,
+.mobile-nav-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: rgba(var(--brand-rgb), 0.3);
+  background: rgba(var(--brand-rgb), 0.12);
+}
+@media (max-width: 800px) {
+  body.mobile-mode #main-tabs-wrap { display: none; }
+  body.mobile-mode .mobile-nav-toggle { display: inline-flex; }
+}
+
+/* "Back to main page" button for the compact mobile header (mobile_mode=true).
+   Sits in normal flow directly right of the nav toggle (the hamburger) so the
+   center of the header stays free for the dedicated center logo label. Tapping
+   it reopens whichever main panel page was opened last (Sessions by default),
+   with the label showing that page's name (wired in
+   ui/shared/js/mobile-navigation.js) — an interactive target, never
+   decorative. max-width + ellipsis keep a long page name from crowding the
+   center slot. */
+.mobile-back-main-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 0 10px;
+  max-width: 40vw;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+}
+@media (max-width: 800px) {
+  body.mobile-mode .mobile-back-main-btn { display: inline-flex; }
+}
+/* Hover / focus feedback for the back-to-main-page button. */
+.mobile-back-main-btn:hover { color: var(--fg-1); }
+.mobile-back-main-btn:focus-visible {
+  color: var(--fg-1);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Header boot gate ────────────────────────────────────────────────
+   Two independent startup decisions feed this gate:
+     • body.is-booting remains until the initial tab content is mounted.
+     • body.header-pending remains until mobile-navigation.js has decided
+       whether the desktop carousel or compact mobile sidebar applies.
+
+   While either decision is pending, expose only the two useful diagnostics:
+   Debug and Chat. In particular, never paint cached/generated page tabs,
+   account/update controls, carousel chevrons, or the mobile navigation trigger
+   in an intermediate desktop layout. The controls appear only after their
+   final desktop/mobile format is ready. */
+body.header-pending #main-header {
+  min-height: 38px;
+}
+body.header-pending #main-tabs > :not(#debug-console-toggle),
+body.is-booting #main-tabs > :not(#debug-console-toggle),
+body.header-pending #main-tabs-chev-left,
+body.header-pending #main-tabs-chev-right,
+body.is-booting #main-tabs-chev-left,
+body.is-booting #main-tabs-chev-right,
+body.header-pending .mobile-nav-toggle,
+body.header-pending .mobile-back-main-btn,
+body.is-booting .mobile-nav-toggle,
+body.is-booting .mobile-back-main-btn {
+  display: none !important;
+}
+
+.mobile-nav-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 4px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: min(72vh, 620px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1200;
+  border: var(--border-width) solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--bg-elev) 94%, transparent);
+  box-shadow: var(--shadow-rest);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+.mobile-nav-menu[hidden] { display: none !important; }
+.mobile-nav-items {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+.mobile-nav-item {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+.mobile-nav-item .lucide-icon { width: 19px; height: 19px; flex: 0 0 auto; }
+.mobile-nav-item:hover {
+  color: var(--fg-1);
+  border-color: rgba(var(--brand-rgb), 0.24);
+  background: rgba(var(--brand-rgb), 0.07);
+}
+.mobile-nav-item.active {
+  color: var(--accent);
+  border-color: rgba(var(--brand-rgb), 0.3);
+  background: rgba(var(--brand-rgb), 0.12);
+}
+.mobile-nav-item.has-errors { color: var(--danger); }
+/* Compact mobile shell controls — mirrors the canonical header bug, refresh,
+   and admin power buttons without repeating their text labels. */
+.mobile-nav-controls {
+  width: 100%;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(42px, 1fr);
+  gap: 6px;
+}
+.mobile-nav-control {
+  min-width: 42px;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.mobile-nav-control[hidden] { display: none; }
+.mobile-nav-control .lucide-icon { width: 19px; height: 19px; }
+.mobile-nav-control:hover {
+  color: var(--fg-1);
+  border-color: rgba(var(--brand-rgb), 0.24);
+  background: rgba(var(--brand-rgb), 0.07);
+}
+.mobile-nav-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.mobile-nav-control.active {
+  color: var(--accent);
+  border-color: rgba(var(--brand-rgb), 0.3);
+  background: rgba(var(--brand-rgb), 0.12);
+}
+.mobile-nav-control.has-errors,
+.mobile-nav-control[data-mobile-nav-kind="power"].active,
+.mobile-nav-control[data-mobile-nav-kind="power"].is-armed {
+  color: var(--danger);
+  border-color: rgba(var(--danger-rgb), 0.32);
+  background: rgba(var(--danger-rgb), 0.14);
+}
+.mobile-nav-control.is-busy {
+  cursor: wait;
+  opacity: 0.72;
+}
+.mobile-nav-control:disabled { cursor: wait; }
+.mobile-nav-divider {
+  height: 1px;
+  margin: 7px 4px;
+  background: var(--border);
+}
+.mobile-nav-badge {
+  min-width: 18px;
+  margin-left: auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+/* Stacked footer: the credits counter sits directly above the account ("A")
+   row, which mobile-navigation.js appends here. Column flow keeps them on
+   separate lines; the account row stays pinned to the right edge. */
+.mobile-nav-footer {
+  min-height: 52px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: var(--border-width) solid var(--border);
+  background: color-mix(in oklab, var(--bg-elev) 96%, transparent);
+}
+.mobile-nav-footer .user-dropdown { align-self: flex-end; }
+/* Available-credits counter for the compact sidebar — mirrors #dropdown-credits
+   (same house-credit unit and buy-credits panel; see user-panel.js). */
+.mobile-nav-credits {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-tint);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+/* The flex display above would otherwise defeat the element's [hidden] toggle. */
+.mobile-nav-credits[hidden] { display: none; }
+.mobile-nav-credits:hover {
+  background: var(--bg-tint-2);
+  border-color: var(--brand);
+}
+.mobile-nav-credits:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.mobile-nav-credits strong {
+  color: var(--fg-1);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+body.app-restricted.mobile-mode .mobile-nav-items { display: none; }
+#main-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  /* Deliberately NO scroll-behavior: smooth here — it made raw scrollLeft
+     updates (wheel handler) animate and lag the pointer, and amplified the
+     snap-back when the strip re-centred. Explicit callers (chevrons, tab
+     activation) pass behavior:'smooth' themselves, so their animation is
+     untouched. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: none;
+}
+#main-tabs::-webkit-scrollbar { display: none; }
+.main-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-2);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  outline: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.main-tab .lucide-icon { width: 20px; height: 20px; flex-shrink: 0; }
+.main-tab:hover {
+  color: var(--fg-1);
+  border-color: rgba(var(--brand-rgb),0.25);
+}
+.main-tab.active {
+  background: rgba(var(--brand-rgb),0.12);
+  color: var(--accent);
+  border-color: rgba(var(--brand-rgb),0.30);
+}
+
+/* ── Server health dot in Admin Tools button ── */
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.health-dot-green {
+  background: #3fb950;
+  box-shadow: 0 0 6px rgba(63,185,80,0.5);
+}
+.health-dot-red {
+  background: #f85149;
+  box-shadow: 0 0 6px rgba(248,81,73,0.5);
+}
+.health-dot-orange {
+  background: #d29922;
+  box-shadow: 0 0 6px rgba(210,153,34,0.5);
+  animation: health-dot-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes health-dot-pulse {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to   { opacity: 1;   transform: scale(1.15); }
+}
+
+/* ── Admin Tools group (reset button + Admin Tools tab) ── */
+.main-tab-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.main-tab-group.active {
+  border-color: rgba(var(--brand-rgb),0.30);
+  background: rgba(var(--brand-rgb),0.08);
+}
+/* Admin Tools is an admin-only page. It stays hidden until the post-login
+   admin check (ui/shared/js/left-login.js → main.js _applyAdminToolsVisibility)
+   adds `is-admin` to <body>. Hidden-by-default means a non-admin never sees a
+   flash of it, and the !important survives any header re-paint that re-creates
+   the tab. The matching <select> option is hidden/disabled the same way. */
+body:not(.is-admin) #admin-tools-group { display: none !important; }
+body:not(.is-admin) #main-tab-select option[value="admin-tools"] { display: none; }
+.main-tab-group .main-tab {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+}
+.main-tab-group .files-icon-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+}
+.main-tabs-chev {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  z-index: 2;
+}
+/* ── Masked edge-fade carousel — REUSABLE PATTERN ─────────────────────────
+   How the tab strip fades its edges WITHOUT a coloured overlay:
+
+   The chevron buttons stay fully transparent (background lives on the base
+   .main-tabs-chev rule above). The edge fade is produced by a CSS *mask* on the
+   scrolling strip (#main-tabs) — NOT by painting a colour. A mask affects ALPHA
+   only: it fades the tab content itself to transparent at the scrollable edge,
+   so whatever is actually behind the strip shows through.
+
+   Why a mask and not a gradient of the background colour: the header sits over
+   the live stargaze genui, which continuously REDRAWS the background colour
+   (a warm peach glow that shifts with theme + pointer). No static colour can
+   match a moving target — but a mask paints no colour at all, so it blends into
+   ANY background automatically (light/dark, gradients, the animated genui).
+
+   The fade only appears on the side that can still scroll, driven by the same
+   `.visible` classes the carousel JS already toggles (index.html
+   updateChevrons()). This is the SAME technique as the agent-card carousel in
+   agents.css (.agent-card-tabs / .agent-card-tabs-chev) — reuse it for any
+   horizontal carousel over a dynamic/themed background:
+     1. transparent chevron buttons positioned over the edges, and
+     2. a left / right / both alpha mask on the scroller, toggled by scroll state. */
+.main-tabs-chev.left  { left: 0;  justify-content: flex-start; }
+.main-tabs-chev.right { right: 0; justify-content: flex-end; }
+.main-tabs-chev.visible { display: flex; }
+.main-tabs-chev:hover { color: var(--fg-1); }
+
+#main-tabs { --tab-fade: 32px; }
+#main-tabs-wrap:has(.main-tabs-chev.left.visible) #main-tabs {
+	  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tab-fade));
+	          mask-image: linear-gradient(to right, transparent 0, #000 var(--tab-fade));
+	}
+#main-tabs-wrap:has(.main-tabs-chev.right.visible) #main-tabs {
+	  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--tab-fade));
+	          mask-image: linear-gradient(to left, transparent 0, #000 var(--tab-fade));
+	}
+#main-tabs-wrap:has(.main-tabs-chev.left.visible):has(.main-tabs-chev.right.visible) #main-tabs {
+	  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tab-fade), #000 calc(100% - var(--tab-fade)), transparent 100%);
+	          mask-image: linear-gradient(to right, transparent 0, #000 var(--tab-fade), #000 calc(100% - var(--tab-fade)), transparent 100%);
+	}
+
+/* ── Pinned rounded scroll corners — REUSABLE PATTERN ─────────────────────
+   Round a scroll viewport's corners so the rounding STAYS PUT while content
+   scrolls (it never scrolls away), WITHOUT shrinking the viewport — the
+   scrollbar stays at the far edge and the whole width still scrolls.
+
+   Same family as the edge-fade mask above: we paint NO colour. We MASK the
+   scroller (an alpha mask on its fixed viewport box, so the rounding is pinned
+   and never scrolls) and let whatever sits BEHIND the scroller — the page's own
+   dynamic/themed background — show through at the four corners. So the corners
+   are theme-correct automatically (light/dark/animated genui), exactly like the
+   edge fade, and never a guessed corner colour.
+
+   The mask is the UNION (mask-composite: add) of one opaque rounded rectangle:
+     · two side strips (width --rsc-side) — kept opaque so a scrollbar or a
+       centring gutter on each side stays fully visible (0 = full-width round);
+     · a horizontal bar = the column minus the corner radius at each side;
+     · a vertical bar   = the column minus the corner radius top & bottom;
+     · four corner discs, each centred on the INSET point (radius in from the
+       column corner) so each disc fills its rounded corner.
+   The only thing knocked out is the four outer-corner slivers -> convex
+   (outward) rounding, the normal rounded-rectangle look.
+
+   Knobs (override on the element):
+     --rsc-r     corner radius                          (default --r-lg)
+     --rsc-side  per-side inset to a centred column      (default 0 = full width)
+   Drop-in: add the class to any overflow:auto scroller for full-width rounded,
+   pinned corners. For a centred-column variant (corners inset to a fixed-width
+   column that tracks the panel width) feed --rsc-side a computed value — see
+   #app-config-content (App Settings) in app3.css. Targets modern Chrome (the
+   unprefixed mask-composite path), like the rest of the app.
+   Doc: docs/claude/ui-guidance.md "Pinned rounded scroll corners". */
+.rounded-scroll-corners {
+  --_rsc-r: var(--rsc-r, var(--r-lg));
+  --_rsc-s: var(--rsc-side, 0px);
+  mask-image:
+    linear-gradient(#000, #000),
+    linear-gradient(#000, #000),
+    linear-gradient(#000, #000),
+    linear-gradient(#000, #000),
+    radial-gradient(var(--_rsc-r) at calc(var(--_rsc-s) + var(--_rsc-r)) var(--_rsc-r),                          #000 98%, #0000),
+    radial-gradient(var(--_rsc-r) at calc(100% - var(--_rsc-s) - var(--_rsc-r)) var(--_rsc-r),                   #000 98%, #0000),
+    radial-gradient(var(--_rsc-r) at calc(var(--_rsc-s) + var(--_rsc-r)) calc(100% - var(--_rsc-r)),            #000 98%, #0000),
+    radial-gradient(var(--_rsc-r) at calc(100% - var(--_rsc-s) - var(--_rsc-r)) calc(100% - var(--_rsc-r)),     #000 98%, #0000);
+  mask-size:
+    var(--_rsc-s) 100%,
+    var(--_rsc-s) 100%,
+    calc(100% - 2 * var(--_rsc-s) - 2 * var(--_rsc-r)) 100%,
+    calc(100% - 2 * var(--_rsc-s)) calc(100% - 2 * var(--_rsc-r)),
+    auto, auto, auto, auto;
+  mask-position:
+    left top,
+    right top,
+    center top,
+    center center,
+    0 0, 0 0, 0 0, 0 0;
+  mask-repeat: no-repeat;
+  mask-composite: add;
+}
+
+/* ── Settings menu items — gap for icon + text ──────────────── */
+.settings-menu-item { gap: 10px; }
+
+/* ── Light mode: icon controls ──────────────────────────────── */
+body.light-mode .config-btn-pill {
+  color: var(--fg-2);
+  border-color: var(--border);
+  background: rgba(var(--ink-rgb),0.04);
+}
+body.light-mode .config-btn-pill:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg-1);
+}
+body.light-mode .icon-btn-pill {
+  background: rgba(var(--ink-rgb),0.05);
+  border-color: var(--border);
+}
+body.light-mode .icon-btn-pill:hover { color: var(--accent); border-color: var(--accent); }
+body.light-mode .main-tab { color: var(--fg-2); }
+body.light-mode .main-tab:hover { background: var(--accent-soft); color: var(--fg-1); border-color: rgba(var(--ink-rgb),0.25); }
+body.light-mode .main-tab.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+body.light-mode .main-tabs-chev { color: var(--fg-2); }
+body.light-mode .main-tabs-chev:hover { color: var(--accent); }
+
+/* ── Agents tab — transparent bg,
+card-aware borders ────────── */
+#tab-agents { background: transparent; }
+#tab-sessions { background: transparent; }
+#agents-list-panel { border-right-color: var(--border); }
+#agents-list-header { border-bottom-color: var(--border); }
+#agents-detail-panel { background: transparent; }
+body.light-mode #agents-list-panel { border-right-color:  var(--border); }
+body.light-mode #agents-list-header { border-bottom-color: var(--border); }
+
+/* ── Responsive — stack at narrow viewport ───────────────────── */@media (max-width: 800px) {
+	#stage { gap: 0; }
+	#chat-panel { border-left: none; }
+	body { padding: 0; gap: 0; }
+	#main-panel { border-radius: 0; }
+	}
+
+/* ── Boot state marker (spinner retired) ───────────────────────
+   The pre-paint script in index.html adds body.is-booting; tabs.js
+   removes it once the tab content is mounted. It used to draw a small
+   centered spinner so the JS-init window wasn't a blank screen — that
+   spinner is GONE. Boot is now visualised by the boot phantom cursor
+   (index.html, "Boot phantom cursor"): while is-booting is set, a
+   independent boot input orbits the page and drives the animated background
+   (stargaze / grid / particles / #cursor-glow) alongside the real mouse —
+   so the loading state is movement in the
+   scene, as if the AI is stirring it, instead of a spinner.
+   is-booting remains as the boot-state flag the phantom cursor
+   watches to know when to stop. */

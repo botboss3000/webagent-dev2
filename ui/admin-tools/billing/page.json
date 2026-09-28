@@ -1,0 +1,11 @@
+{
+  "id": "billing",
+  "label": "Monetization",
+  "icon": "credit-card",
+  "order": 35,
+  "html": "billing.html",
+  "mount": "#files-billing-main",
+  "entry": "ui/admin-tools/billing/billing.js",
+  "start": "startView",
+  "stop": "stopView"
+}

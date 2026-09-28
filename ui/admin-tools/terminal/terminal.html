@@ -1,0 +1,110 @@
+<template data-slot="#files-sidebar">
+  <!-- Terminal launchers panel: quick-launch shortcuts, unified
+             session list (PTY + tmux), and a static hints/cheat-sheet
+             section. The panel itself doesn't host any terminal — clicking
+             a row opens a new terminal tab in the main pane. -->
+          <div class="files-sidebar-panel" id="files-panel-terminal" data-view="terminal" hidden>
+
+            <div id="ft-body" class="ft-body">
+              <div class="ft-section ft-section-action">
+                <button type="button" id="ft-new-terminal" class="ft-new-btn" title="Open a new blank terminal tab">
+                  <i data-lucide="plus" class="lucide-icon"></i>
+                  <span>New terminal</span>
+                </button>
+                <button type="button" id="ft-new-tmux" class="ft-new-btn" title="Start (or reattach to) a named tmux session — survives server restarts and is reachable from any device">
+                  <i data-lucide="layers" class="lucide-icon"></i>
+                  <span>New tmux session</span>
+                </button>
+              </div>
+              <div class="ft-section">
+                <div class="ft-section-title">Your sessions</div>
+                <div class="ft-list" id="ft-list-sessions"><div class="ft-empty">Loading…</div></div>
+              </div>
+              <!-- Saved servers: one-click SSH into any server saved in the Deploy
+                   panel (App Settings → Deploy). Rows render from
+                   GET /api/v1/terminal/ssh-servers (public fields only); a click
+                   opens a terminal tab that connects over the server's SAVED
+                   login. Reuses the shared .ft-row look (no bespoke CSS). Hidden
+                   entirely when no servers are saved. See files.js ftRenderSshServers. -->
+              <div class="ft-section" id="ft-section-ssh" hidden>
+                <div class="ft-section-title">Saved servers (SSH)</div>
+                <div class="ft-list" id="ft-list-ssh"><div class="ft-empty">Loading…</div></div>
+              </div>
+              <div class="ft-section">
+                <div class="ft-section-title">Quick launches</div>
+                <div class="ft-list" id="ft-list-launches"><div class="ft-empty">Loading…</div></div>
+              </div>
+              <div class="ft-section">
+                <div class="ft-section-title">Shortcuts &amp; hints</div>
+                <div class="ft-hints">
+                  <div><kbd>Ctrl-b</kbd> <kbd>d</kbd> — detach tmux (session keeps running)</div>
+                  <div><kbd>tmux ls</kbd> — list sessions</div>
+                  <div><kbd>tmux attach -t NAME</kbd> — re-attach</div>
+                  <div><kbd>Ctrl-`</kbd> — new terminal tab from anywhere</div>
+                  <div><kbd>Ctrl-F</kbd> — find in terminal output</div>
+                  <div class="ft-hint-note">PTY sessions survive tab close, refresh, and webagent restarts when wrapped in <code>tmux</code>. Idle GC disabled by default.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+</template>
+
+<template data-slot="#admin-tools">
+  <!-- Terminal main: dedicated tabs and content area for PTY
+       sessions, independent of the file editor's tabs. The strip's
+       zap (Terminal Launcher) button activates this view; new tabs
+       open via the always-visible "+" button at the end of the tab
+       bar, the launcher panel's "New terminal" button, the
+       quick-launch / tmux rows, or the Ctrl+` shortcut. -->
+        <main class="files-main" id="files-terminal-main" data-view="terminal" hidden>
+          <div class="files-tabs-wrap">
+            <button id="files-term-tabs-prev" class="files-tabs-chev" title="Scroll tabs left"><i data-lucide="chevron-left" class="lucide-icon"></i></button>
+            <div id="files-term-tabs" class="files-tabs" role="tablist"></div>
+            <button id="files-term-tabs-next" class="files-tabs-chev" title="Scroll tabs right"><i data-lucide="chevron-right" class="lucide-icon"></i></button>
+            <!-- New-terminal "+" button. Lives OUTSIDE #files-term-tabs (the
+                 scrolling carousel) so it stays pinned and visible no matter
+                 how many tabs are open or how far they've scrolled. Wired in
+                 files.js initTabCarousel: TAP = new blank terminal tab
+                 (openNewTerminalTab); LONG-PRESS = new tmux session with a
+                 default name (openNewTmuxSessionDefault) + a white confirm
+                 popup (_flashTermPop). -->
+            <button id="files-term-new-tab" class="files-tab-add-btn" type="button" title="New terminal tab — hold for a new tmux session"><i data-lucide="plus" class="lucide-icon"></i></button>
+          </div>
+          <div id="files-term-content" class="files-content">
+            <div class="files-welcome">
+              <i data-lucide="terminal" class="lucide-icon files-welcome-icon"></i>
+              <div class="files-welcome-title">Terminal</div>
+              <div class="files-welcome-text">Open a session from the launcher on the left, or press <kbd>Ctrl</kbd>+<kbd>`</kbd>.</div>
+            </div>
+          </div>
+          <!-- Sticky shortcut bar. Replaces the legacy popover. Two stacked
+               horizontally-scrollable rows of chips (each .ftk-row); modifier
+               chips (Ctrl, tmux) light up while armed and lock when long-pressed.
+               Row 1 = modifier + editing/clipboard; row 2 = standalone key
+               shortcuts (Shift+Tab, Tab, Esc, Enter, interrupt, history search).
+               The keypad button in the tab bar toggles the whole bar's visibility. -->
+          <div id="files-term-keybar" class="files-term-keybar">
+            <div class="ftk-row">
+              <button class="ftk-chip ftk-chip-mod" data-key="ctrl"       title="Ctrl (tap = one-shot, long-press = lock)" data-mod="ctrl">Ctrl</button>
+              <button class="ftk-chip"              data-key="ctrl-c"      title="Copy selection">^C</button>
+              <button class="ftk-chip" data-key="left"        title="Left arrow"  aria-label="Left"><i data-lucide="arrow-left"       class="lucide-icon"></i></button>
+              <button class="ftk-chip" data-key="right"       title="Right arrow" aria-label="Right"><i data-lucide="arrow-right"      class="lucide-icon"></i></button>
+              <button class="ftk-chip" data-key="up"          title="Up arrow"    aria-label="Up"><i data-lucide="arrow-up"         class="lucide-icon"></i></button>
+              <button class="ftk-chip" data-key="down"        title="Down arrow"  aria-label="Down"><i data-lucide="arrow-down"       class="lucide-icon"></i></button>
+              <button class="ftk-chip" data-key="shift-enter" title="New line"    aria-label="New line"><i data-lucide="corner-down-left" class="lucide-icon"></i></button>
+              <span class="ftk-sep"></span>
+              <button class="ftk-chip"              data-key="copy"        title="Copy selection" aria-label="Copy"><i data-lucide="copy"      class="lucide-icon"></i></button>
+              <button class="ftk-chip"              data-key="paste"       title="Paste from clipboard" aria-label="Paste"><i data-lucide="clipboard" class="lucide-icon"></i></button>
+              <button class="ftk-chip ftk-chip-mic" data-key="mic"         title="Dictate (Web Speech)" aria-label="Microphone"><i data-lucide="mic" class="lucide-icon"></i></button>
+              <span class="ftk-sep"></span>
+              <button class="ftk-chip" data-key="shift-tab" title="Shift+Tab (back-tab / cycle modes)">⇧Tab</button>
+              <button class="ftk-chip" data-key="tab"       title="Tab (autocomplete / indent)">Tab</button>
+              <button class="ftk-chip" data-key="esc"       title="Escape">Esc</button>
+              <button class="ftk-chip" data-key="enter"     title="Enter / Return">↵</button>
+              <span class="ftk-sep"></span>
+              <button class="ftk-chip" data-key="sigint"    title="Interrupt (Ctrl+C / SIGINT)">^C</button>
+              <button class="ftk-chip" data-key="ctrl-r"    title="Reverse-search history (Ctrl+R)">^R</button>
+            </div>
+          </div>
+        </main>
+</template>

@@ -1,0 +1,213 @@
+/* ── Gen UI Toolbar ──
+   Styles for the Gen UI tab's footer control row, built by js/genui-toolbar.js.
+   DROP-IN / SWAPPABLE: this file + genui-toolbar.js own the entire footer, so a
+   user can redesign the toolbar here without touching the base genui core
+   (genui.js / genui.css). Registered via page.json `css`.
+
+   COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb for brand/status: use var(--brand) / var(--accent-hover), etc.
+   (the muted greys below mirror the rest of the genui tab). */
+
+/* ── Footer (single control row) ──
+   A compact, single-row control strip that sits in NORMAL FLOW at the bottom of
+   the flex column as a non-growing item, so #genui-viewport (flex:1) shrinks
+   to leave room for it instead of being covered. pointer-events:none here + auto
+   on the control row keeps the transparent gaps click-through to the genui. */
+
+#genui-footer {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  flex: 0 0 auto;
+  z-index: 5;
+  pointer-events: none;
+  padding: 8px 16px 10px;
+}
+body.light-mode #genui-footer { background: transparent; }
+
+/* Only the control row captures clicks; the rest of the strip stays
+   click-through to the genui behind it. */
+#genui-page-label { pointer-events: auto; }
+
+/* ── Page Nav Bar ──
+   One row: the chat pill grows to fill the space on the left, then the control
+   cluster (selector + new / refresh) hugs the RIGHT edge. */
+
+#genui-page-nav { width: 100%; }
+
+#genui-page-label {
+  display: flex;
+  /* flex-end so the page controls bottom-align with the pill when the isolated
+     attachment preview bar grows the pill column upward. */
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--fg-3);
+  font-size: 11px;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* The pill column: attachment preview bar stacked ABOVE the compact pill. It
+   owns the flexible width (the pill fills it); previews grow upward since the
+   footer hugs the bottom of the panel. */
+.genui-pill-col {
+  flex: 1 1 auto;
+  min-width: 150px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Isolated attachment preview bar (the pill's own, never the global composer's).
+   A wrapping row of .chat-attachment-pill chips above the pill; shown only when
+   there are pending files (display toggled in JS). */
+.genui-chat-preview {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+/* The page controls (selector + new + refresh) ride together at the right end of
+   the single row. Grouped so that when the toolbar stacks (narrow panel) they drop
+   to ONE sub-row beneath the pill instead of each wrapping to its own line. */
+.genui-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* ── Stack breakpoint ──
+   On a narrow panel the single row can't hold the pill AND the page controls
+   side by side, so the row flips to a column: the chat pill spans full width on
+   top, the page controls drop to their own row beneath it (kept together by
+   .genui-page-controls). The Browser toolbar stacks the same way (browser.css). */
+@media (max-width: 560px) {
+  #genui-page-label { flex-direction: column; align-items: stretch; }
+  .genui-pill-col { max-width: none; min-width: 90px; }
+  .genui-page-controls { justify-content: flex-end; }
+}
+
+/* ── Chat pill (the toolbar's "chat with this page's agent" input) ──
+   Opts into the shared single-line pill (.chat-pill.chat-pill-1line in app1.css)
+   + the shared floating-glass skin (#genui-prompt-row in index.css). It grows
+   to fill the row to the left of the page controls (capped so it never gets
+   absurdly wide), and its resting height is trimmed below so it lines up with the
+   ~30px page-selector / buttons in this compact toolbar (the default 1-line pill
+   rests ~46px). Input min-height and button size are shrunk TOGETHER so the send
+   glyph never clips — the bug the old cramped browser-pill fork hit. */
+#genui-prompt-row.chat-pill {
+  width: 100%;          /* the .genui-pill-col owns the flexible width now */
+  max-width: none;
+}
+#genui-prompt-row.chat-pill-1line { padding: 2px 6px; }
+#genui-prompt-row .chat-pill-input {
+  min-height: 26px;
+  padding: 4px 8px;
+  line-height: 18px;
+  font-size: 13px;
+}
+/* attach (+) · mic · send all share the compact box so the slim pill geometry
+   holds (the shared 1-line defaults are a touch bigger). */
+#genui-prompt-row .chat-pill-attach,
+#genui-prompt-row .chat-pill-voice,
+#genui-prompt-row .chat-pill-send {
+  width: 28px;
+  height: 28px;
+}
+#genui-prompt-row .chat-pill-attach svg,
+#genui-prompt-row .chat-pill-voice svg,
+#genui-prompt-row .chat-pill-send svg {
+  width: 18px !important;
+  height: 18px !important;
+}
+/* The genui selector is now CHEVRON-ONLY — a compact icon button, not a wide
+   named chip. The current genui shows highlighted inside the popup instead. */
+#genui-page-label .session-dropdown {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
+/* The four right-side controls — gallery toggle, chevron selector, New Gen UI
+   (+), Refresh Gen UI — are circular icon buttons sized to match the pill's
+   mic / + / send buttons (28px box, 18px glyph), so the whole footer row reads
+   as one cohesive set. (.header-plus-btn supplies the transparent base + hover;
+   we only resize here, and never touch the shared class.) */
+#genui-page-dropdown-trigger,
+#genui-gallery-btn,
+#genui-new-page-btn,
+#genui-refresh-btn,
+#genui-version-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The chevron trigger reuses .session-dropdown-trigger (for the loaded-state
+   gating) but is now a bare icon button like its neighbours, not a bordered
+   .status-select chip. The gallery toggle is the same bare icon button. */
+#genui-page-dropdown-trigger,
+#genui-gallery-btn {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: 0.15s;
+}
+#genui-page-dropdown-trigger:hover,
+#genui-page-dropdown.open #genui-page-dropdown-trigger,
+#genui-gallery-btn:hover,
+#genui-gallery-btn.active {
+  color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.08);
+}
+#genui-page-dropdown-trigger svg,
+#genui-gallery-btn svg,
+#genui-new-page-btn svg,
+#genui-refresh-btn svg,
+#genui-version-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Version check button states ──
+   The button inherits .header-plus-btn (transparent base + hover). We only layer
+   on the state colours and the checking animation — success/warning/danger all use
+   the global palette via var(--token) so they follow any re-skin. */
+#genui-version-btn.checking svg {
+  animation: genui-spin 1s linear infinite;
+  color: var(--fg-3);
+}
+#genui-version-btn.up-to-date { color: var(--success); }
+#genui-version-btn.outdated   { color: var(--warning); }
+#genui-version-btn.error      { color: var(--danger); }
+
+@keyframes genui-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+body.light-mode #genui-page-label { color: var(--fg-3); }
+
+/* The page selector lives at the bottom of the Gen UI tab, so flip the menu
+   upward to keep it on-screen. The trigger is now a 28px chevron, so the menu
+   can't inherit its width (shared rule = 100% of the trigger) — give the popup
+   its own width and anchor it to the trigger's RIGHT edge so it expands leftward
+   and stays on-screen near the panel's right side. */
+#genui-page-dropdown-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  width: 240px;
+  max-width: 70vw;
+}

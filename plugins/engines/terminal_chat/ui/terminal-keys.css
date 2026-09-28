@@ -1,0 +1,72 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Terminal Chat — on-screen keys (PLUGIN-OWNED styling)
+   ──────────────────────────────────────────────────────────────────────────
+   Ships WITH the terminal_chat engine, NOT with the core app CSS. Served off
+   disk at /plugins/engines/terminal_chat/ui/terminal-keys.css and injected once
+   (as a <link>) by terminal-keys.js the first time a Terminal Chat session
+   mounts — so nothing here is loaded for a normal (LLM-loop) agent.
+
+   The footer toggle (.chat-term-keys-btn) reuses the core .chat-skills-btn glass
+   skin and adds .term-keys-open to #chat-input-area. The pill (#chat-input-row)
+   then hides its normal controls and the #chat-term-keypad grid OVERLAYS the
+   whole pill box — same border, radius, background and resting height — so the
+   composer literally BECOMES a number pad + arrows + shortcut keys. A view the
+   pill takes on, not a separate panel. Theme via design-system tokens.
+
+   Both #chat-input-area and #chat-input-row are core chat-pill nodes (in
+   ui/chat/chat-side-panel.html); the button + keypad they style are
+   injected at runtime by this engine's terminal-keys.js. If the terminal_chat
+   engine is dropped, delete this whole ui/ folder — the core carries none of it.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.chat-term-keys-btn[data-active="1"] {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+
+/* When open: hide every normal pill child, then overlay the key grid across the
+   FULL pill grid (cols 1/-1, rows 1/-1) held at the pill's resting height so the
+   box keeps its exact size. The 3×8 keys fill that box — no separate sizing. */
+#chat-input-area.term-keys-open #chat-input-row > :not(.chat-term-keypad) { display: none; }
+.chat-term-keypad { display: none; }
+#chat-input-area.term-keys-open .chat-term-keypad {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 1fr);
+  gap: 5px;
+  width: 100%;
+  min-height: var(--chat-pill-min-height, 96px);
+}
+.ctk-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 3px;
+  border-radius: 7px;
+  border: var(--border-width) solid color-mix(in oklab, currentColor 14%, transparent);
+  background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+  color: var(--fg-2, var(--fg-3));
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Monaco, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ctk-chip:hover { border-color: color-mix(in oklab, var(--accent) 45%, transparent); color: var(--accent); }
+.ctk-chip:active { transform: translateY(1px); }
+/* Lucide SVG inside chips must not swallow taps (same fix as .chat-skills-btn > *). */
+.ctk-chip > * { pointer-events: none; }
+.ctk-chip svg { width: 15px; height: 15px; }

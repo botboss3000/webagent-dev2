@@ -1,0 +1,12 @@
+{
+  "display_name": "TikTok",
+  "kind": "oauth",
+  "icon": "music",
+  "color": "#bb9af7",
+  "description": "Posting and reading TikTok content.",
+  "note": "Free OAuth, but the app must pass TikTok review before going live.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 4
+}

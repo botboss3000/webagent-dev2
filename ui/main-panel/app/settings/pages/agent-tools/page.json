@@ -1,0 +1,24 @@
+{
+  "id": "agent-tools",
+  "label": "Agent tools & abilities",
+  "icon": "wrench",
+  "description": "Every ability, tool and integration an agent can run \u2014 the whole unified table.",
+  "keywords": [
+    "abilities",
+    "tools",
+    "permissions",
+    "web",
+    "search",
+    "image",
+    "visualizer",
+    "automation",
+    "browser",
+    "skills"
+  ],
+  "group": "agent",
+  "runtime": "settings",
+  "page": "agent-tools",
+  "anchor": "",
+  "paPage": "agent_settings",
+  "html": "page.html"
+}

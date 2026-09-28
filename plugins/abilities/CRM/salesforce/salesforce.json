@@ -1,0 +1,12 @@
+{
+  "display_name": "Salesforce",
+  "kind": "placeholder",
+  "icon": "cloud",
+  "color": "#bb9af7",
+  "description": "CRM records and automation.",
+  "note": "OAuth — requires a paid Salesforce org.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 2
+}

@@ -1,0 +1,17 @@
+{
+  "display_name": "Amazon",
+  "kind": "oauth",
+  "icon": "package",
+  "color": "#e0af68",
+  "description": "Amazon Selling Partner inventory, listings, pricing, and order management.",
+  "note": "Requires an eligible Amazon seller account and SP-API developer registration.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [
+    "amazon_list_orders",
+    "amazon_get_order",
+    "amazon_list_inventory",
+    "amazon_update_listing_price"
+  ],
+  "order": 7
+}

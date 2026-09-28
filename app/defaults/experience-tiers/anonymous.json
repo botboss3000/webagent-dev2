@@ -1,0 +1,45 @@
+{
+  "id": "anonymous",
+  "slug": "anonymous",
+  "name": "Anonymous",
+  "description": "Restrictive experience for visitors without a registered account.",
+  "status": "published",
+  "revision": 5,
+  "is_system": true,
+  "is_locked": false,
+  "policy_schema_version": 1,
+  "policy": {
+    "schema_version": 1,
+    "pages": ["agents", "wiki"],
+    "features": ["chat"],
+    "ability_groups": [],
+    "agent_templates": ["default"],
+    "models": {
+      "roster_id": "roster-anonymous",
+      "allowed_entry_ids": [],
+      "allow_byo": false,
+      "max_byo_entries": 0,
+      "max_reasoning_effort": "low"
+    },
+    "limits": {
+      "max_agents": 0,
+      "max_automations": 0,
+      "max_connections": 0,
+      "concurrent_sessions_per_user": 1,
+      "messages_per_window": 30,
+      "window_seconds": 300,
+      "weekly_credit_limit": 250,
+    "weekly_credit_renews": false,
+      "max_attachment_bytes": 0,
+      "max_storage_bytes": 0
+    },
+    "anonymous": {
+      "identity_messages": 5,
+      "identity_window_seconds": 300,
+      "daily_messages": 10,
+      "daily_window_seconds": 86400,
+      "network_messages": 10,
+      "network_window_seconds": 300
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "display_name": "WooCommerce",
+  "kind": "ability",
+  "icon": "shopping-basket",
+  "color": "#e0af68",
+  "description": "Query products and orders and create pending WooCommerce checkouts.",
+  "note": "Connect with a WooCommerce REST API consumer key and secret.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["woocommerce_list_products", "woocommerce_get_product", "woocommerce_list_orders", "woocommerce_create_checkout"],
+  "order": 2,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["base_url", "consumer_key", "consumer_secret"],
+    "fields": [
+      {"key": "base_url", "label": "Store URL", "type": "text", "placeholder": "https://store.example.com"},
+      {"key": "consumer_key", "label": "Consumer key", "type": "password", "secret": true, "placeholder": "ck_…"},
+      {"key": "consumer_secret", "label": "Consumer secret", "type": "password", "secret": true, "placeholder": "cs_…"}
+    ]
+  }
+}

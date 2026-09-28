@@ -1,0 +1,9 @@
+{
+  "id": "aurora",
+  "name": "Aurora",
+  "description": "Large soft colour blobs drifting slowly behind everything — a calm animated gradient mesh with no mouse reaction.",
+  "icon": "waves",
+  "status": "stable",
+  "order": 30,
+  "themes": ["dark", "light"]
+}

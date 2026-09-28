@@ -1,0 +1,15 @@
+{
+  "_comment": "Dashboard card plugin descriptor (drop-in folder). Fields: id (= folder name), label, icon, w/h (grid size), order (picker sort), live (fast-poll), sections (snapshot sections it reads), chart (timeseries kind), section + server (backend). See cards/README.md — do NOT register data cards in dashboard.js CARD_TYPES or add builders to server.py _build_snapshot().",
+  "id": "git_changes",
+  "label": "Local changes",
+  "icon": "file-diff",
+  "w": 6,
+  "h": 2,
+  "order": 12,
+  "live": false,
+  "sections": [],
+  "chart": null,
+  "section": null,
+  "server": null,
+  "aiHint": "Local working-tree changes (staged/unstaged/untracked) + commit graph for this machine's repo, moved here from the Instances Overview tab. Self-fetching card module — no snapshot section: it calls the /api/v1/github/* endpoints directly (same as the Git Control page) and the action buttons run commit / commit & push / pull / push / merge / refresh."
+}

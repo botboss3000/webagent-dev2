@@ -1,0 +1,9 @@
+{
+  "id": "particles",
+  "name": "Floating particles",
+  "description": "Soft glowing orbs drift slowly upward and part around the cursor — a light, airy bokeh background.",
+  "icon": "circle-dot",
+  "status": "stable",
+  "order": 40,
+  "themes": ["dark", "light"]
+}

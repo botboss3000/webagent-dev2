@@ -1,0 +1,14 @@
+{
+  "_comment": "Dashboard card plugin descriptor (drop-in folder). Fields: id (= folder name), label, icon, w/h (grid size), order (picker sort), live (fast-poll), sections (snapshot sections it reads), chart (timeseries kind), section + server (backend). See cards/README.md — do NOT register data cards in dashboard.js CARD_TYPES or add builders to server.py _build_snapshot().",
+  "id": "active_runs",
+  "label": "Active Agent Runs",
+  "icon": "activity",
+  "w": 3,
+  "h": 2,
+  "order": 11,
+  "live": true,
+  "sections": [
+    "active_runs",
+    "live"
+  ]
+}

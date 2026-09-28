@@ -1,0 +1,10 @@
+{
+  "name": "Web",
+  "icon": "globe",
+  "color": "#7aa2f7",
+  "desc": "Reach and manage the web — search, browsers, scraping, authenticated sessions, remote hosts, and hosting-provider connections.",
+  "entitlement_group": "web_read",
+  "risk_class": "read",
+  "action_class": "read",
+  "order": 4
+}

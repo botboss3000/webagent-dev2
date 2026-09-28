@@ -1,0 +1,13 @@
+{
+  "id": "genui",
+  "required_backend_capability": "page:genui",
+  "label": "Gen UI",
+  "icon": "files",
+  "order": 3,
+  "html": "genui.html",
+  "mount": "#tab-genui",
+  "entry": "ui/main-panel/genui/js/genui.js",
+  "start": "startGenui",
+  "stop": "stopGenui",
+  "css": ["genui.css", "genui-toolbar.css"]
+}

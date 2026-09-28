@@ -1,0 +1,12 @@
+{
+  "display_name": "Meta",
+  "kind": "oauth",
+  "icon": "facebook",
+  "color": "#bb9af7",
+  "description": "Facebook and Instagram posting and reading.",
+  "note": "Free OAuth — a Meta app with App Review is required to publish to Facebook/Instagram.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 1
+}

@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "id": "my-agents",
+  "title": "My Agents",
+  "description": "Every My Agents subpage, one entry each.",
+  "directory": {
+    "title": "Config",
+    "description": "Open any My Agents page, or star it to choose the header tabs.",
+    "groups": [
+      { "id": "workspace", "label": "My Agents pages", "order": 10 }
+    ]
+  },
+  "pages": [
+    {
+      "id": "sessions",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 10,
+      "iconName": "message-square",
+      "title": "Sessions",
+      "tabLabel": "Sessions",
+      "description": "Conversation threads across every agent."
+    },
+    {
+      "id": "automations",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 20,
+      "iconName": "zap",
+      "title": "Automations",
+      "tabLabel": "Automations",
+      "description": "Scheduled tasks that run across your agents."
+    },
+    {
+      "id": "models",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 30,
+      "iconName": "cpu",
+      "title": "Available models",
+      "tabLabel": "Available models",
+      "description": "Every model available to you, with usage analytics."
+    },
+    {
+      "id": "abilities",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 40,
+      "iconName": "sparkles",
+      "title": "Abilities",
+      "tabLabel": "Abilities",
+      "description": "Abilities and connections available to you."
+    },
+    {
+      "id": "config",
+      "kind": "directory",
+      "directoryGroup": "workspace",
+      "order": 50,
+      "iconName": "settings",
+      "title": "Config",
+      "tabLabel": "Config",
+      "description": "Directory of every My Agents page.",
+      "entry": "./config/page.js"
+    }
+  ]
+}

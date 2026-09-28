@@ -1,0 +1,19 @@
+{
+  "display_name": "Create Tools",
+  "entitlement_group": "tool_creation",
+  "risk_class": "admin",
+  "action_class": "write",
+  "kind": "ability",
+  "icon": "wrench",
+  "color": "#7dcfff",
+  "description": "Lets the agent define brand-new callable tools at runtime (a self-contained Python function stored in the database). No credentials, no filesystem/network access.",
+  "skill_summary": "How to mint a new tool with create_tool — the five required pieces (name = function name, JSON-Schema parameters, async code, and the required stages list e.g. ['execute_tools']), the upsert-by-name behaviour, the safety scanner, and verifying the tool by calling it. Load before defining any custom tool.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "create_tool"
+  ],
+  "order": 5
+}

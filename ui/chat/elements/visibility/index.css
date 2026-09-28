@@ -1,0 +1,74 @@
+/* Chat element: visibility — header filter button + popover.
+   Tokens: ui/shared/css/design-system.css (dark + light twins). */
+
+.chat-visibility-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg-2, #999);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.chat-visibility-btn:hover {
+  color: var(--fg-1, #eee);
+  background: var(--bg-tint);
+}
+.chat-visibility-btn.is-filtered {
+  color: var(--brand);
+}
+
+.chat-visibility-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1200;
+  min-width: 240px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-visibility-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3, #777);
+  padding: 4px 8px 6px;
+  border-bottom: var(--border-width) solid var(--border-soft);
+  margin-bottom: 4px;
+}
+
+.chat-visibility-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg-1, #eee);
+}
+.chat-visibility-row:hover {
+  background: var(--bg-tint);
+}
+.chat-visibility-row input[type="checkbox"] {
+  accent-color: var(--brand);
+  margin: 0;
+  cursor: pointer;
+}
+.chat-visibility-row small {
+  font-size: 11px;
+  color: var(--fg-3, #777);
+  white-space: nowrap;
+}

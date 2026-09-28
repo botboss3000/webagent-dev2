@@ -1,0 +1,526 @@
+/* ── Automations Dashboard ──────────────────────────────────────────── */
+/* Table view — mirrors the Sessions table (ui/main-panel/agents/sessions/sessions.css).
+   ---- HARMONY: toolbar action styles (auto-tb-btn / auto-tb-trash) mirror the
+        sessions-tb-* rules in sessions.css and the agents-tb-* rules in
+        ui/main-panel/agents/agents.css. Keep them in sync. */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / var(--accent) / var(--accent-hover) for
+   the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+/* The Automations tab was folded into the Agents page (the All Agents card's
+   Automations tab). The section is hidden unless a card body owns it — the
+   card-body layout rules live in ui/main-panel/agents/agents.css
+   (.agent-detail-body.all-agents-automations-body). Mirrors #sessions-section
+   in ui/main-panel/agents/sessions/sessions.css. */
+#automations-section {
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+  position: relative;
+  /* Single source of truth for the card's side inset — the one edge margin from
+     the card edge to content. Feeds BOTH the toolbar and the scrollable table
+     area so they share the exact same margin and can never drift apart (same
+     approach as the agents page's --agents-content-inset and the sessions
+     section's --sessions-content-inset). Zero = edge-to-edge layout with no
+     side gutter. */
+  --automations-content-inset: 0;
+}
+/* Mobile / narrow screens: the side inset is 0 everywhere (flat edge-to-edge
+   layout), so no override is needed. 800px matches the app-wide breakpoint. */
+
+/* ── Toolbar ── */
+#automations-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--automations-content-inset) 12px;
+  flex-shrink: 0;
+}
+#automations-toolbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Back button — leave the recycling bin (mirrors #sessions-back-btn). */
+#automations-back-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: none; border-radius: 7px; cursor: pointer;
+  background: transparent; color: var(--fg-1);
+  transition: background .12s ease, color .12s ease;
+}
+#automations-back-btn:hover { background: rgba(var(--ink-rgb),0.12); }
+#automations-back-btn > * { pointer-events: none; }
+#automations-toolbar-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg-1);
+}
+#automations-toolbar-sub {
+  font-size: 12px;
+  color: var(--fg-4);
+  font-weight: 400;
+}
+#automations-toolbar-actions {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+
+/* Agent filter select (lives in the toolbar) */
+.auto-filter-select {
+  height: 28px;
+  font-size: 12px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: var(--border-width) solid var(--border);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  max-width: 180px;
+  cursor: pointer;
+}
+
+/* Toolbar buttons — mirror .sessions-tb-btn / .sessions-tb-trash */
+.auto-tb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  font-size: 12px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: rgba(var(--ink-rgb),0.04); color: var(--fg-1); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.auto-tb-btn:hover { background: rgba(var(--ink-rgb),0.12); border-color: rgba(var(--ink-rgb),0.30); }
+.auto-tb-btn:disabled { opacity: 0.4; cursor: default; }
+.auto-tb-btn > * { pointer-events: none; }
+.auto-tb-icon { width: 28px; padding: 0; justify-content: center; }
+/* Restore button — bin view only (mirrors .sessions-tb-restore / .agents-tb-restore). */
+.auto-tb-restore { color: var(--success); border-color: rgba(var(--success-rgb),0.30); }
+.auto-tb-restore:hover { background: rgba(var(--success-rgb),0.14); border-color: rgba(var(--success-rgb),0.5); }
+
+/* Completed-view entry button (active view only) — neutral like .auto-tb-btn,
+   with a small success-tinted count pill showing how many finished automations
+   are waiting in the history view. */
+.auto-tb-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 5px; margin-left: 1px;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 8px;
+  background: rgba(var(--success-rgb),0.18); color: var(--success);
+}
+
+.auto-tb-trash {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid rgba(var(--danger-rgb),0.22); border-radius: 7px;
+  background: rgba(var(--danger-rgb),0.05); color: var(--danger); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.auto-tb-trash:hover { background: rgba(var(--danger-rgb),0.14); border-color: rgba(var(--danger-rgb),0.45); }
+.auto-tb-trash:disabled { opacity: 0.4; cursor: default; }
+.auto-tb-trash > * { pointer-events: none; }
+/* SHARED-DELETE-CONTROL — armed hazard state (mirrors .agents-tb-trash.warning in
+   ui/main-panel/agents/agents.css). State machine: ui/shared/js/delete-control.js.
+   The deleting spinner reuses the global .session-status-running wrapper. */
+.auto-tb-trash.warning { color: var(--warning); border-color: rgba(var(--warning-rgb),0.5); background: rgba(var(--warning-rgb),0.12); }
+.auto-tb-trash.warning:hover { background: rgba(var(--warning-rgb),0.2); color: var(--warning); }
+
+/* Light mode: only the neutral text tone differs (fg-1 → fg-2); accent / status
+   hues + neutral tints come from the per-theme tokens above. */
+body.light-mode .auto-tb-btn { color: var(--fg-2); border-color: rgba(var(--ink-rgb),0.18); }
+body.light-mode #automations-back-btn { color: var(--fg-2); }
+
+/* ── Scrollable table area ── */
+#automations-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 0 var(--automations-content-inset) 24px 0;
+}
+#automations-table-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+#automations-table-wrap::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, var(--bg-tint)); border-radius: 3px; }
+#automations-table-wrap::-webkit-scrollbar-track { background: transparent; }
+
+#automations-table-inner {
+  min-width: 980px;
+  padding-left: var(--automations-content-inset);
+}
+
+/* ── Table ── */
+#automations-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 12px;
+  table-layout: fixed;
+}
+#automations-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-1);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-4);
+  padding: 8px 6px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: var(--border-width) solid var(--border);
+  user-select: none;
+}
+#automations-table thead th.col-last,
+#automations-table thead th.col-next,
+#automations-table thead th.col-count {
+  text-align: right;
+}
+#automations-table thead th.col-enabled { text-align: center; width: 70px; }
+#automations-table thead th.col-check {
+  width: 32px;
+  min-width: 32px;
+  padding: 8px 0 8px 6px;
+}
+
+/* ── Resizable column handle (decorative, matches Sessions) ── */
+.col-resizable { position: relative; }
+.col-resizable::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 4px; height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  background: transparent;
+}
+.col-resizable:last-child::after { display: none; }
+
+/* ── Checkbox cell ── */
+.auto-check-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: var(--border-width) solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: background .1s, border-color .1s;
+  color: transparent;
+}
+.auto-check-cell:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.auto-check-cell.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.auto-check-cell.checked::after {
+  content: '✓';
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+}
+
+/* ── Rows ── */
+#automations-table tbody tr {
+  transition: background 0.1s;
+  cursor: default;
+}
+#automations-table tbody tr:hover { background: var(--accent-soft); }
+#automations-table tbody tr.selected {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+#automations-table tbody td {
+  padding: 7px 6px;
+  color: var(--fg-2);
+  border-bottom: var(--border-width) solid var(--border-soft);
+  white-space: nowrap;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#automations-table tbody td.col-last,
+#automations-table tbody td.col-next,
+#automations-table tbody td.col-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+#automations-table tbody td.col-enabled { text-align: center; }
+#automations-table tbody td.col-name { max-width: 200px; color: var(--fg-1); font-weight: 600; }
+#automations-table tbody td.col-trigger { max-width: 180px; }
+#automations-table tbody td.col-check {
+  width: 32px;
+  padding: 7px 0 7px 6px;
+}
+
+/* ── Sticky left column (checkbox) ──
+   Stays pinned when the table scrolls horizontally so the user can always
+   see and click the row checkbox.
+   The wrap has no left padding so left:0 truly reaches the viewport edge.
+   outline: none stops tr.selected's outline from painting on top. */
+#automations-table thead th.col-check {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--bg-0);
+  border-right: 1px solid var(--border);
+  outline: none;
+}
+#automations-table tbody td.col-check {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-0);
+  border-right: 1px solid var(--border);
+  outline: none;
+}
+/* Hover/selected state for sticky cells */
+#automations-table tbody tr:hover td.col-check {
+  background: var(--accent-soft);
+}
+#automations-table tbody tr.selected td.col-check {
+  background: var(--accent-soft);
+}
+
+/* ── Agent badge (matches the Sessions agent badge) ── */
+.auto-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-2);
+  padding: 2px 8px;
+  background: var(--bg-2);
+  border-radius: 6px;
+  border: var(--border-width) solid var(--border-soft);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auto-agent-badge i,
+.auto-agent-badge svg { flex-shrink: 0; opacity: 0.6; }
+
+/* ── Type cell ── */
+.auto-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fg-2);
+  text-transform: capitalize;
+}
+.auto-type i { flex-shrink: 0; }
+
+/* ── Trigger cell details ── */
+.auto-cron {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  background: var(--bg-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--fg-2);
+}
+.auto-tz { font-size: 10px; color: var(--fg-4); font-family: var(--font-mono, 'JetBrains Mono', monospace); }
+.auto-event-src { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 11px; color: var(--warning); }
+.auto-filter-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: rgba(var(--brand-rgb),0.1);
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.auto-worker-name { font-size: 11px; color: var(--success); }
+.auto-clone-of { font-size: 11px; color: var(--fg-3); font-family: var(--font-mono, 'JetBrains Mono', monospace); }
+.auto-webhook-name { font-size: 11px; color: var(--fg-2); }
+.auto-clone-badge {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(var(--success-rgb),0.12);
+  color: var(--success);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Output (delivery) cell ──
+   One badge per place an automation's result is sent — set by the agent when it
+   created the automation, surfaced here so the destination is visible, not
+   hidden. Kind-tinted: chat = brand accent, channel = 2nd hue, file/webhook =
+   success, silent = muted, email-not-set-up = warning. */
+#automations-table tbody td.col-output { max-width: 220px; }
+.auto-out-list { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.auto-out-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(var(--ink-rgb),0.06);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.auto-out-badge i { flex-shrink: 0; opacity: 0.7; }
+.auto-out-chat    { background: rgba(var(--brand-rgb),0.12);   color: var(--accent); }
+.auto-out-channel { background: rgba(var(--purple-rgb),0.14);  color: var(--purple); }
+.auto-out-webhook,
+.auto-out-file    { background: rgba(var(--success-rgb),0.12); color: var(--success); }
+.auto-out-silent  { background: rgba(var(--ink-rgb),0.06);     color: var(--fg-4); }
+.auto-out-unavail { background: rgba(var(--warning-rgb),0.12); color: var(--warning); }
+
+/* ── Status badges ── */
+.auto-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+/* Semantic status hues from the palette — per-theme -rgb triples adapt to
+   light/dark, so no body.light-mode override is needed. */
+.auto-status.ok { background: rgba(var(--success-rgb),0.12); color: var(--success); }
+.auto-status.error { background: rgba(var(--danger-rgb),0.12); color: var(--danger); }
+.auto-status.pending { background: rgba(var(--warning-rgb),0.1); color: var(--warning); }
+.auto-status.running { background: rgba(var(--brand-rgb),0.1); color: var(--accent); }
+.auto-status.done { background: rgba(var(--success-rgb),0.1); color: var(--success); }
+/* Terminal "finished for good" state shown in the Completed view (e.g. a one-off
+   reminder that fired). Slightly stronger fill than .ok so it reads as a final state. */
+.auto-status.completed { background: rgba(var(--success-rgb),0.16); color: var(--success); }
+.auto-status.stopped { background: rgba(var(--danger-rgb),0.06); color: var(--fg-3); }
+.auto-status.queued { background: rgba(var(--warning-rgb),0.08); color: var(--warning); }
+.auto-status.unknown { background: rgba(var(--ink-rgb),0.06); color: var(--fg-4); }
+
+/* ── Error / summary badge (sits beside the status) ── */
+.auto-error {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(var(--danger-rgb),0.1);
+  color: var(--danger);
+  cursor: default;
+}
+
+/* ── Toggle switch ── */
+.auto-toggle {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.auto-toggle-input { opacity: 0; width: 0; height: 0; position: absolute; }
+.auto-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  transition: background .2s, border-color .2s;
+}
+.auto-toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 10px;
+  width: 10px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--fg-3);
+  border-radius: 50%;
+  transition: transform .2s, background .2s;
+}
+.auto-toggle-input:checked + .auto-toggle-slider {
+  background: rgba(var(--brand-rgb),0.25);
+  border-color: var(--accent);
+}
+.auto-toggle-input:checked + .auto-toggle-slider::before {
+  transform: translateX(12px);
+  background: var(--accent);
+}
+body.light-mode .auto-toggle-slider { background: var(--bg-1); }
+body.light-mode .auto-toggle-input:checked + .auto-toggle-slider { background: rgba(var(--brand-rgb),0.15); }
+
+/* ── Empty state (matches Sessions) ── */
+.auto-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+.auto-empty-icon { color: var(--fg-4); opacity: 0.3; margin-bottom: 12px; }
+.auto-empty-text { font-size: 14px; font-weight: 600; color: var(--fg-3); margin-bottom: 4px; }
+.auto-empty-hint { font-size: 11px; color: var(--fg-4); }
+
+/* ── Skeleton rows (first-load placeholder) ──
+   Phantom shimmer rows shown while the first dashboard fetch is in flight, so
+   the table has its column shape immediately instead of a lone spinner.
+   `.sk-shimmer` (the animated fill) is shared in ui/shared/css/app3.css. */
+#automations-table tbody tr.auto-skeleton-row {
+  cursor: default;
+  pointer-events: none;
+}
+.auto-sk {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  max-width: 150px;
+}
+
+/* ── Loading state ── */
+.auto-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 16px;
+  color: var(--fg-3);
+  font-size: 13px;
+}
+.auto-loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: auto-spin 0.8s linear infinite;
+}
+@keyframes auto-spin { to { transform: rotate(360deg); } }
+
+/* ── Brief "Saved" toast ── */
+.auto-toast {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 9999;
+  transition: opacity .5s ease;
+}
+.auto-toast-fade { opacity: 0; }

@@ -1,0 +1,100 @@
+{
+  "contract": {
+    "authority_resolution": "get_db() must be called inside request/turn execution so the context-local BrowserAuthorityDB override is observed",
+    "browser_behavior": "BrowserAuthorityDB exposes no raw handle; classified server transcript/control-plane paths therefore fail closed",
+    "new_usage": "new raw-handle files require an explicit classification"
+  },
+  "findings": [
+    {
+      "classification": "server-authority transcript/account operations; browser adapter fails closed",
+      "lines": [
+        269,
+        303,
+        378
+      ],
+      "module_level_captures": [],
+      "path": "app/tools/core_tools.py"
+    },
+    {
+      "classification": "account/config tool catalog; resolved after request authority context",
+      "lines": [
+        258,
+        387,
+        585,
+        1362
+      ],
+      "module_level_captures": [],
+      "path": "app/tools/loader.py"
+    },
+    {
+      "classification": "isolated optimizer trial database, never a browser transcript",
+      "lines": [
+        385,
+        522,
+        783
+      ],
+      "module_level_captures": [],
+      "path": "app/tools/optimizer_tools.py"
+    },
+    {
+      "classification": "account tool catalog and server transcript analytics; browser adapter fails closed",
+      "lines": [
+        184,
+        288,
+        339,
+        389
+      ],
+      "module_level_captures": [],
+      "path": "app/tools/registry.py"
+    },
+    {
+      "classification": "dedicated code-index database",
+      "lines": [
+        236
+      ],
+      "module_level_captures": [],
+      "path": "plugins/abilities/Administrator/code_index/code_index.py"
+    },
+    {
+      "classification": "account/control-plane repository metadata",
+      "lines": [
+        353,
+        372
+      ],
+      "module_level_captures": [],
+      "path": "plugins/abilities/Administrator/git_control/git_control.py"
+    },
+    {
+      "classification": "account/control-plane agent configuration",
+      "lines": [
+        115
+      ],
+      "module_level_captures": [],
+      "path": "plugins/abilities/Core/agent_management/agent_management.py"
+    },
+    {
+      "classification": "server-only session orchestration; browser adapter fails closed",
+      "lines": [
+        47,
+        158,
+        2048,
+        2078
+      ],
+      "module_level_captures": [],
+      "path": "plugins/abilities/Core/agent_orchestration/agent_orchestration.py"
+    },
+    {
+      "classification": "server transcript hook; not invoked for browser authority",
+      "lines": [
+        241,
+        277
+      ],
+      "module_level_captures": [],
+      "path": "plugins/abilities/Core/session_titler/session_titler.py"
+    }
+  ],
+  "module_level_captures": [],
+  "ok": true,
+  "stale_classifications": [],
+  "unclassified": []
+}

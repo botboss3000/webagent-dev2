@@ -1,0 +1,12 @@
+{
+  "id": "sessions",
+  "label": "Sessions",
+  "icon": "list",
+  "order": 2,
+  "html": "sessions.html",
+  "mount": "#tab-sessions",
+  "entry": "ui/main-panel/agents/sessions/js/sessions-page.js",
+  "start": "startSessions",
+  "stop": "stopSessions",
+  "css": ["sessions.css"]
+}

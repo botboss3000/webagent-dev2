@@ -1,0 +1,14 @@
+{
+  "display_name": "Run Watchdog",
+  "kind": "ability",
+  "icon": "heart-pulse",
+  "color": "#f7768e",
+  "description": "Detects and revives agent runs that stall, freeze or go zombie mid-turn. Turn off only if you want stuck runs to stay stuck. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 12,
+  "tools": [],
+  "_note": "Wired-in core singleton (app/agent/watchdog). main.py gates the leader 'watchdog' registration on ability_app_enabled('watchdog'). Descriptor-only by design."
+}

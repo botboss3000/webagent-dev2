@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Diagnostics (standalone)</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<!--
+  STANDALONE Diagnostics page.
+  KEEP (intentional): this is a deliberate self-contained DUPLICATE of the
+  Admin Tools → Diagnostics view (ui/admin-tools/diagnostics/). Do NOT delete it
+  as redundant or try to de-duplicate it against the in-app version — the whole
+  point is that it shares no code, so it survives a broken front-end (see below).
+
+  This is a deliberately self-contained copy of the Admin Tools → Diagnostics
+  sub-page. Unlike the in-app version it depends on NOTHING else: no
+  partial-loader, no admin-tools shell, no ES-module boot chain, no CDN. So it
+  keeps working even when the main app's front-end is broken — which is exactly
+  when you most need diagnostics.
+
+  How it reaches the data:
+    • Served by the app (http/https), e.g. /ui/diagnostics.html → same origin,
+      relative API paths, and it reuses the app's own `auth_token` from
+      localStorage. Zero setup — it "just works" alongside the running app.
+    • Opened straight from disk (file://) → it needs an absolute server URL and
+      an admin token. Use the Connection panel in the sidebar (or pass
+      ?server=…&token=… in the address). CORS on the server already allows the
+      file:// ("null") origin.
+
+  If the server is unreachable the page still opens and stays usable; the feed
+  shows an honest "can't reach the server" state instead of hanging — there is
+  simply no live data to show while the backend is down.
+
+  Theme + token keys are intentionally the SAME as the main app
+  (`webagent_theme`, `auth_token`) so a same-origin load inherits both.
+-->
+<script>
+  // Pre-paint: apply saved theme before first paint to avoid a flash.
+  (function () {
+    try {
+      var t = localStorage.getItem('webagent_theme') || 'dark';
+      var light = t === 'light' || (t === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+      if (light) document.documentElement.classList.add('light-mode');
+    } catch (_) {}
+  })();
+</script>
+<style>
+  /* No arrow buttons on scrollbars — thumb-only pills (matches the app). */
+  ::-webkit-scrollbar-button { display: none; }
+
+  /* ── Theme tokens (mirrors ui/shared/css/design-system.css) ─────────────────
+     Inlined so the page is fully self-contained — works from disk with no
+     stylesheet fetch. Both dark (:root) and light (.light-mode) are defined,
+     so no hex is ever hard-coded into component rules below. */
+  :root {
+    --bg-0:        #0d0d1a;
+    --bg-1:        #13132a;
+    --bg-2:        #14142a;
+    --bg-elev:     #1a1a2e;
+    --bg-tint:     #2a2a4a;
+
+    --border:        #2a2a4a;
+    --border-soft:   #1e1e3a;
+    --border-strong: #3b4261;
+
+    --fg-1: #c0caf5;
+    --fg-2: #a9b1d6;
+    --fg-3: #565f89;
+    --fg-4: #3b4261;
+
+    --accent:       #7dcfff;
+    --accent-hover: #89ddff;
+    --accent-soft:  rgba(125,207,255,0.08);
+    --accent-mid:   rgba(125,207,255,0.19);
+    --accent-line:  rgba(125,207,255,0.33);
+
+    --success:      #9ece6a;
+    --success-mid:  rgba(158,206,106,0.40);
+    --warning:      #e0af68;
+    --warning-soft: rgba(224,175,104,0.19);
+    --danger:       #f7768e;
+    --danger-soft:  rgba(247,118,142,0.08);
+
+    --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, ui-monospace, monospace;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  html.light-mode, body.light-mode {
+    --bg-0:        #fffaf5;
+    --bg-1:        #fff7f0;
+    --bg-2:        #fff2e6;
+    --bg-elev:     #fff2e6;
+    --bg-tint:     #ffeee0;
+
+    --border:        #ffdec4;
+    --border-soft:   #ffeee0;
+    --border-strong: #ffd4a8;
+
+    --fg-1: #3d2c2e;
+    --fg-2: #5c4a4a;
+    --fg-3: #b09580;
+    --fg-4: #cca08a;
+
+    --accent:       #ff8c42;
+    --accent-hover: #ff7a2e;
+    --accent-soft:  #ffedd5;
+    --accent-mid:   #ffd4a8;
+    --accent-line:  #ffd4a8;
+
+    --success:      #5a8a4a;
+    --success-mid:  rgba(90,138,74,0.38);
+    --warning:      #d4873a;
+    --danger:       #d44848;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg-0);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top bar ──────────────────────────────────────────────────────── */
+  .topbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-1);
+  }
+  .topbar-title svg { width: 16px; height: 16px; }
+  .topbar-sub { font-size: 11px; color: var(--fg-3); }
+  .topbar-spacer { flex: 1 1 auto; }
+
+  /* Connection status chip */
+  .conn-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--fg-2);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+    max-width: 320px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .conn-chip:hover { border-color: var(--border-strong); }
+  .conn-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--fg-4); flex: 0 0 auto;
+  }
+  .conn-dot.ok   { background: var(--success); }
+  .conn-dot.warn { background: var(--warning); }
+  .conn-dot.bad  { background: var(--danger); }
+
+  .icon-btn {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--fg-2);
+    border-radius: 7px;
+    padding: 5px 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+  }
+  .icon-btn:hover { border-color: var(--border-strong); color: var(--fg-1); }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  /* ── Body split ───────────────────────────────────────────────────── */
+  .split { flex: 1 1 auto; min-height: 0; display: flex; }
+  .sidebar {
+    flex: 0 0 264px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-1);
+    overflow-y: auto;
+  }
+  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+
+  @media (max-width: 720px) {
+    .split { flex-direction: column; }
+    .sidebar { flex: 0 0 auto; max-height: 42vh; border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  /* ── Diagnostics sidebar (ported from ui/main-panel/admin-tools/files.css) ───────────── */
+  .diag-side { display: flex; flex-direction: column; gap: 14px; padding: 12px; }
+  .diag-side-section { display: flex; flex-direction: column; gap: 7px; }
+  .diag-side-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--fg-3);
+  }
+  .diag-search, .diag-select, .diag-input {
+    width: 100%; box-sizing: border-box;
+    background: var(--bg-1); border: 1px solid var(--border); color: var(--fg-1);
+    border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none;
+    font-family: inherit;
+  }
+  .diag-input { font-family: var(--font-mono); }
+  .diag-search:focus, .diag-select:focus, .diag-input:focus { border-color: var(--accent); }
+  .diag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .diag-chip {
+    background: var(--bg-1); border: 1px solid var(--border); color: var(--fg-2);
+    border-radius: 999px; padding: 4px 11px; font-size: 11px; cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .diag-chip:hover { border-color: var(--border-strong); }
+  .diag-chip.active { background: var(--accent-mid); border-color: var(--accent-line); color: var(--fg-1); }
+  .diag-live-toggle {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--fg-2); cursor: pointer;
+  }
+
+  /* Connection panel */
+  .diag-conn-section { border-bottom: 1px solid var(--border-soft); padding-bottom: 14px; }
+  .diag-conn-section[hidden] { display: none; }
+  .diag-btn-primary {
+    width: 100%; margin-top: 2px;
+    background: var(--accent-mid); border: 1px solid var(--accent-line); color: var(--fg-1);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+  }
+  .diag-btn-primary:hover { border-color: var(--accent); }
+  .diag-hint-sm { font-size: 10px; color: var(--fg-3); line-height: 1.4; }
+
+  /* Clear-logs controls */
+  .diag-clear-section { border-top: 1px solid var(--border-soft); padding-top: 12px; }
+  .diag-clear-row { display: flex; gap: 6px; align-items: center; }
+  .diag-clear-row .diag-select { flex: 1 1 auto; }
+  .diag-clear-btn {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-2);
+    border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .diag-clear-btn:hover { border-color: var(--border-strong); color: var(--fg-1); }
+  .diag-clear-wide { width: 100%; margin-top: 6px; }
+  .diag-clear-danger { border-color: var(--danger); color: var(--danger); }
+  .diag-clear-danger:hover { background: var(--danger-soft); color: var(--danger); }
+  .diag-clear-btn.armed { background: var(--danger); border-color: var(--danger); color: var(--bg-0); font-weight: 600; }
+  .diag-clear-section code {
+    font-family: var(--font-mono); font-size: 10px;
+    background: var(--bg-tint); padding: 1px 4px; border-radius: 3px;
+  }
+
+  /* ── Main feed (ported) ───────────────────────────────────────────── */
+  #diag-container { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  #diag-toolbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 12px; border-bottom: 1px solid var(--border);
+    background: var(--bg-1); flex: 0 0 auto;
+  }
+  .diag-toolbar-label {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; font-weight: 600; color: var(--fg-2);
+  }
+  .diag-stats { font-size: 11px; color: var(--fg-3); }
+  .diag-spacer { flex: 1 1 auto; }
+  .diag-live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success); box-shadow: 0 0 0 0 var(--success-mid);
+    animation: diagPulse 1.6s ease-out infinite;
+  }
+  @keyframes diagPulse {
+    0%   { box-shadow: 0 0 0 0 var(--success-mid); }
+    70%  { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .diag-btn {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-2);
+    border-radius: 6px; padding: 4px 8px; cursor: pointer;
+    display: inline-flex; align-items: center;
+  }
+  .diag-btn:hover { border-color: var(--border-strong); color: var(--fg-1); }
+  .diag-btn svg { width: 13px; height: 13px; }
+
+  #diag-feed {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .diag-hint { padding: 22px 16px; text-align: center; color: var(--fg-3); font-size: 12px; line-height: 1.5; }
+  .diag-hint .diag-hint-strong { color: var(--fg-2); font-weight: 600; }
+
+  .diag-row {
+    border: 1px solid var(--border-soft); border-left: 3px solid var(--border-strong);
+    background: var(--bg-1); border-radius: 6px; padding: 7px 10px;
+  }
+  .diag-row.lvl-error, .diag-row.lvl-critical { border-left-color: var(--danger); background: var(--danger-soft); }
+  .diag-row.lvl-warning { border-left-color: var(--warning); }
+  .diag-row.lvl-info { border-left-color: var(--accent); }
+  .diag-row-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+  .diag-badge {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 3px; background: var(--bg-tint); color: var(--fg-2); flex: 0 0 auto;
+  }
+  .diag-badge.lvl-error, .diag-badge.lvl-critical { background: var(--danger-soft); color: var(--danger); }
+  .diag-badge.lvl-warning { background: var(--warning-soft); color: var(--warning); }
+  .diag-badge.lvl-info { background: var(--accent-soft); color: var(--accent); }
+  .diag-cat { font-size: 10px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.4px; flex: 0 0 auto; }
+  .diag-msg {
+    font-size: 12px; color: var(--fg-1); flex: 1 1 200px;
+    word-break: break-word; font-family: var(--font-mono);
+  }
+  .diag-ts { font-size: 10px; color: var(--fg-4); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .diag-row-sub { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+  .diag-meta { font-size: 10px; color: var(--fg-3); }
+  .diag-detail-toggle {
+    font-size: 10px; color: var(--accent); background: none; border: none;
+    cursor: pointer; padding: 0; text-decoration: underline;
+  }
+  .diag-detail-toggle.active { color: var(--accent-hover); }
+  .diag-detail {
+    margin: 6px 0 2px; padding: 8px 10px; background: var(--bg-0);
+    border: 1px solid var(--border-soft); border-radius: 5px;
+    font-size: 11px; line-height: 1.45; color: var(--fg-2);
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+    font-family: var(--font-mono);
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-title">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
+    Diagnostics
+  </span>
+  <span class="topbar-sub" id="diag-mode-note"></span>
+  <span class="topbar-spacer"></span>
+  <button class="conn-chip" id="diag-conn" title="Connection — click to edit server / token">
+    <span class="conn-dot" id="diag-conn-dot"></span>
+    <span id="diag-conn-text">Not connected</span>
+  </button>
+  <button class="icon-btn" id="diag-theme" title="Toggle light / dark">
+    <svg id="diag-theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+  </button>
+</div>
+
+<div class="split">
+  <aside class="sidebar">
+    <div class="diag-side">
+
+      <!-- Connection (server URL + admin token). Auto-shown when opened from
+           disk, when no token is known, or after a failed/denied request. -->
+      <div class="diag-side-section diag-conn-section" id="diag-conn-panel" hidden>
+        <div class="diag-side-title">Connection</div>
+        <input type="text" id="diag-server" class="diag-input" placeholder="http://localhost:8080" autocomplete="off" spellcheck="false" />
+        <input type="password" id="diag-token" class="diag-input" placeholder="Admin token (Bearer)" autocomplete="off" spellcheck="false" />
+        <button class="diag-btn-primary" id="diag-connect">Connect</button>
+        <div class="diag-hint-sm" id="diag-conn-help"></div>
+      </div>
+
+      <div class="diag-side-section">
+        <input type="search" id="diag-search" class="diag-search" placeholder="Search messages…" autocomplete="off" />
+      </div>
+      <div class="diag-side-section">
+        <div class="diag-side-title">Severity</div>
+        <div class="diag-chips" id="diag-levels"></div>
+      </div>
+      <div class="diag-side-section">
+        <div class="diag-side-title">Category</div>
+        <div class="diag-chips" id="diag-categories"></div>
+      </div>
+      <div class="diag-side-section">
+        <div class="diag-side-title">Window</div>
+        <select id="diag-window" class="diag-select">
+          <option value="15">Last 15 minutes</option>
+          <option value="60" selected>Last hour</option>
+          <option value="360">Last 6 hours</option>
+          <option value="1440">Last 24 hours</option>
+          <option value="">All retained</option>
+        </select>
+      </div>
+      <div class="diag-side-section">
+        <label class="diag-live-toggle"><input type="checkbox" id="diag-live" /> <span>Live (auto-refresh)</span></label>
+      </div>
+      <div class="diag-side-section diag-clear-section">
+        <div class="diag-side-title">Clear logs</div>
+        <div class="diag-clear-row">
+          <select id="diag-clear-age" class="diag-select">
+            <option value="15">older than 15 minutes</option>
+            <option value="60" selected>older than 1 hour</option>
+            <option value="360">older than 6 hours</option>
+            <option value="1440">older than 24 hours</option>
+            <option value="10080">older than 7 days</option>
+          </select>
+          <button id="diag-clear-age-btn" class="diag-clear-btn">Clear</button>
+        </div>
+        <button id="diag-clear-filter" class="diag-clear-btn diag-clear-wide">Clear entries matching current filter</button>
+        <button id="diag-clear-all" class="diag-clear-btn diag-clear-wide diag-clear-danger">Clear all</button>
+        <label class="diag-live-toggle"><input type="checkbox" id="diag-clear-files" /> <span>also wipe the <code>logs/</code> text files</span></label>
+      </div>
+    </div>
+  </aside>
+
+  <section class="main">
+    <div id="diag-container">
+      <div id="diag-toolbar">
+        <span class="diag-toolbar-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6 6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1"/><path d="M8 15v1a6 6 0 0 0 12 0v-4"/><circle cx="20" cy="10" r="2"/></svg>
+          Diagnostics
+        </span>
+        <span id="diag-stats" class="diag-stats"></span>
+        <span class="diag-spacer"></span>
+        <span id="diag-live-dot" class="diag-live-dot" hidden title="Live — auto-refreshing"></span>
+        <button id="diag-refresh-main" class="diag-btn" title="Refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+      </div>
+      <div id="diag-feed">
+        <div class="diag-hint">Loading recent records…</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Connectivity: where is the API, and what token do we send?
+  // ════════════════════════════════════════════════════════════════════
+  var IS_FILE = location.protocol === 'file:';
+  var LS = window.localStorage;
+
+  function qparam(name) {
+    try { return new URLSearchParams(location.search).get(name) || ''; }
+    catch (_) { return ''; }
+  }
+  // Seed server/token from the address bar once (bookmarkable from disk).
+  (function () {
+    var s = qparam('server'); if (s) LS.setItem('diag_server_base', s);
+    var t = qparam('token');  if (t) LS.setItem('diag_token', t);
+  })();
+
+  function serverBase() {
+    if (!IS_FILE) return '';                       // served → same origin
+    var b = (LS.getItem('diag_server_base') || 'http://localhost:8080').trim();
+    return b.replace(/\/+$/, '');
+  }
+  function apiUrl(path) { return serverBase() + path; }
+
+  function getToken() {
+    // Prefer an explicit standalone token; fall back to the app's shared one
+    // (present automatically when served from the same origin as the app).
+    return (LS.getItem('diag_token') || LS.getItem('auth_token') || '').trim();
+  }
+  function authHeaders() {
+    var t = getToken();
+    return t ? { Authorization: 'Bearer ' + t } : {};
+  }
+
+  function _qs(id) { return document.getElementById(id); }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Filter definitions + state  (mirrors ui/shared/js/diagnostics.js)
+  // ════════════════════════════════════════════════════════════════════
+  var LEVELS = [
+    { key: 'error', label: 'Errors' },
+    { key: 'warning', label: 'Warnings' },
+    { key: 'info', label: 'Info' },
+  ];
+  var CATEGORIES = [
+    { key: 'server', label: 'Server' },
+    { key: 'http', label: 'HTTP' },
+    { key: 'loop', label: 'Loop' },
+    { key: 'run', label: 'Runs' },
+    { key: 'tool', label: 'Tools' },
+  ];
+
+  var state = {
+    levels: new Set(['error', 'warning']),
+    categories: new Set(),
+    search: '',
+    sinceMinutes: 60,
+    live: false,
+    timer: null,
+    flashUntil: 0,
+  };
+  var POLL_MS = 5000;
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Connection chip + panel
+  // ════════════════════════════════════════════════════════════════════
+  function setConn(stateName, text) {
+    var dot = _qs('diag-conn-dot');
+    var txt = _qs('diag-conn-text');
+    if (dot) dot.className = 'conn-dot' + (stateName ? ' ' + stateName : '');
+    if (txt) txt.textContent = text;
+  }
+  function openConnPanel(open) {
+    var p = _qs('diag-conn-panel');
+    if (p) p.hidden = !open;
+  }
+  function refreshConnHelp() {
+    var help = _qs('diag-conn-help');
+    if (!help) return;
+    help.textContent = IS_FILE
+      ? 'Opened from disk: set the server URL and paste an admin token.'
+      : 'Served by the app: token is shared automatically. Paste one here only to override.';
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Filter chips
+  // ════════════════════════════════════════════════════════════════════
+  function _renderChips(containerId, defs, selectedSet) {
+    var box = _qs(containerId);
+    if (!box) return;
+    box.innerHTML = '';
+    defs.forEach(function (d) {
+      var b = document.createElement('button');
+      b.className = 'diag-chip' + (selectedSet.has(d.key) ? ' active' : '');
+      b.dataset.key = d.key;
+      b.textContent = d.label;
+      b.addEventListener('click', function () {
+        if (selectedSet.has(d.key)) selectedSet.delete(d.key);
+        else selectedSet.add(d.key);
+        b.classList.toggle('active', selectedSet.has(d.key));
+        fetchAndRender();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Fetch + render
+  // ════════════════════════════════════════════════════════════════════
+  function _buildQuery() {
+    var p = new URLSearchParams();
+    var levels = new Set(state.levels);
+    if (levels.has('error')) levels.add('critical');   // "Errors" implies critical
+    if (levels.size) p.set('levels', Array.from(levels).join(','));
+    if (state.categories.size) p.set('categories', Array.from(state.categories).join(','));
+    if (state.search) p.set('search', state.search);
+    if (state.sinceMinutes != null) p.set('since_minutes', String(state.sinceMinutes));
+    p.set('limit', '300');
+    return p.toString();
+  }
+
+  function fetchAndRender() {
+    var feed = _qs('diag-feed');
+    if (!feed) return;
+    if (!getToken()) {
+      feed.innerHTML = '';
+      feed.appendChild(_hint2('Admin token required.',
+        'Diagnostics are admin-only. Add a token in the Connection panel (left).'));
+      setConn('warn', 'No token');
+      openConnPanel(true);
+      _setStats(null);
+      return;
+    }
+    var url = apiUrl('/api/v1/diagnostics?' + _buildQuery());
+    fetch(url, { headers: authHeaders() })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().catch(function () { return { detail: 'HTTP ' + res.status }; })
+            .then(function (j) {
+              feed.innerHTML = '';
+              if (res.status === 401 || res.status === 403) {
+                feed.appendChild(_hint2('Admin access required.',
+                  'The token is missing, expired, or not an admin. Update it in the Connection panel.'));
+                setConn('warn', 'Need admin token');
+                openConnPanel(true);
+              } else {
+                feed.appendChild(_hint('Could not load diagnostics: ' + (j.detail || ('HTTP ' + res.status))));
+                setConn('bad', 'Error ' + res.status);
+              }
+              _setStats(null);
+            });
+        }
+        return res.json().then(function (data) {
+          _renderRecords(data.records || []);
+          setConn('ok', 'Connected' + (IS_FILE ? ' · ' + serverBase() : ''));
+        });
+      })
+      .catch(function (e) {
+        // Network failure = server unreachable. The page itself stays usable.
+        feed.innerHTML = '';
+        var base = serverBase() || location.origin;
+        feed.appendChild(_hint2('Can’t reach the server.',
+          'No diagnostics to show while ' + base + ' is unreachable. The server is the source of this data — start it (or fix the address), then Refresh.'));
+        setConn('bad', 'Server unreachable');
+        if (IS_FILE) openConnPanel(true);
+        _setStats(null);
+      });
+  }
+
+  function _renderRecords(records) {
+    var feed = _qs('diag-feed');
+    if (!feed) return;
+    feed.innerHTML = '';
+    if (!records.length) {
+      feed.appendChild(_hint('No diagnostics match these filters. Widen the window, add severities, or clear the category filter.'));
+      _setStats({ shown: 0, error: 0, warning: 0 });
+      return;
+    }
+    var nErr = 0, nWarn = 0;
+    records.forEach(function (r) {
+      var lvl = (r.level || 'info').toLowerCase();
+      if (lvl === 'error' || lvl === 'critical') nErr++;
+      else if (lvl === 'warning') nWarn++;
+      feed.appendChild(_recordRow(r, lvl));
+    });
+    _setStats({ shown: records.length, error: nErr, warning: nWarn });
+  }
+
+  function _recordRow(r, lvl) {
+    var row = document.createElement('div');
+    row.className = 'diag-row lvl-' + lvl;
+
+    var head = document.createElement('div');
+    head.className = 'diag-row-head';
+
+    var badge = document.createElement('span');
+    badge.className = 'diag-badge lvl-' + lvl;
+    badge.textContent = lvl;
+    head.appendChild(badge);
+
+    var cat = document.createElement('span');
+    cat.className = 'diag-cat';
+    cat.textContent = r.category || '';
+    head.appendChild(cat);
+
+    var msg = document.createElement('span');
+    msg.className = 'diag-msg';
+    msg.textContent = r.message || '';
+    head.appendChild(msg);
+
+    var ts = document.createElement('span');
+    ts.className = 'diag-ts';
+    ts.textContent = _fmtTime(r.ts);
+    head.appendChild(ts);
+
+    row.appendChild(head);
+
+    var meta = [];
+    if (r.source) meta.push('source: ' + r.source);
+    if (r.session_id) meta.push('session: ' + String(r.session_id).slice(0, 12));
+    if (r.agent_id) meta.push('agent: ' + String(r.agent_id).slice(0, 12));
+    var hasDetail = r.detail != null && (typeof r.detail !== 'object' || Object.keys(r.detail).length);
+
+    if (meta.length || hasDetail) {
+      var sub = document.createElement('div');
+      sub.className = 'diag-row-sub';
+      if (meta.length) {
+        var m = document.createElement('span');
+        m.className = 'diag-meta';
+        m.textContent = meta.join('  ·  ');
+        sub.appendChild(m);
+      }
+      if (hasDetail) {
+        var toggle = document.createElement('button');
+        toggle.className = 'diag-detail-toggle';
+        toggle.textContent = 'detail';
+        var pre = document.createElement('pre');
+        pre.className = 'diag-detail';
+        pre.hidden = true;
+        pre.textContent = typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail, null, 2);
+        toggle.addEventListener('click', function () {
+          pre.hidden = !pre.hidden;
+          toggle.classList.toggle('active', !pre.hidden);
+        });
+        sub.appendChild(toggle);
+        row.appendChild(sub);
+        row.appendChild(pre);
+      } else {
+        row.appendChild(sub);
+      }
+    }
+    return row;
+  }
+
+  function _setStats(s) {
+    var el = _qs('diag-stats');
+    if (!el) return;
+    if (state.flashUntil && Date.now() < state.flashUntil) return;
+    if (!s) { el.textContent = ''; return; }
+    var bits = [s.shown + ' shown'];
+    if (s.error) bits.push(s.error + ' error' + (s.error === 1 ? '' : 's'));
+    if (s.warning) bits.push(s.warning + ' warning' + (s.warning === 1 ? '' : 's'));
+    el.textContent = bits.join('  ·  ');
+  }
+
+  // ── Clear logs ──────────────────────────────────────────────────────
+  function _armClear(btn, run) {
+    if (btn.dataset.armed === '1') {
+      btn.dataset.armed = '0';
+      if (btn._disarm) { clearTimeout(btn._disarm); btn._disarm = null; }
+      btn.classList.remove('armed');
+      btn.textContent = btn.dataset.label || btn.textContent;
+      run();
+      return;
+    }
+    document.querySelectorAll('.diag-clear-btn.armed').forEach(function (b) {
+      b.dataset.armed = '0'; b.classList.remove('armed');
+      if (b._disarm) { clearTimeout(b._disarm); b._disarm = null; }
+      b.textContent = b.dataset.label || b.textContent;
+    });
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    btn.dataset.armed = '1';
+    btn.classList.add('armed');
+    btn.textContent = 'Click again to confirm';
+    btn._disarm = setTimeout(function () {
+      btn.dataset.armed = '0'; btn.classList.remove('armed');
+      btn.textContent = btn.dataset.label || btn.textContent;
+    }, 3500);
+  }
+
+  function _clearLogs(params) {
+    var p = new URLSearchParams();
+    if (params.older_than_minutes != null) p.set('older_than_minutes', String(params.older_than_minutes));
+    if (params.levels) p.set('levels', params.levels);
+    if (params.categories) p.set('categories', params.categories);
+    if (params.search) p.set('search', params.search);
+    if (params.clear_files) p.set('clear_files', 'true');
+    var qs = p.toString();
+    fetch(apiUrl('/api/v1/diagnostics' + (qs ? '?' + qs : '')), { method: 'DELETE', headers: authHeaders() })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().catch(function () { return { detail: 'HTTP ' + res.status }; })
+            .then(function (j) { _flashStatus('Clear failed: ' + (j.detail || ('HTTP ' + res.status))); });
+        }
+        return res.json().then(function (j) {
+          var n = Math.max(j.db_deleted || 0, j.ring_removed || 0);
+          var filePart = (j.files_cleared && j.files_cleared.length) ? ', ' + j.files_cleared.length + ' file(s) wiped' : '';
+          _flashStatus('Cleared ' + n + ' record(s)' + filePart);
+          fetchAndRender();
+          setTimeout(function () { state.flashUntil = 0; fetchAndRender(); }, 2600);
+        });
+      })
+      .catch(function (e) { _flashStatus('Clear failed: ' + (e && e.message ? e.message : e)); });
+  }
+
+  function _flashStatus(text) {
+    state.flashUntil = Date.now() + 2500;
+    var el = _qs('diag-stats');
+    if (el) el.textContent = text;
+  }
+
+  function _applyLiveTimer() {
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    var dot = _qs('diag-live-dot');
+    if (dot) dot.hidden = !state.live;
+    if (state.live) state.timer = setInterval(fetchAndRender, POLL_MS);
+  }
+
+  // ── Small helpers ───────────────────────────────────────────────────
+  function _hint(text) {
+    var d = document.createElement('div');
+    d.className = 'diag-hint';
+    d.textContent = text;
+    return d;
+  }
+  function _hint2(strong, text) {
+    var d = document.createElement('div');
+    d.className = 'diag-hint';
+    var s = document.createElement('div');
+    s.className = 'diag-hint-strong';
+    s.textContent = strong;
+    d.appendChild(s);
+    var t = document.createElement('div');
+    t.style.marginTop = '5px';
+    t.textContent = text;
+    d.appendChild(t);
+    return d;
+  }
+  function _fmtTime(iso) {
+    if (!iso) return '';
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      var now = new Date();
+      var sameDay = d.toDateString() === now.toDateString();
+      var t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return sameDay ? t : (d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + t);
+    } catch (_) { return iso; }
+  }
+  function _debounce(fn, ms) {
+    var h = null;
+    return function () {
+      var a = arguments;
+      if (h) clearTimeout(h);
+      h = setTimeout(function () { fn.apply(null, a); }, ms);
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Theme toggle
+  // ════════════════════════════════════════════════════════════════════
+  function applyTheme(theme) {
+    var light = theme === 'light' ||
+      (theme === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.classList.toggle('light-mode', light);
+    document.body.classList.toggle('light-mode', light);
+  }
+  function wireTheme() {
+    var btn = _qs('diag-theme');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var cur = LS.getItem('webagent_theme') || 'dark';
+      var isLight = document.body.classList.contains('light-mode');
+      var next = isLight ? 'dark' : 'light';
+      LS.setItem('webagent_theme', next);
+      applyTheme(next);
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Wire the sidebar controls
+  // ════════════════════════════════════════════════════════════════════
+  function wireSidebar() {
+    _renderChips('diag-levels', LEVELS, state.levels);
+    _renderChips('diag-categories', CATEGORIES, state.categories);
+
+    var search = _qs('diag-search');
+    if (search) {
+      search.value = state.search;
+      search.addEventListener('input', _debounce(function () {
+        state.search = search.value.trim();
+        fetchAndRender();
+      }, 300));
+    }
+    var win = _qs('diag-window');
+    if (win) {
+      win.value = String(state.sinceMinutes);
+      win.addEventListener('change', function () {
+        state.sinceMinutes = win.value === '' ? null : Number(win.value);
+        fetchAndRender();
+      });
+    }
+    var live = _qs('diag-live');
+    if (live) {
+      live.checked = state.live;
+      live.addEventListener('change', function () {
+        state.live = live.checked;
+        _applyLiveTimer();
+        if (state.live) fetchAndRender();
+      });
+    }
+    var refresh = _qs('diag-refresh-main');
+    if (refresh) refresh.addEventListener('click', fetchAndRender);
+
+    var clearAll = _qs('diag-clear-all');
+    if (clearAll) clearAll.addEventListener('click', function () {
+      _armClear(clearAll, function () {
+        _clearLogs({ clear_files: !!(_qs('diag-clear-files') || {}).checked });
+      });
+    });
+    var clearAge = _qs('diag-clear-age-btn');
+    if (clearAge) clearAge.addEventListener('click', function () {
+      _armClear(clearAge, function () {
+        var sel = _qs('diag-clear-age');
+        _clearLogs({ older_than_minutes: sel ? Number(sel.value) : 60 });
+      });
+    });
+    var clearFilter = _qs('diag-clear-filter');
+    if (clearFilter) clearFilter.addEventListener('click', function () {
+      _armClear(clearFilter, function () {
+        var levels = new Set(state.levels);
+        if (levels.has('error')) levels.add('critical');
+        _clearLogs({
+          levels: levels.size ? Array.from(levels).join(',') : null,
+          categories: state.categories.size ? Array.from(state.categories).join(',') : null,
+          search: state.search || null,
+        });
+      });
+    });
+  }
+
+  function wireConnection() {
+    var chip = _qs('diag-conn');
+    if (chip) chip.addEventListener('click', function () {
+      var p = _qs('diag-conn-panel');
+      openConnPanel(p ? p.hidden : true);
+    });
+
+    // Seed fields from stored values.
+    var serverEl = _qs('diag-server');
+    var tokenEl = _qs('diag-token');
+    if (serverEl) serverEl.value = LS.getItem('diag_server_base') || (IS_FILE ? 'http://localhost:8080' : location.origin);
+    if (tokenEl)  tokenEl.value  = LS.getItem('diag_token') || '';
+    if (!IS_FILE && serverEl) serverEl.disabled = true;   // same-origin: URL is fixed
+
+    var connectBtn = _qs('diag-connect');
+    if (connectBtn) connectBtn.addEventListener('click', function () {
+      if (IS_FILE && serverEl) {
+        var b = serverEl.value.trim();
+        if (b) LS.setItem('diag_server_base', b); else LS.removeItem('diag_server_base');
+      }
+      if (tokenEl) {
+        var tk = tokenEl.value.trim();
+        if (tk) LS.setItem('diag_token', tk); else LS.removeItem('diag_token');
+      }
+      openConnPanel(false);
+      fetchAndRender();
+    });
+
+    refreshConnHelp();
+    // Auto-open the panel when setup is likely needed.
+    if (IS_FILE || !getToken()) openConnPanel(true);
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Boot
+  // ════════════════════════════════════════════════════════════════════
+  function boot() {
+    applyTheme(LS.getItem('webagent_theme') || 'dark');
+    var note = _qs('diag-mode-note');
+    if (note) note.textContent = IS_FILE ? 'standalone (from disk)' : 'standalone';
+    wireTheme();
+    wireConnection();
+    wireSidebar();
+    setConn('', 'Connecting…');
+    fetchAndRender();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

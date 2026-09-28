@@ -1,0 +1,58 @@
+{
+  "display_name": "User database size limit",
+  "kind": "app_function",
+  "icon": "database-zap",
+  "color": "#e0af68",
+  "description": "Limits each user's local SQLite database while preserving core conversation context. It enforces after recycling a session and during scheduled maintenance; under pressure it evicts old tool outputs first, reclaims rebuildable memory indexes, then removes session families from binned to normal to pinned.",
+  "note": "Scheduled maintenance starts five minutes after app startup and repeats at the configured interval. Tool and memory percentages are preferred shares; unused space may be borrowed until pressure occurs. Running sessions and a freshly recycled family are protected.",
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "app_function": true,
+  "tools": [],
+  "config": {
+    "settings": [
+      {
+        "key": "max_size_mb",
+        "label": "Maximum database size (MB)",
+        "type": "number",
+        "default": 100,
+        "min": 10,
+        "max": 10240,
+        "step": 10,
+        "hint": "Default: 100 MB per user. Cleanup preserves messages by reclaiming tool payloads and rebuildable memory data before deleting sessions."
+      },
+      {
+        "key": "tool_output_share_percent",
+        "label": "Tool output share (%)",
+        "type": "number",
+        "default": 10,
+        "min": 0,
+        "max": 80,
+        "step": 5,
+        "hint": "Preferred share for tool requests and stored results. Old results are replaced by a replay-safe storage notice when cleanup runs."
+      },
+      {
+        "key": "memory_share_percent",
+        "label": "Agent memory share (%)",
+        "type": "number",
+        "default": 10,
+        "min": 0,
+        "max": 50,
+        "step": 5,
+        "hint": "Preferred share for memory pages and vector indexes. Rebuildable chunks are reclaimed before memory pages; conversation storage receives the remaining percentage."
+      },
+      {
+        "key": "maintenance_interval_hours",
+        "label": "Maintenance interval (hours)",
+        "type": "number",
+        "default": 24,
+        "min": 1,
+        "max": 168,
+        "step": 1,
+        "hint": "Checks every user database on this interval, even when no session is recycled. The first check starts five minutes after the app starts."
+      }
+    ]
+  },
+  "order": 25
+}

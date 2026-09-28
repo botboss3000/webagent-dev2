@@ -1,0 +1,5246 @@
+/* ── Agent Management Panel ─────────────────────────────────────────────── */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) (the themed accent hue) / var(--brand-strong)
+   for the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+#tab-agents {
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0);
+  position: relative;
+}
+
+/* ── Horizontal overscroll lockdown ─────────────────────────────────────────
+   A horizontal drag on any NON-scrollable surface of this tab (toolbar, card
+   header, detail background, form areas…) would otherwise overscroll the
+   viewport and trigger the browser's swipe back/forward history navigation.
+   index.css also sets this on html/body, but only when the floating-glass skin
+   is loaded — this rule makes it unconditional and also seals the page-level
+   scrollers (open-card mode #agents-grid.carousel, overview mode
+   #tab-agents.agents-show-sessions). The real horizontal scrollers (agents
+   squares carousel, in-card tab strip, prompt/skill squares, sessions table)
+   already carry their own overscroll-behavior-x: none, so their edge
+   rubber-band behaviour is untouched — only drags on non-scrollable areas
+   become no-ops instead of history navigation. */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+#tab-agents,
+#agents-grid,
+#agents-grid.carousel,
+#tab-agents.agents-show-sessions {
+  overscroll-behavior-x: none;
+}
+
+/* ── Toolbar (vertical action stack, right of the carousel strip) ──
+   The toolbar lives in the SAME row as the agent squares (.agents-top-row):
+   the strip flexes on the left, this fixed-width column of icon actions sits
+   on the right, vertically centered. There is no page heading anymore. */
+#agents-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 13px 0 9px;
+  flex-shrink: 0;
+}
+
+/* The toolbar is hidden while loading and shown only for Back/Restore actions
+   after a bin or clones view is opened. */
+#agents-grid.agents-phantom #agents-toolbar,
+#agents-grid.agents-skeleton #agents-toolbar { display: none; }
+
+/* ── Recycling-bin toolbar actions (right side) ── */
+#agents-toolbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#agents-back-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: none; border-radius: 7px; cursor: pointer;
+  background: transparent; color: var(--fg-1);
+  transition: background .12s ease, color .12s ease;
+}
+#agents-back-btn:hover { background: rgba(var(--ink-rgb), 0.12); }
+#agents-back-btn > * { pointer-events: none; }
+
+#agents-toolbar-actions {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.agents-tb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  font-size: 12px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04); color: var(--fg-1); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.agents-tb-btn:hover { background: rgba(var(--ink-rgb), 0.12); border-color: rgba(var(--ink-rgb), 0.30); }
+.agents-tb-btn:disabled { opacity: 0.4; cursor: default; }
+.agents-tb-btn > * { pointer-events: none; }
+.agents-tb-restore { color: var(--success); border-color: rgba(var(--success-rgb), 0.30); }
+.agents-tb-restore:hover { background: rgba(var(--success-rgb), 0.14); border-color: rgba(var(--success-rgb), 0.5); }
+
+/* Config tab "Danger zone" delete button — the same trash→hazard→spin two-click
+   affordance as the header trash (SHARED-DELETE-CONTROL, driven by
+   advanceDeleteBtn()/resetDeleteBtn() from shared/js/delete-control.js). */
+.agents-config-delete-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid rgba(var(--danger-rgb), 0.25); border-radius: 8px;
+  background: rgba(var(--danger-rgb), 0.08); color: var(--danger); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.agents-config-delete-btn:hover { background: rgba(var(--danger-rgb), 0.16); border-color: rgba(var(--danger-rgb), 0.45); }
+.agents-config-delete-btn.warning { color: var(--warning); border-color: rgba(var(--warning-rgb), 0.5); background: rgba(var(--warning-rgb), 0.12); }
+.agents-config-delete-btn.warning:hover { background: rgba(var(--warning-rgb), 0.2); color: var(--warning); }
+.agents-config-delete-btn:disabled { opacity: 0.4; cursor: default; }
+.agents-config-delete-btn > * { pointer-events: none; }
+
+/* Recycling-bin notice toast — brief fixed pill shown after the Config tab's
+   delete moves an agent (and its sessions) to the bin. */
+#agents-notice-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 16px);
+  display: flex; align-items: center; gap: 10px; max-width: min(92vw, 560px);
+  background: var(--bg-elev, var(--bg-1)); color: var(--fg-1);
+  border: var(--border-width) solid var(--border); border-radius: 10px;
+  padding: 10px 14px; font-size: 13px; font-weight: 500; line-height: 1.4;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  opacity: 0; pointer-events: none; z-index: 99999;
+  transition: opacity .25s ease, transform .25s ease;
+}
+#agents-notice-toast.agents-notice-visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+#agents-notice-toast.agents-notice-error { border-color: rgba(var(--danger-rgb), 0.55); }
+.agents-notice-action {
+  flex: 0 0 auto;
+  font-size: 12px; font-weight: 600; color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.1); border: 1px solid rgba(var(--brand-rgb), 0.3);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  transition: background .12s ease;
+}
+.agents-notice-action:hover { background: rgba(var(--brand-rgb), 0.18); }
+
+/* ── Per-square selection checkbox (top-right of every custom-agent tile) ── */
+.agent-select-box {
+  position: absolute; top: 7px; right: 7px; z-index: 5;
+  width: 19px; height: 19px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--border-width) solid var(--border); border-radius: 5px;
+  background: rgba(var(--bg-0-rgb), 0.55); color: transparent;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.agent-select-box:hover { border-color: var(--brand); }
+.agent-select-box > svg { width: 13px; height: 13px; pointer-events: none; }
+.agent-row.selected .agent-select-box {
+  background: var(--brand); border-color: var(--brand); color: #fff;
+}
+.agent-row.selected .agent-card { border-color: var(--brand); }
+
+/* ── Per-square chat button (bottom-right of every agent tile) — starts a new
+   chat with that agent. Mirrors the .agent-select-box overlay positioning. ── */
+.agent-square-chat-btn {
+  position: absolute; bottom: 7px; right: 7px; z-index: 5;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--border-width) solid var(--border); border-radius: 6px;
+  background: rgba(var(--bg-0-rgb), 0.55); color: var(--fg-3);
+  cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.agent-square-chat-btn:hover {
+  border-color: var(--brand); color: var(--brand); background: rgba(var(--brand-rgb), 0.12);
+}
+.agent-square-chat-btn > svg { width: 13px; height: 13px; pointer-events: none; }
+
+/* ── Per-square "new agent" + button (bottom-right of the All Agents tile) ──
+   The dedicated "New Agent" tile is gone; creation lives on this corner button.
+   Same overlay placement as .agent-square-chat-btn, plus icon for "create". ── */
+.agent-square-add-btn {
+  position: absolute; bottom: 7px; right: 7px; z-index: 5;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--border-width) solid var(--border); border-radius: 6px;
+  background: rgba(var(--bg-0-rgb), 0.55); color: var(--fg-3);
+  cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.agent-square-add-btn:hover {
+  border-color: var(--brand); color: var(--brand); background: rgba(var(--brand-rgb), 0.12);
+}
+.agent-square-add-btn > svg { width: 14px; height: 14px; pointer-events: none; }
+
+/* Light-mode overrides */
+body.light-mode #agents-back-btn { color: var(--fg-1); }
+body.light-mode #agents-back-btn:hover { background: rgba(61, 44, 46, 0.08); }
+body.light-mode .agents-tb-btn {
+  color: var(--fg-1); border-color: rgba(61, 44, 46, 0.18); background: rgba(61, 44, 46, 0.03);
+}
+body.light-mode .agents-tb-btn:hover { background: rgba(61, 44, 46, 0.08); border-color: rgba(61, 44, 46, 0.30); }
+body.light-mode .agents-tb-restore { color: var(--success); border-color: rgba(var(--success-rgb), 0.35); }
+body.light-mode .agents-tb-restore:hover { background: rgba(var(--success-rgb), 0.12); }
+body.light-mode .agent-select-box { background: rgba(255, 255, 255, 0.75); border-color: rgba(61, 44, 46, 0.35); }
+body.light-mode .agent-square-chat-btn { background: rgba(255, 255, 255, 0.75); border-color: rgba(61, 44, 46, 0.35); color: var(--fg-3); }
+body.light-mode .agent-square-chat-btn:hover { border-color: var(--brand); color: var(--brand); background: rgba(var(--brand-rgb), 0.10); }
+body.light-mode .agent-square-add-btn { background: rgba(255, 255, 255, 0.75); border-color: rgba(61, 44, 46, 0.35); color: var(--fg-3); }
+body.light-mode .agent-square-add-btn:hover { border-color: var(--brand); color: var(--brand); background: rgba(var(--brand-rgb), 0.10); }
+
+.agents-bin-empty {
+  width: 100%; padding: 40px 20px;
+  font-size: 13px; color: var(--fg-4); text-align: center;
+}
+body.light-mode .agents-bin-empty { color: var(--fg-4); }
+
+/* ── Clones view ────────────────────────────────────────────────── */
+.agents-clones-group-heading {
+  width: 100%;
+  padding: 12px 8px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-3);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+body.light-mode .agents-clones-group-heading { color: var(--fg-3); }
+
+.agent-clones-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(var(--ink-rgb), 0.1);
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+body.light-mode .agent-clones-status { background: rgba(60, 44, 46, 0.08); color: var(--fg-3); }
+
+
+/* ── Card grid ──
+   Outer shell: a flex column holding the squares strip and (when an agent is
+   open) the expanded detail region below it.
+   - Grid mode: the shell doesn't scroll; the squares scroller fills it.
+   - Carousel mode: the shell becomes the SINGLE vertical scroll container for
+     both the carousel row and the expanded card, so scrolling down lifts the
+     carousel off-screen and gives the card full height. The open agent's
+     header (icon + name + tab carousel = `.agent-card.active`) then STICKS to
+     the top of this scroller, so once the squares row scrolls away the header
+     pins in place and only the detail body below it keeps scrolling. */
+#agents-grid {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Single source of truth for the page's side inset — the one edge margin from
+     the panel edge to content. Feeds the squares grid, the carousel row, the
+     carousel chevrons AND the opened-agent detail region, so they all share the
+     exact same margin and can never drift apart (same approach as App Settings'
+     --ac-content-inset). Zero = edge-to-edge layout with no side gutter. */
+  --agents-content-inset: 0;
+}
+/* The toolbar lives inside #agents-grid so it scrolls away with the card in
+   carousel mode. In grid mode (no agent open) the grid has overflow:hidden and
+   only the squares scroll internally, so the toolbar stays pinned. */
+#agents-grid #agents-toolbar {
+  flex-shrink: 0;
+}
+/* Mobile / narrow screens: the side inset is 0 everywhere (flat edge-to-edge
+   layout), so no override is needed. 800px matches the app-wide breakpoint. */
+#agents-grid.carousel {
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Keep the parent carousel scrollable without showing a competing scrollbar.
+     The Sessions table retains its own visible scrollbar. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#agents-grid.carousel::-webkit-scrollbar { width: 0; height: 0; }
+#agents-grid.carousel::-webkit-scrollbar-thumb { background: transparent; }
+
+/* ── Top row: carousel strip + right-side action stack ──
+   One shared row: the squares strip takes the remaining width and the toolbar
+   (back / restore / eye / recycle, stacked vertically) hugs the right edge.
+   Grid mode fills the panel; carousel and merged-overview modes auto-size to
+   the strip's height. */
+.agents-top-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+#agents-grid.carousel .agents-top-row,
+#tab-agents.agents-show-sessions .agents-top-row,
+#agents-grid.agents-phantom .agents-top-row {
+  flex: 0 0 auto;
+}
+
+/* The squares wrapper — hosts the scroller plus (in carousel mode) the
+   edge-fade chevron buttons. In grid mode it's a transparent pass-through that
+   just lets the scroller fill the panel. */
+.agents-squares-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* The agent squares (scroller).
+   Default (no agent open): a wrapping grid that scrolls vertically and fills
+   the whole panel. */
+.agents-squares {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 12px;
+  /* Bottom padding was 120px to clear the old floating footer pill (now removed);
+     a normal gutter is enough. */
+  padding: 16px var(--agents-content-inset) 24px;
+  /* Grid mode scrolls vertically; a horizontal drag on it (or on the card gaps)
+     must die here rather than chain into browser history navigation. */
+  overscroll-behavior-x: none;
+}
+.agents-squares::-webkit-scrollbar { width: 5px; }
+.agents-squares::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+
+/* Carousel mode (an agent is open): the squares collapse into a single row
+   pinned to the top, the detail region takes the remaining height below. The
+   horizontal padding (20px) lives on the WRAP so the row's scroll extent — and
+   thus its edge fades and chevrons — line up exactly with the expanded card's
+   vertical borders below (which inset by the same 20px). The row keeps the
+   grid's 16px top padding so squares don't jump when switching, and a 12px
+   bottom padding so the gap down to the card matches the 12px grid row-gap. */
+#agents-grid.carousel .agents-squares-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Vertical padding is split with the squares scroller below (13+3 = 16 top,
+     9+3 = 12 bottom) so the card sits in the same place as before, but the
+     scroller gets 3px of internal room for the activated card's 2px glow ring
+     (overflow-y: hidden would otherwise clip the ring's top/bottom edges). */
+  padding: 13px var(--agents-content-inset) 9px;
+}
+#agents-grid.carousel .agents-squares {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-content: center;
+  /* End-gutters INSIDE the scroll track: 20px left / 40px right. They create
+     space between the cards and the edge fade — the fade itself stays pinned
+     to the chevron edges (44px from each side, see the mask rules below), so
+     the first/last cards sit clear of it instead of being eaten by it. The
+     3px vertical padding is room for the .activated glow ring — see wrap
+     padding note. */
+  padding: 3px 40px 3px 20px;
+  scrollbar-width: none;
+  overscroll-behavior-x: none;
+}
+#agents-grid.carousel .agents-squares::-webkit-scrollbar { display: none; }
+/* Keep each square at its full 120px in the single row — never let nowrap
+   compress them; they overflow and scroll instead. */
+#agents-grid.carousel .agents-squares .agent-row { flex: 0 0 auto; }
+
+/* ── Carousel edge fades + chevrons ──
+   Same masked-edge technique as the in-card tab strip (.agent-card-tabs): a
+   CSS alpha mask fades the squares to transparent at a scrollable edge (paints
+   no colour, so it blends into the live stargaze background in either theme),
+   with transparent chevron buttons sitting over the faded edge. Toggled by the
+   can-scroll-left / can-scroll-right classes the carousel JS maintains. */
+.agents-carousel-chev {
+  position: absolute;
+  top: 16px;
+  bottom: 12px;
+  width: 30px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--fg-3);
+  font-size: 18px;
+  line-height: 1;
+  z-index: 2;
+}
+.agents-carousel-chev:hover { color: var(--fg-1); }
+/* Sit just inside the card's vertical borders (the wrap's 20px padding edge),
+   never past them. */
+.agents-carousel-chev.left  { left: var(--agents-content-inset); }
+.agents-carousel-chev.right { right: var(--agents-content-inset); }
+#agents-grid.carousel .agents-squares-wrap.can-scroll-left  .agents-carousel-chev.left  { display: flex; }
+#agents-grid.carousel .agents-squares-wrap.can-scroll-right .agents-carousel-chev.right { display: flex; }
+
+#agents-grid.carousel .agents-squares-wrap.can-scroll-right .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+}
+#agents-grid.carousel .agents-squares-wrap.can-scroll-left .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px);
+}
+#agents-grid.carousel .agents-squares-wrap.can-scroll-left.can-scroll-right .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+}
+
+/* Expanded detail region — holds the single open agent's full card + tabs +
+   panel. Hidden until an agent is activated. No top padding: the gap above the
+   card is supplied entirely by the carousel row's 12px bottom padding. It flows
+   at its natural height (no own scroll) so the shared #agents-grid scroll moves
+   the carousel and card together. */
+#agents-detail-region { display: none; }
+#agents-grid.carousel #agents-detail-region.open {
+  display: block;
+  flex: 0 0 auto;
+  /* Bottom padding was 120px to clear the old floating footer pill (now removed). */
+  padding: 0 var(--agents-content-inset) 32px;
+}
+/* In this shared-scroll layout the card grows to its natural height instead of
+   being a fixed 520px box with its own inner scroll — the outer #agents-grid
+   scrolls the whole thing. */
+#agents-detail-region .agent-detail-content {
+  height: auto;
+}
+#agents-detail-region .agent-detail-body {
+  overflow-y: visible;
+}
+/* Sticky header: pin the open agent's card (icon + name + tab carousel) to the
+   top of the shared scroller. Once the squares carousel above scrolls off, the
+   header stays put while the detail body below keeps scrolling under it. The
+   card is opaque (its own .agent-card.active background) so scrolled content is
+   hidden behind it, and z-index lifts it above the detail panel that follows it
+   in DOM order (a static sibling that would otherwise paint on top). */
+#agents-grid.carousel #agents-detail-region.open .agent-card.active {
+  position: sticky;
+  /* Overlap the scrollport edge by one pixel. Chromium can otherwise expose a
+     fractional-pixel seam above the sticky surface while wheel-scrolling. */
+  top: -1px;
+  z-index: 3;
+}
+/* The header keeps its rounded top corners, but those corners leave transparent
+   triangles OUTSIDE the rounded border. While scrolling, the detail panel below
+   (which has accent-coloured side borders) slides up behind the pinned header and
+   its borders show through those triangles as stray edges poking above the
+   corners. Fix without squaring the corners: a sticky filler strip on the detail
+   REGION (a sibling layer, not a child of the header) pinned to the same top:0.
+   It paints in the panel background colour, sitting BEHIND the header (z-index 2 <
+   the header's 3) but ABOVE the scrolling panel — so the panel's borders are
+   hidden in the top strip and the header's rounded corners simply reveal the panel
+   colour, exactly what shows above the header at rest. The negative margin gives
+   it zero net layout height so it doesn't push the header down. var(--bg-0) is the
+   #tab-agents panel background and is theme-aware (dark + light). */
+#agents-grid.carousel #agents-detail-region.open::before {
+  content: "";
+  display: block;
+  position: sticky;
+  top: 0;
+  height: 16px;
+  margin-bottom: -16px;
+  background: var(--bg-0);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* (The builder footer row + system-agents eye toggle were removed along with the
+   page-level "Ask WebAgent…" pill. The hybrid search/chat pill that replaced it
+   lives above the ability table — see ui/shared/js/dom-utils.js + the
+   .ability-search-pill skin in ui/shared/css/index.css.) */
+
+/* ── Empty state ── */
+.agents-empty {
+  color: var(--fg-3);
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 20px;
+}
+
+/* ── Row wrapper — one per agent; receives the grid gap ──
+   Collapsed: square flex item. Expanded: full-width column. */
+.agent-row {
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  min-width: 0;
+  transition: width 0.2s ease;
+}
+
+/* ── Surgical animations for add/remove/update ──
+   agent-enter:  fade + scale up when a new square appears
+   agent-exit:   fade + shrink when a square is removed
+   agent-update: subtle pulse flash after a rename */
+@keyframes agentEnter {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes agentExit {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.85); }
+}
+@keyframes agentPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--ink-rgb),0.3); }
+  70%  { box-shadow: 0 0 0 8px rgba(var(--ink-rgb),0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--ink-rgb),0); }
+}
+.agent-row.agent-enter {
+  animation: agentEnter 0.3s ease forwards;
+}
+.agent-row.agent-exit {
+  animation: agentExit 0.25s ease forwards;
+  pointer-events: none;
+}
+.agent-row.agent-pulse {
+  animation: agentPulse 0.5s ease;
+}
+.agent-row.expanded {
+  width: 100%;
+}
+
+/* ── Loading skeleton — shown while the agent list is being fetched ──
+   Theme-aware (uses design-system vars so it works in dark and light).
+   Square shape to match collapsed agent cards. */
+.agent-skeleton {
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  height: 120px;
+  width: 120px;
+  box-sizing: border-box;
+}
+.agent-skeleton .sk-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.agent-skeleton .sk-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 70%;
+}
+.agent-skeleton .sk-line {
+  height: 11px;
+  border-radius: 6px;
+}
+.agent-skeleton .sk-line.long  { width: 70%; }
+.agent-skeleton .sk-line.short { width: 38%; }
+/* `.sk-shimmer` + its keyframe + reduced-motion now live in the globally-loaded
+   ui/shared/css/app3.css (shared skeleton primitives) so every page can reuse
+   them; only the agent-card LAYOUT above stays page-local. */
+
+/* ── Phantom first-paint shell (STATIC — ships in agents.html) ─────────
+   The page partial carries this skeleton so the tab is never blank between
+   opening and agents.js's first render (the entry module is a large dynamic
+   import). It mirrors the CURRENT layout BEFORE JS runs: while #tab-agents
+   lacks .agents-show-sessions (only _syncMergedLayout adds it), these
+   .agents-phantom overrides shrink #agents-grid to its toolbar + carousel strip
+   and lay the NORMAL sub-page skeleton under it — the values are pixel-identical
+   to the carousel CSS (13+3 top / 9+3 bottom split padding, nowrap row, hidden
+   scrollbar) so the swap to the JS skeleton is zero-layout-shift.
+   The RETIRED merged Overview is NOT painted any more: #sessions-section stays
+   hidden for the whole phantom state (same as its base rule in sessions.css) so
+   the page never opens on a table-shaped skeleton, and the real CSS re-shows it
+   once JS mounts it into the All Agents / agent card Sessions tab. The markers
+   are stripped by _syncMergedLayout at takeover; the phantom nodes themselves
+   are wiped by _renderSkeleton / _renderList's wholesale rebuilds, and the base
+   display:none on .agents-phantom-detail keeps the phantom from ever leaking. */
+#agents-grid.agents-phantom {
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+#sessions-section.agents-phantom {
+  display: none;
+}
+
+/* Phantom sub-page skeleton — the shimmering title bar + content card every tab
+   body paints while its module loads. Geometry MIRRORS the real tab-body
+   skeleton (.agent-detail-body:empty::before / ::after below): bar 42% × 16px
+   with a 14px gap, card 320px, both with the same radii. Keep the two in sync.
+   Gutters match the real detail region: #agents-detail-region.open's side inset
+   + 32px bottom, and .agent-detail-body's 18px top padding. */
+.agents-phantom-detail { display: none; }
+#agents-grid.agents-phantom .agents-phantom-detail {
+  display: block;
+  flex: 0 0 auto;
+  padding: 18px var(--agents-content-inset) 32px;
+}
+#agents-grid.agents-phantom .agents-phantom-bar {
+  width: 42%;
+  height: 16px;
+  margin: 0 0 14px;
+  border-radius: 8px;
+}
+#agents-grid.agents-phantom .agents-phantom-card {
+  /* CONTEXT-SKELETON-GEOMETRY (page first paint): the page-level glimmer is the SAME
+     placeholder the tab body paints for the composition card, so it is built from the
+     chart container's parameters (CONTEXT-SKELETON-PARAMS on #agents-grid) — the
+     container's height floor, its card radius and its own rule — instead of a bare
+     320px content card. Page first paint and tab-body skeleton therefore open and hand
+     over at identical geometry. */
+  height: var(--context-chart-min, 248px);
+  border-radius: var(--context-card-radius, 10px);
+  border: var(--border-width) solid var(--border);
+}
+#agents-grid.agents-phantom .agents-squares-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Same split padding as the real carousel row (13+3 top, 9+3 bottom). */
+  padding: 13px var(--agents-content-inset) 9px;
+}
+#agents-grid.agents-phantom .agents-squares {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-content: center;
+  /* Same end-gutters (20px left / 40px right) as the real carousel row (see
+     the carousel block). */
+  padding: 3px 40px 3px 20px;
+  scrollbar-width: none;
+  overscroll-behavior-x: none;
+}
+#agents-grid.agents-phantom .agents-squares::-webkit-scrollbar { display: none; }
+#agents-grid.agents-phantom .agents-squares .agent-row { flex: 0 0 auto; }
+
+/* ── Agent card ──
+   Collapsed: square showing icon + name only.
+   Expanded (active): full-width card with all details. */
+.agent-card {
+  position: relative;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 10px;
+  padding: 14px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, border-radius 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  height: 120px;
+  width: 120px;
+  box-sizing: border-box;
+}
+.agent-card:hover { border-color: var(--border); background: var(--bg-2); }
+/* A square that is the currently-open agent: stays a square, but gets an accent
+   ring so it reads as "activated" within the carousel. */
+.agent-card.activated {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+.agent-card.activated:hover { border-color: var(--brand); }
+.agent-card.active {
+  /* FLAT REDESIGN: no card border or rounded frame — the open agent reads as
+     base content, not a boxed card. Kept opaque (needed so the sticky header
+     hides content scrolling beneath it) via a brand-tinted gradient sheen over
+     the solid panel surface (the var(--bg-1) base keeps it opaque; the gradient
+     re-tints with the palette in both dark and light mode). */
+  border: none;
+  border-radius: 0;
+  background:
+    linear-gradient(135deg,
+      rgba(var(--brand-rgb), 0.16) 0%,
+      rgba(var(--brand-rgb), 0.05) 42%,
+      transparent 80%),
+    var(--bg-1);
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 10px;
+  /* Horizontal padding 0 so the icon/name/tabs align to the same single edge
+     margin (the detail-region's 20px side padding) as the body content below. */
+  padding: 14px 0;
+  height: auto;
+  width: auto;
+}
+
+/* Persisted agents no longer have a second, oversized identity header. The open
+   area begins with the tab strip; name, description and icon live in Config. */
+.agent-card.active.agent-card-tabs-only {
+  padding: 0;
+  gap: 0;
+  /* This card is the sticky tab header. Keep its surface opaque so the detail
+     body cannot remain visible as it scrolls underneath the pinned tabs. */
+  background: var(--bg-0);
+}
+
+/* Draft creation keeps the tab strip but has no outer card surface: its header
+   is page content below, so the active-card gradient above it is decorative. */
+.agent-card.active.agent-card-mock.agent-card-tabs-only {
+  background: transparent;
+}
+
+/* When the detail panel is open inside the same row, flatten the connecting edges */
+.agent-row .agent-detail-panel {
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* Only flatten card bottom corners when a detail panel actually follows */
+.agent-row:has(.agent-detail-panel) .agent-card.active {
+  border-bottom-color: var(--border-soft); /* subtle section divider */
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.agent-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.agent-card.active .agent-card-top {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+}
+.agent-card-icon-wrap {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: width 0.2s, height 0.2s, font-size 0.2s, border-radius 0.2s;
+}
+/* Icon in square (collapsed) mode */
+.agent-card:not(.active) .agent-card-icon-wrap {
+  width: 44px;
+  height: 44px;
+  font-size: 24px;
+  border-radius: 12px;
+}
+.agent-card-icon-wrap.color-teal    { background: #0d2a2a; }
+.agent-card-icon-wrap.color-purple  { background: #1e1030; }
+.agent-card-icon-wrap.color-red     { background: #2a0d14; }
+.agent-card-icon-wrap.color-blue    { background: #0d1a2a; }
+.agent-card-icon-wrap.color-gray    { background: #1a1a2a; }
+/* Local Claude Code accent — the real Claude orange (brand constant, both themes)
+   so the spark reads as the genuine Claude mark: orange glyph on a faint orange
+   chip, independent of the app's current scheme. */
+.agent-card-icon-wrap.color-claude  { background: rgba(var(--claude-orange-rgb), 0.16); color: var(--claude-orange); }
+/* Local Codex accent — the real Codex neutral (brand constant, both themes) so
+   the knot reads as the genuine Codex mark: steel glyph on a faint steel chip,
+   independent of the app's current scheme. */
+.agent-card-icon-wrap.color-codex   { background: rgba(var(--codex-gray-rgb), 0.16); color: var(--codex-gray); }
+.agent-card-icon-wrap.color-terminal { background: rgba(var(--brand-rgb), 0.16); color: var(--accent); }
+
+.agent-card-meta {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+.agent-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 2px;
+  justify-content: center;
+}
+.agent-card.active .agent-card-name-row {
+  justify-content: flex-start;
+}
+.agent-card-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.agent-card:not(.active) .agent-card-name {
+  font-size: 11px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.3;
+}
+.agent-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.agent-status-dot.inactive { background: var(--fg-4); }
+
+/* Live run indicator: the agent is currently executing a turn. Driven by the
+   `agent_status` WebSocket event. Pulses a soft halo so it reads in both themes
+   (colours come from the theme-aware success tokens, never hard-coded hex). */
+.agent-status-dot.running {
+  animation: agent-status-pulse 1.4s ease-in-out infinite;
+}
+@keyframes agent-status-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--success-mid); }
+  70%  { box-shadow: 0 0 0 5px var(--success-soft); }
+  100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-dot.running { animation: none; box-shadow: 0 0 0 3px var(--success-soft); }
+}
+
+.agent-card-badge-wrap {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+/* Hide badge in collapsed (square) mode */
+.agent-card:not(.active) .agent-card-badge-wrap {
+  display: none;
+}
+
+.agent-card-desc {
+  font-size: 12px;
+  color: var(--fg-3);
+  line-height: 1.5;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+/* Show full description in expanded (card) mode */
+.agent-card.active .agent-card-desc {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  display: block;
+}
+/* Hide description in collapsed (square) mode */
+.agent-card:not(.active) .agent-card-desc {
+  display: none;
+}
+body.light-mode .agent-card-desc { color: var(--fg-2); }
+
+/* ── Inline-editable card fields (icon / name / description) ──
+   The icon opens the picker on a single click; name + description become an
+   in-place editor on double-click or long-press (custom agents only). Hover/edit
+   affordances derive from the palette so they read in both themes. */
+.agent-icon-editable { cursor: pointer; }
+.agent-inline-editable { cursor: text; border-radius: var(--r-xs); }
+.agent-inline-editable:hover {
+  background: rgba(var(--brand-rgb), 0.10);
+  box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.10);
+}
+
+/* "click to edit" hint shown next to name and below description for admins
+   on custom agents — subtle italic text in the theme's muted foreground. */
+.agent-edit-hint {
+  font-size: 10px;
+  font-style: italic;
+  color: var(--fg-4);
+  letter-spacing: 0.02em;
+  cursor: default;
+  flex-shrink: 0;
+  user-select: none;
+  margin-left: 4px;
+  align-self: center;
+}
+.agent-card-desc + .agent-edit-hint {
+  display: inline-block;
+  margin-left: 0;
+  margin-top: 1px;
+}
+.agent-inline-editable.editing {
+  cursor: text;
+  outline: none;
+  background: rgba(var(--brand-rgb), 0.12);
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.45);
+  white-space: normal;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  text-overflow: clip;
+}
+.agent-inline-placeholder { opacity: 0.55; font-style: italic; }
+
+/* ── In-card tab carousel (shown when card is expanded) ── */
+/* Wrapper hosts the scroller plus the edge fades and chevron buttons.
+   The negative margins cancel the card's padding so the strip spans the card's
+   inner width and bottom edge (not beyond it). overflow:hidden + the bottom
+   radius keep it inside the card and tucked under the rounded corners. */
+.agent-card-tabs-wrap {
+  position: relative;
+  min-width: 0;
+  /* Header horizontal padding is now 0 (flat redesign), so the strip needs no
+     negative side margins to span the header width — only the -14px bottom to
+     cancel the header's bottom padding and sit flush on the header's edge. */
+  margin: 4px 0 -14px;
+  border-top: var(--border-width) solid var(--border-soft);
+  overflow: hidden;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.agent-card-tabs-only .agent-card-tabs-wrap {
+  margin: 0;
+  border-top: 0;
+  border-bottom: var(--border-width) solid var(--border-soft);
+}
+.agent-card-tabs-only .agent-card-tabs {
+  padding-left: 0;
+}
+/* When a detail panel follows, the card's bottom corners are squared off, so
+   square the strip to match. */
+.agent-row:has(.agent-detail-panel) .agent-card-tabs-wrap {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Hide the whole strip in collapsed (square) mode */
+.agent-card:not(.active) .agent-card-tabs-wrap {
+  display: none;
+}
+/* ── Masked edge-fade carousel — REUSABLE PATTERN (origin of this technique) ──
+   Edge fade via a CSS mask on the scroller itself — the tab content fades to
+   transparent at the scrollable edge, revealing the card background behind it.
+   Because it's a mask (alpha only, never a colour), it adapts automatically to
+   whatever the card background is in either theme — no per-theme override and
+   no coloured rectangle that could poke past the card's rounded corners. The
+   edge is only faded on the side that actually has more to scroll.
+
+   KEY INSIGHT: never paint a colour to fake an edge fade. A mask paints no
+   colour, so it blends into ANY background — including one that changes at
+   runtime (e.g. the live stargaze genui behind the main header). Pair it with
+   transparent chevron buttons sitting over the faded edge (see .agent-card-tabs-chev
+   below). The header tab strip reuses this exact method — see the
+   "Masked edge-fade carousel" block in design-system.css (#main-tabs). Reuse it
+   for any horizontal carousel over a dynamic/themed background. */
+.agent-card-tabs-wrap.can-scroll-right .agent-card-tabs {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+}
+.agent-card-tabs-wrap.can-scroll-left .agent-card-tabs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px);
+}
+.agent-card-tabs-wrap.can-scroll-left.can-scroll-right .agent-card-tabs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+}
+
+/* Clickable chevrons — sit above the faded edge. Transparent button; the glyph
+   colour comes from the design system so it tracks the theme automatically. */
+.agent-card-tabs-chev {
+  position: absolute;
+  top: 1px;
+  bottom: 0;
+  width: 30px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  z-index: 2;
+  font-size: 14px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.agent-card-tabs-chev.left  { left: 0; }
+.agent-card-tabs-chev.right { right: 0; }
+.agent-card-tabs-chev:hover { color: var(--fg-1); }
+.agent-card-tabs-wrap.can-scroll-left  .agent-card-tabs-chev.left  { display: flex; }
+.agent-card-tabs-wrap.can-scroll-right .agent-card-tabs-chev.right { display: flex; }
+
+.agent-card-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: none;
+  min-width: 0;
+  padding: 0 12px;
+  cursor: grab;
+  touch-action: pan-x pinch-zoom;
+}
+.agent-card-tabs::-webkit-scrollbar { display: none; }
+/* SISTER-CAROUSEL: ACTIVE-TAB-GROW — shared formatting with the App Configuration
+   tab strip (`.ac-tab` in ui/shared/css/app3.css). Both are horizontal
+   chevron-scroll tab carousels where the ACTIVE tab renders a couple px larger
+   than the rest, with `font-size` in the transition so the change animates as
+   you switch tabs. Keep the two in sync: any change to the active-tab
+   grow/animation here must be mirrored there (and vice-versa). */
+.agent-card-tabs .agents-detail-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-3);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s, font-size 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.agent-card-tabs .agents-detail-tab:hover  { color: var(--fg-1); }
+.agent-card-tabs .agents-detail-tab.active { color: var(--brand); border-bottom-color: var(--brand); font-size: 15px; }
+
+/* Ephemeral tab: a page that is OPEN but NOT favorited. It is pinned to the far
+   right of the header for as long as that page is the active one, then dropped on
+   the next navigation — so it reads as temporary: dashed underline, slightly muted,
+   and not a drag handle (it lives outside the saved order). */
+.agent-card-tabs .agents-detail-tab.ephemeral {
+  opacity: 0.8;
+  border-bottom-style: dashed;
+  cursor: pointer;
+}
+.agent-card-tabs .agents-detail-tab.ephemeral.active {
+  opacity: 1;
+  border-bottom-style: dashed;
+  border-bottom-color: var(--brand);
+}
+
+/* Header-tab drag-to-reorder. Mirrors the reorder affordance in app-settings.js
+   (.ac-main-panel-item.dragging / .drag-over: opacity dip on the source, accent
+   edge marker on the target) with the same design-system tokens, so both themes
+   follow automatically. Divergence: this strip is horizontal, so the drop marker
+   is a LEADING vertical bar instead of a top inset edge. */
+.agent-card-tabs .agents-detail-tab.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+.agent-card-tabs .agents-detail-tab.drag-over {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+  background: rgba(var(--brand-rgb), 0.08);
+}
+
+body.light-mode .agent-card-tabs .agents-detail-tab        { color: var(--fg-3); }
+body.light-mode .agent-card-tabs .agents-detail-tab:hover  { color: var(--fg-1); }
+body.light-mode .agent-card-tabs .agents-detail-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+/* ── Tab count badges ── */
+.tab-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: 5px;
+  border-radius: 8px;
+  background: var(--bg-tint);
+  color: var(--fg-2);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  vertical-align: middle;
+}
+.tab-count-badge-pending {
+  background: var(--bg-elev);
+  color: var(--fg-3);
+  font-style: italic;
+}
+.agent-card-tabs .agents-detail-tab.active .tab-count-badge {
+  background: var(--fg-4);
+  color: var(--fg-1);
+}
+body.light-mode .tab-count-badge {
+  background: var(--bg-elev);
+  color: var(--fg-3);
+}
+body.light-mode .tab-count-badge-pending {
+  background: var(--bg-tint);
+  color: var(--fg-3);
+}
+body.light-mode .agent-card-tabs .agents-detail-tab.active .tab-count-badge {
+  background: var(--border);
+  color: var(--fg-1);
+}
+
+/* ── Inline card action buttons (Set Default / Delete) ── */
+.agent-card-action-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s, background 0.15s;
+}
+.agent-card-action-btn.set-default-btn {
+  background: rgba(var(--brand-rgb), 0.1);
+  color: var(--brand);
+  border: 1px solid rgba(var(--brand-rgb), 0.28);
+}
+.agent-card-action-btn.set-default-btn:hover {
+  background: rgba(var(--brand-rgb), 0.18);
+}
+body.light-mode .agent-card-action-btn.set-default-btn { background: var(--bg-elev); color: var(--brand); border-color: var(--border); }
+
+/* X close button on the expanded card — top of the badge-wrap column. Closes the
+   card and returns to the agent grid. Replaces the old source badge + delete
+   trash; deletion now lives on the squares' selection checkboxes + toolbar. */
+.agent-card-close-btn {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.agent-card-close-btn > * { pointer-events: none; }
+.agent-card-close-btn:hover { background: var(--bg-tint); color: var(--fg-1); }
+body.light-mode .agent-card-close-btn { color: var(--fg-3); }
+body.light-mode .agent-card-close-btn:hover { background: var(--bg-tint); color: var(--fg-1); }
+
+/* New-chat button on the expanded card — sits in the badge-wrap column below the
+   delete button. Same shape as the delete trash button, but a brand (not danger)
+   hover, since it's a constructive action. Starts a fresh chat with this agent. */
+.agent-card-chat-btn {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.agent-card-chat-btn > * { pointer-events: none; }
+.agent-card-chat-btn:hover { background: rgba(var(--brand-rgb), 0.12); color: var(--brand); }
+body.light-mode .agent-card-chat-btn { color: var(--fg-3); }
+body.light-mode .agent-card-chat-btn:hover { background: rgba(var(--brand-rgb), 0.10); color: var(--brand); }
+
+/* ── Per-row inline expand panel ──
+   FLAT REDESIGN: the open agent is NOT a bordered card floating on the page —
+   it's the base content of the panel. So no visible box border, no boxed
+   background, no rounded card frame. The detail body sits directly on the page
+   background and its content aligns to the SAME single edge margin as the
+   header above it (the detail-region's 20px side padding). No nested second
+   margin. See .agent-detail-body (horizontal padding zeroed) and
+   .agent-card.active (border/radius stripped, horizontal padding zeroed). */
+.agent-detail-panel {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+  animation: agents-expand 0.18s ease;
+}
+
+@keyframes agents-expand {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.agent-detail-content {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+  min-height: 0;
+}
+
+/* The draft's name/Create control is content, placed below the page tabs rather
+   than being a second card header above them. */
+.agent-mock-create-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0 10px;
+  border-bottom: var(--border-width) solid var(--border-soft);
+}
+.agent-mock-create-header .agent-card-top {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+}
+.agent-mock-create-header .agent-card-meta { flex: 1; min-width: 0; }
+.agent-mock-create-header .agent-card-name-row { display: flex; min-width: 0; }
+.agent-mock-create-header .agent-card-badge-wrap { margin-left: auto; }
+.conn-draft-hint,
+.agent-config-draft-lock-notice {
+  margin: 0 0 10px;
+  color: var(--fg-3);
+  font-size: 12px;
+  font-style: italic;
+}
+.agent-config-topic--draft-locked {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.agents-btn {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-1);
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.agents-btn:hover { background: var(--bg-tint); border-color: var(--brand); }
+.agents-btn.primary { background: rgba(var(--brand-rgb), 0.12); border-color: var(--brand); color: var(--brand); }
+.agents-btn.primary:hover { background: rgba(var(--brand-rgb), 0.22); }
+.agents-btn.danger  { border-color: var(--danger); color: var(--danger); }
+.agents-btn.danger:hover { background: rgba(var(--danger-rgb), 0.1); }
+.agents-btn.default-active { border-color: var(--brand); color: var(--brand); background: rgba(var(--brand-rgb), 0.1); }
+
+/* CONTEXT-SKELETON-PARAMS: the Abilities chart container's parameters, declared ONCE
+   here — on the nearest ancestor that hosts EVERY placeholder for that container as
+   well as the live chart itself: the page-level phantom first paint
+   (.agents-phantom-detail, shipped statically in agents.html) AND the per-tab sub-page
+   skeleton (the body's own :empty::before/::after) AND the composition card inside the
+   detail body. Both skeleton surfaces are siblings of the card, never descendants of
+   it, so neither could inherit from .agent-context-composition-chart; sharing the
+   numbers through this common ancestor is what lets every placeholder be built from the
+   container's OWN parameters, and the live rules further down read the same vars, so
+   the placeholder and the chart can never drift apart. Every consumption carries the
+   literal as a fallback, so a chart mounted outside the Agents page still sizes
+   correctly. */
+#agents-grid {
+  --context-chart-size: 188px;   /* .agent-context-composition-chart — the disc */
+  --context-chart-plate: 124px;  /* its centre plate (.agent-context-composition-chart::after) */
+  --context-chart-pad: 18px;     /* .agent-context-composition-primary's inset — the square around the disc */
+  --context-chart-min: 248px;    /* .agent-context-composition-primary's min-height */
+  --context-card-radius: 10px;   /* the composition card's radius */
+}
+.agent-detail-body {
+  flex: 1;
+  min-height: 0; /* required for overflow-y: auto to work inside a flex child */
+  overflow-y: auto;
+  /* No horizontal gutter: the page's own side inset is 0 (edge-to-edge flat
+     redesign), so each sub-page aligns directly with the panel edges. This
+     is the ONE container every tab body renders into (Config / Prompts /
+     Abilities / Members / Agent Loop / Monetization / Skills), so horizontal alignment is
+     identical across all sub-pages. Horizontal overscroll is contained so a
+     stray horizontal drag inside a sub-page never chains to history nav. */
+  padding: 18px 0;
+  overscroll-behavior-x: none;
+}
+
+/* Config tab — Settings-style grouped landing list plus a single dedicated
+   page host. Landing rows mirror App Settings; selecting one mounts its existing
+   controls in the page host instead of revealing an inline accordion. */
+.agent-config-settings-group {
+  --agent-config-icon: var(--success);
+  --agent-config-icon-rgb: var(--success-rgb);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.agent-config-settings-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+.agent-config-settings-group-label svg { color: var(--agent-config-icon); }
+.agent-config-topics {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  padding: 5px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-2) 76%, transparent);
+  box-shadow: 0 8px 20px rgba(var(--ink-rgb), .05);
+}
+.agent-config-topic { min-width: 0; }
+.agent-config-topic + .agent-config-topic { border-top: var(--border-width) solid var(--border); }
+/* CONFIG-FAVORITE ROW: mirrors App Settings. The row button navigates; its
+   sibling star toggles permanent Agent-card header visibility without navigation. */
+.agent-config-topic-row {
+  display: flex;
+  align-items: stretch;
+  background: transparent;
+  transition: background .15s ease;
+}
+.agent-config-topic-row:hover,
+.agent-config-topic-row.is-selected,
+.agent-config-topic-row:has(.agent-config-topic-heading:focus-visible) {
+  background: rgba(var(--agent-config-icon-rgb), .09);
+}
+.agent-config-topic-row .agent-config-topic-heading { flex: 1 1 auto; width: auto; }
+.agent-config-topic-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  min-height: 74px;
+  padding: 15px 18px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color .15s ease, transform .1s ease;
+}
+.agent-config-topic-row > .agent-config-topic-heading:hover,
+.agent-config-topic-row > .agent-config-topic-favorite:hover,
+.agent-config-topic-row > .agent-config-topic-favorite[aria-pressed="true"] {
+  background: transparent !important;
+}
+.agent-config-topic-heading:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--agent-config-icon);
+  outline-offset: -2px;
+}
+.agent-config-topic-heading:active { transform: translateY(1px); }
+.agent-config-topic-favorite {
+  flex: 0 0 46px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: color .16s ease, background .16s ease;
+}
+.agent-config-topic-favorite:hover {
+  background: transparent !important;
+  color: var(--fg-3);
+}
+.agent-config-topic-favorite:focus-visible {
+  background: transparent !important;
+  color: var(--fg-3);
+  outline: 2px solid var(--agent-config-icon);
+  outline-offset: -2px;
+}
+.agent-config-topic-favorite svg {
+  fill: transparent;
+  transition: color .16s ease, fill .16s ease, transform .16s ease;
+}
+/* Icon hydration may replace the SVG, so the durable ARIA state—not a class on
+   that replaceable child—is the source of truth for the filled favorite visual. */
+.agent-config-topic-favorite[aria-pressed="true"] svg {
+  /* Icon hydration/global ui-icon styles may set color later; this interaction
+     needs the user's theme text color to remain the final visible state. */
+  color: var(--fg-1) !important;
+  fill: currentColor !important;
+}
+.agent-config-topic-favorite:active svg { transform: scale(.92); }
+.agent-config-topic-icon,
+.agent-config-topic-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.agent-config-topic-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(var(--agent-config-icon-rgb), .15);
+  color: var(--agent-config-icon);
+}
+.agent-config-topic-copy { flex: 1 1 auto; min-width: 0; }
+.agent-config-topic-title {
+  display: block;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.agent-config-topic-description {
+  display: block;
+  margin-top: 3px;
+  color: var(--fg-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.agent-config-topic-chevron {
+  color: var(--fg-4);
+  opacity: .72;
+  transition: color .15s ease, opacity .15s ease, transform .18s ease;
+}
+.agent-config-topic-heading:hover .agent-config-topic-chevron {
+  color: var(--agent-config-icon);
+  opacity: 1;
+}
+.agent-config-landing {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+/* The landing and page shell are sibling surfaces: exactly one may occupy layout. */
+.agent-config-landing[hidden] { display: none !important; }
+.agent-config-page-shell {
+  min-width: 0;
+  padding: 0 5px 18px;
+}
+.agent-config-page-shell[hidden] { display: none !important; }
+.agent-config-page-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 0 12px;
+  box-sizing: border-box;
+}
+.agent-config-page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.agent-config-page-back:hover {
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-color: var(--accent);
+}
+.agent-config-page-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agent-config-page-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-config-page-host {
+  min-width: 0;
+}
+/* Topic bodies are plain by default. Individual surfaces opt into card chrome
+   with --card rather than every Config section inheriting a visible container. */
+.agent-config-topic-content {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.agent-config-topic-content--card {
+  overflow: hidden;
+  border: var(--border-width) solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+}
+.agent-config-topic-content[hidden] {
+  display: none;
+}
+.agent-config-topic-content--plain > div:not([class]) {
+  padding: 0;
+}
+/* MODEL-COLUMN-WIDTH: the model-table card spans the Model topic's full content
+   column — the same edges as the model analytics card above it and as the
+   All-Agents → Available models table (SISTER-PANEL: MODEL-TABLE). The old 16px
+   side inset made the table card narrower per side than its own chart. */
+.agent-config-topic-content--plain .mt-root {
+  margin: 0;
+  overflow: hidden;
+  border: var(--border-width) solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+}
+.agent-config-topic-content--plain > div:not([class]) > .ac-directives-section {
+  /* Follow the roster card's column edges without adding chrome. */
+  margin: 18px 0 14px;
+  padding: 0;
+}
+.agent-config-topic-content > .agent-identity-settings--embedded {
+  padding: 16px;
+}
+.agent-config-topic-content > .ac-category-group {
+  margin: 0;
+  border-top: var(--border-width) solid var(--border-soft);
+}
+.agent-config-topic-content > .ac-category-group:first-child {
+  border-top: 0;
+}
+.agent-config-topic-content > .agent-identity-settings--embedded + .ac-category-group {
+  border-top: var(--border-width) solid var(--border-soft);
+}
+/* Prompt injections lives below the model-table card inside Model. Keep the
+   flow inset but frameless—no separate topic, border, or background. */
+.agent-config-topic-content > .ac-directives-section {
+  margin-top: 18px;
+  padding: 0 16px 14px;
+}
+.agent-config-topic-content > .ac-category-group > .ac-category-summary {
+  padding: 13px 16px 7px;
+  border-radius: 0;
+  cursor: default;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.agent-config-topic-content > .ac-category-group > .ac-category-summary:hover {
+  background: transparent;
+}
+.agent-config-topic-content > .ac-category-group > .ac-category-body {
+  padding: 0 16px 14px;
+}
+.agent-config-topic-content .ac-list {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.agent-config-topic-content > div:not([class]),
+.agent-config-topic-content > .agent-model-settings {
+  padding: 14px 16px;
+}
+/* Override the generic mount inset above: Model's mt-root and plain prompt
+   flow own their individual spacing so the topic itself stays unframed. */
+.agent-config-topic-content.agent-config-topic-content--plain > div:not([class]) {
+  padding: 0;
+}
+/* The model mount adds an internal wrapper. The prompt-injection block shares the
+   model card's column edges at any depth (MODEL-COLUMN-WIDTH) — no side inset. */
+.agent-config-topic-content--plain .ac-directives-section {
+  margin-left: 0;
+  margin-right: 0;
+}
+.agent-config-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 0;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.agent-config-advanced-toggle-text {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--fg-1);
+}
+@media (max-width: 640px) {
+  .agent-config-page-shell { padding-bottom: 14px; }
+  .agent-config-page-topbar { padding-top: 8px; padding-bottom: 10px; }
+  .agent-config-page-back { padding: 5px 8px; }
+  .agent-config-topics { border-radius: 15px; }
+  .agent-config-topic-heading { min-height: 68px; gap: 12px; padding: 13px 14px; }
+  .agent-config-topic-icon { width: 38px; height: 38px; }
+  .agent-config-topic-content--card { border-radius: 11px; }
+  .agent-config-topic-content > .agent-identity-settings--embedded { padding: 13px; }
+  .agent-config-topic-content > .ac-category-group > .ac-category-summary { padding-inline: 13px; }
+  .agent-config-topic-content > .ac-category-group > .ac-category-body { padding-inline: 13px; }
+}
+
+/* Config → Identity replaces the old expanded-card header. */
+.agent-identity-settings .ac-category-summary > svg {
+  color: var(--accent);
+  flex: none;
+}
+/* Unify sub-headings inside the Identity topic: groups (Template, Danger zone)
+   use the same 13px fg-1 heading style as the inline section headings so every
+   heading in the section is aligned and identically styled. */
+.agent-config-topic:has(.agent-identity-settings) > .agent-config-topic-content > .ac-category-group > .ac-category-summary,
+.agent-config-page-host:has(.agent-identity-settings) > .agent-config-topic-content > .ac-category-group > .ac-category-summary {
+  font-size: 13px;
+  color: var(--fg-1);
+}
+.agent-identity-icon-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.agent-identity-icon-row > span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fg-1);
+  font-size: 13px;
+}
+.agent-identity-icon-row > span strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.agent-identity-icon-row small {
+  color: var(--fg-3);
+  font-size: 11px;
+}
+.agent-identity-icon-button {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-width) solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.agent-identity-icon-button:not(:disabled):hover {
+  border-color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.10);
+}
+.agent-identity-icon-button:disabled {
+  cursor: default;
+  opacity: .7;
+}
+.agent-closing-message-settings {
+  margin-top: 18px;
+}
+.agent-closing-message-settings-copy {
+  color: var(--fg-1);
+  font-size: 13px;
+  line-height: 1.3;
+}
+.agent-closing-message-settings-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.agent-closing-message-settings-copy p {
+  margin: 2px 0 10px;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.agent-closing-message-output > .ac-ability-row { cursor: pointer; }
+.agent-closing-message-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.agent-closing-message-field,
+.agent-closing-message-guidance {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--fg-2);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.agent-closing-message-field:nth-child(n + 3) { grid-column: 1 / -1; }
+.agent-closing-message-field textarea,
+.agent-closing-message-guidance textarea { resize: vertical; }
+.agent-closing-message-guidance { margin-top: 10px; }
+@media (max-width: 640px) {
+  .agent-closing-message-fields { grid-template-columns: 1fr; }
+  .agent-closing-message-field:nth-child(n + 3) { grid-column: auto; }
+}
+.agent-design-settings {
+  margin-top: 18px;
+}
+.agent-design-settings-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--fg-1);
+  font-size: 13px;
+  line-height: 1.3;
+}
+.agent-design-settings-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.agent-design-settings-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 12px;
+}
+.agent-design-settings-input {
+  flex: none;
+  min-height: 54px;
+  max-height: 54px;
+  resize: none;
+}
+.agent-design-settings-submit {
+  align-self: flex-end;
+  flex: none;
+  min-height: 38px;
+  white-space: nowrap;
+}
+.agent-design-settings-submit svg {
+  flex: none;
+}
+.agent-system-prompt {
+  margin-top: 18px;
+}
+.agent-system-prompt-copy {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--fg-1);
+  font-size: 13px;
+  line-height: 1.3;
+}
+.agent-system-prompt-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.agent-system-prompt-copy p {
+  flex: 0 1 100%;
+  margin: 2px 0 0;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.agent-system-prompt-readout {
+  color: var(--fg-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Horizontal rule separating the Chat design section from the danger zone.
+   A sibling of both anchors (NOT a descendant of either), so the layout
+   assertion can prove it sits after Chat design and before the danger zone. */
+.agent-config-divider {
+  border: none;
+  border-top: var(--border-width) solid var(--border-soft);
+  margin: 18px 0 0;
+}
+/* Info tooltip shown after a config heading: carries the guidance that used
+   to be a visible paragraph (now collapsed into a hover/focus bubble). Shared
+   by the "Chat design" and "Danger zone" sections. Surfaced on hover AND
+   keyboard focus (tabindex 0) for accessibility. */
+.agent-config-info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--fg-2);
+  cursor: help;
+}
+.agent-config-info-tip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: var(--shadow-float);
+  color: var(--fg-1);
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+  z-index: 10;
+}
+.agent-config-info-tip:hover::after,
+.agent-config-info-tip:focus::after {
+  opacity: 1;
+}
+@media (max-width: 640px) {
+  .agent-design-settings-submit {
+    align-self: stretch;
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+/* Identity → Member access: agent-scoped profiles and entry policy. */
+.agent-member-access {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-tint);
+}
+.agent-member-access-copy { color: var(--fg-1); font-size: 13px; }
+.agent-member-access-copy strong { font-weight: 650; }
+.agent-member-access-copy p { margin: 4px 0 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; }
+.agent-member-access-registration {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.agent-member-access-registration legend {
+  width: 100%;
+  margin-bottom: 2px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.agent-member-access-radio,
+.agent-member-access-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.agent-member-access-levels { display: grid; gap: 8px; }
+.agent-member-access-level {
+  padding: 8px 10px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 650;
+}
+.agent-member-access-level--custom {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.agent-member-access-level--admin {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.agent-member-access-level + .agent-member-access-toggle {
+  margin: 0 0 2px 14px;
+}
+.agent-member-access-new-level { display: flex; gap: 8px; margin-top: 2px; }
+.agent-member-access-new-level .ac-input { min-width: 0; flex: 1; }
+.agent-member-access-status { min-height: 16px; color: var(--fg-3); font-size: 11px; }
+@media (max-width: 640px) {
+  .agent-member-access-registration { align-items: stretch; flex-direction: column; }
+  .agent-member-access-new-level { flex-direction: column; }
+  .agent-member-access-new-level .ac-btn { width: 100%; justify-content: center; }
+}
+
+/* Per-agent Sessions is the same live table used by the All Agents tile. */
+.agent-detail-body > #sessions-section.sessions-agent-filtered {
+  display: flex;
+  width: 100%;
+  min-height: 60vh;
+  padding: 0;
+}
+.agent-detail-body.all-agents-sessions-body {
+  padding: 0 0 18px;
+  overflow: visible;
+}
+.agent-detail-body.all-agents-sessions-body > #sessions-section {
+  display: flex;
+  width: 100%;
+  min-height: 60vh;
+  padding: 0;
+}
+.agent-detail-body.all-agents-sessions-body > #sessions-section #sessions-toolbar {
+  position: static;
+  z-index: 2;
+  background: var(--bg-0);
+  border-bottom: var(--border-width) solid var(--border);
+}
+.agent-detail-body.all-agents-sessions-body > #sessions-section #sessions-table-wrap {
+  min-height: 55vh;
+  max-height: 72vh;
+  overflow: auto;
+  touch-action: auto;
+}
+
+/* Desktop All Agents → Sessions uses one pinned shell after the carousel has
+   scrolled away: the sticky tab card owns the top edge, the table owns the
+   remaining scrollable space, and the footer remains visible at the bottom.
+   Heights are measured from the real grid and tab card by view.js rather than
+   guessed from the browser viewport. */
+@media (min-width: 801px) {
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) {
+    padding-bottom: 0;
+  }
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) .agent-row-all-agents .agent-detail-panel {
+    position: sticky;
+    top: calc(var(--all-agents-sessions-tabs-height) - 1px);
+    z-index: 1;
+    height: calc(var(--all-agents-sessions-scrollport-height) - var(--all-agents-sessions-tabs-height));
+  }
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) .agent-row-all-agents .agent-detail-content {
+    height: 100%;
+  }
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) .agent-detail-body.all-agents-sessions-body {
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) .agent-detail-body.all-agents-sessions-body > #sessions-section {
+    height: 100%;
+    min-height: 0;
+  }
+  #agents-grid.carousel #agents-detail-region.open:has(.all-agents-sessions-body) .agent-detail-body.all-agents-sessions-body > #sessions-section #sessions-table-wrap {
+    min-height: 0;
+    max-height: none;
+  }
+  /* The visible footer is docked at the page-shell level. Reserve its height
+     in the panel rather than letting it cover the table's last row. */
+  #tab-agents.agents-sessions-footer-docked #agents-detail-region.open:has(.all-agents-sessions-body) .agent-detail-body.all-agents-sessions-body {
+    box-sizing: border-box;
+    padding-bottom: 32px;
+  }
+
+  #tab-agents.agents-sessions-footer-docked #sessions-footer,
+  #tab-agents:has(#sessions-section.sessions-agent-filtered) #sessions-footer {
+    display: none;
+  }
+
+  /* Individual-agent Sessions cards use the same page-level dock. The shared
+     section's filtered marker lets every agent engine opt in without custom
+     tab-renderer wiring. */
+  #tab-agents:has(#sessions-section.sessions-agent-filtered) .agent-detail-body:has(> #sessions-section.sessions-agent-filtered) {
+    box-sizing: border-box;
+    padding-bottom: 32px;
+  }
+
+  #tab-agents:has(#sessions-section.sessions-agent-filtered) #agents-sessions-footer-dock {
+    display: flex;
+  }
+}
+
+/* This dock is a sibling of #agents-grid, so it stays fixed while the grid
+   scrolls through the carousel-to-table transition. */
+#agents-sessions-footer-dock {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+  display: none;
+  box-shadow: 0 -1px 0 var(--border);
+}
+#tab-agents.agents-sessions-footer-docked #agents-sessions-footer-dock {
+  display: flex;
+}
+
+/* Mirror the Instances Dashboard dock below the desktop breakpoint. The page-
+   level footer stays visible while the carousel and table retain their own
+   scrollport, with room reserved for the last table row. */
+@media (max-width: 800px) {
+  #tab-agents.agents-sessions-footer-docked #agents-detail-region.open:has(.all-agents-sessions-body) .agent-detail-body.all-agents-sessions-body {
+    box-sizing: border-box;
+    padding-bottom: 32px;
+  }
+  #tab-agents.agents-sessions-footer-docked #sessions-footer {
+    display: none;
+  }
+}
+
+.agent-detail-body:has(> #sessions-section.sessions-agent-filtered) {
+  padding: 0 0 18px;
+  overflow: visible;
+}
+.agent-detail-body > #sessions-section.sessions-agent-filtered #sessions-toolbar {
+  position: static;
+  z-index: 2;
+  background: var(--bg-0);
+  border-bottom: var(--border-width) solid var(--border);
+}
+.agent-detail-body > #sessions-section.sessions-agent-filtered #sessions-table-wrap {
+  min-height: 55vh;
+  max-height: 72vh;
+  overflow: auto;
+  touch-action: auto;
+}
+
+/* The All Agents Automations tab hosts the same automations table as the old
+   Automations main-panel tab — moved into the card body (see agents.html
+   #automations-section). Layout mirrors the All Agents Sessions rules above:
+   the section fills the card body and the table wrap owns its own scroll. */
+.agent-detail-body.all-agents-automations-body {
+  padding: 0 0 18px;
+  overflow: visible;
+}
+.agent-detail-body.all-agents-automations-body > #automations-section {
+  display: flex;
+  width: 100%;
+  min-height: 60vh;
+  padding: 0;
+}
+.agent-detail-body.all-agents-automations-body > #automations-section #automations-toolbar {
+  position: static;
+  z-index: 2;
+  background: var(--bg-0);
+  border-bottom: var(--border-width) solid var(--border);
+}
+.agent-detail-body.all-agents-automations-body > #automations-section #automations-table-wrap {
+  min-height: 55vh;
+  max-height: 72vh;
+  overflow: auto;
+  touch-action: auto;
+}
+
+/* ── Shared sub-page content width ───────────────────────────────────────────
+   Agent sub-pages share a centered 750px reading/form column. Sessions retains
+   its full-width table surface; Automations keeps its wider table inner intact
+   inside a 750px scroll shell, preserving horizontal table scroll. */
+.agent-detail-body > :not(#sessions-section):not(#automations-section) {
+  box-sizing: border-box;
+  width: min(100%, 750px);
+  margin-inline: auto;
+}
+.agent-detail-body.all-agents-automations-body > #automations-section {
+  width: min(100%, 750px);
+  margin-inline: auto;
+}
+
+/* ── Sub-page loading skeleton ──────────────────────────────────────────────
+   Clicking a tab empties .agent-detail-body and (on first visit) dynamically
+   imports the tab module before its renderer writes anything — a blank flash.
+   These pseudo-elements paint ONLY while the body has no children (:empty): a
+   shimmering title bar + content card, using the shared sk-shimmer paint and
+   skShimmer keyframe (app3.css). The instant the renderer appends its first
+   node, :empty stops matching and the skeleton disappears — no JS timing, no
+   cleanup. Tabs that already show their own loader (Prompts spinner, Members
+   skeleton, Abilities table, Billing skeleton) replace it with theirs on the
+   same frame. */
+.agent-detail-body:empty::before {
+  content: '';
+  display: block;
+  width: 42%;
+  height: 16px;
+  margin: 0 0 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--bg-elev) 25%, var(--bg-elev-2) 37%, var(--bg-elev) 63%);
+  background-size: 400% 100%;
+  animation: skShimmer 1.4s ease-in-out infinite;
+}
+.agent-detail-body:empty::after {
+  content: '';
+  display: block;
+  height: 320px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, var(--bg-elev) 25%, var(--bg-elev-2) 37%, var(--bg-elev) 63%);
+  background-size: 400% 100%;
+  animation: skShimmer 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-detail-body:empty::before,
+  .agent-detail-body:empty::after { animation: none; }
+}
+/* CONTEXT-SKELETON-GEOMETRY: while the Abilities tab's module is still importing, the
+   detail body is empty, so its phantom content block (:empty::after above) IS the
+   placeholder for the composition card. On the tab that owns the chart container that
+   block is rebuilt from the container's own parameters (CONTEXT-SKELETON-PARAMS at the
+   top of .agent-detail-body) instead of the generic 320px content card: same card
+   radius, same card rule, same card height as the chart's panel — and, stacked, the
+   square itself, because there the real container IS the square the pointer reads
+   against. The tab is scoped off the ACTIVE TAB BUTTON (the tab bar lives on the agent
+   card, in the same .agent-row), so every other tab keeps the generic block, and the
+   phantom first paint in agents.html — which is not yet tab-scoped — still mirrors the
+   generic rules. */
+.agent-row:has(.agent-card-tabs .agents-detail-tab[data-tab="abilities"].active)
+  .agent-detail-body:empty::after {
+  height: var(--context-chart-min, 248px);
+  border-radius: var(--context-card-radius, 10px);
+  border: var(--border-width) solid var(--border);
+}
+.agent-detail-body::-webkit-scrollbar { width: 5px; }
+.agent-detail-body::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+
+/* (The page-level "Agent Manager" floating chat bar (#agent-builder-bar) was
+   removed. Its hybrid replacement — live ability search + chat-to-WebAgent — now
+   sits inline above the ability table inside each agent's Abilities tab. The pill
+   geometry still comes from the shared .chat-pill* block in app1.css and its
+   floating-glass skin (.ability-search-pill) from index.css.) */
+
+/* ── Config fields ── */
+/* Expanded Public link URL: a plain inline link with copy + QR actions, not an
+   input field. The row intentionally joins the toggle without a divider. */
+.ac-list > .agent-public-link-url-row { border-top: none; }
+.agent-public-link-url-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.agent-public-link-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+.agent-public-link-url:hover { text-decoration: underline; }
+.agent-public-link-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.agent-public-link-action:hover {
+  color: var(--fg-1);
+  background: rgba(var(--brand-rgb), .08);
+}
+.agent-public-link-action.is-copied {
+  color: var(--success);
+}
+.agent-config-action-notices {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.agent-config-action-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.agent-config-action-notice > svg { color: var(--success); }
+.agent-config-action-notice.is-error > svg { color: var(--danger); }
+.agent-config-action-notice.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.agent-public-link-action > * { pointer-events: none; }
+
+.agents-field-group { margin-bottom: 20px; }
+.agents-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.agents-field-hint { font-size: 11px; color: var(--fg-3); margin-bottom: 6px; }
+
+/* ── Config-tab Settings table —
+   The `.ac-config-control` control-slot rules (used by this tab's `.ac-list
+   .ac-config-list` Settings table, and now ALSO by both ability tables' expanded
+   settings) were MOVED to ui/shared/css/app3.css so the admin ability table —
+   which doesn't load this file — shares the identical neat look. Edit them there. */
+.agents-textarea {
+  width: 100%;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-1);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.agents-textarea:focus { outline: none; border-color: var(--brand); }
+.agents-textarea[readonly] { opacity: 0.5; cursor: not-allowed; }
+.agents-input {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 12px;
+  transition: border-color 0.15s;
+}
+.agents-input:focus { outline: none; border-color: var(--brand); }
+.agents-input[type="number"] { width: 100px; }
+
+.agents-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-top: var(--border-width) solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-0);
+}
+.agents-save-msg { font-size: 12px; color: var(--success); }
+.agents-save-msg.error { color: var(--danger); }
+
+/* ── Per-field auto-save indicator ── */
+.agents-autosave-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 8px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.agents-autosave-check.saved {
+  opacity: 1;
+  transform: scale(1);
+  color: var(--success);
+  background: var(--success-soft);
+}
+.agents-autosave-check.error {
+  opacity: 1;
+  transform: scale(1);
+  color: var(--danger);
+  background: var(--danger-soft, transparent);
+}
+/* Reveal the indicator while it holds an in-flight spinner. */
+.agents-autosave-check:has(.agents-spinner) {
+  opacity: 1;
+  transform: scale(1);
+  background: transparent;
+  color: var(--brand);
+}
+
+/* ── In-flight control spinner (toggles, radios, checkboxes) ── */
+.agents-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: agents-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+@keyframes agents-spin { to { transform: rotate(360deg); } }
+
+/* ── Config tab — stacked free-text fields (Identity / Chat Messages) ──
+   The Config tab follows the App-Settings standard config-page layout: option
+   settings render as shared `.ac-list` rows, but the GENUINE free-text fields
+   (name / description / chat messages) stay as fields — not rows — per
+   docs/claude/ui-guidance.md ("when NOT to use rows"). They reuse the shared
+   `.ac-label` / `.ac-input` / `.ac-hint`; only the wrapper spacing + the small
+   on-top save-indicator slot live here. Theme-safe (all colour from tokens). */
+.ac-cfg-field { margin-bottom: 12px; }
+.ac-cfg-field:last-child { margin-bottom: 0; }
+.ac-cfg-field > .ac-label { display: flex; align-items: center; }
+/* The save overlay (_markSaving/_flashSaveCheck) covers this small slot, so the
+   spinner → ✓ / ⚠ sits beside the label rather than over the text field. */
+.ac-cfg-ind { position: relative; display: inline-block; width: 16px; height: 16px; margin-left: 6px; }
+.ac-cfg-field textarea.ac-input { min-height: 54px; line-height: 1.45; resize: vertical; }
+
+/* ── Prompt/Skill squares (reusable squares+carousel for Prompts tab) ── */
+/* Wrapper — similar pattern to .agents-squares-wrap */
+.prompt-squares-wrap,
+.skills-squares-wrap {
+  position: relative;
+  margin-top: 6px;
+}
+/* Grid mode: squares wrap in 2+ rows */
+.prompt-squares,
+.skills-squares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0;
+  scroll-behavior: smooth;
+}
+/* Carousel mode (one is open): single row, horizontal scroll */
+.prompt-squares-wrap.open .prompt-squares,
+.skills-squares-wrap.open .skills-squares {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: none;
+  cursor: grab;
+  touch-action: pan-x pinch-zoom;
+}
+.prompt-squares-wrap.open .prompt-squares::-webkit-scrollbar,
+.skills-squares-wrap.open .skills-squares::-webkit-scrollbar { display: none; }
+/* The prompt strip now holds BOTH slot tiles (.prompt-square-square) and skill
+   tiles (.skill-square-square) in one merged carousel — keep both at full size in
+   the single-row open state instead of letting nowrap compress them. */
+.prompt-squares-wrap.open .prompt-squares > .prompt-square-square,
+.prompt-squares-wrap.open .prompt-squares > .skill-square-square,
+.skills-squares-wrap.open .skills-squares > .skill-square-square {
+  flex: 0 0 auto;
+}
+/* Chevrons for carousel mode */
+.prompt-carousel-chev,
+.skills-carousel-chev {
+  position: absolute;
+  top: 2px;
+  bottom: 6px;
+  width: 26px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--fg-3);
+  font-size: 16px;
+  line-height: 1;
+  z-index: 2;
+}
+.prompt-carousel-chev:hover,
+.skills-carousel-chev:hover { color: var(--fg-1); }
+.prompt-carousel-chev.left  { left: 0; }
+.prompt-carousel-chev.right { right: 0; }
+.skills-carousel-chev.left  { left: 0; }
+.skills-carousel-chev.right { right: 0; }
+.prompt-squares-wrap.open.can-scroll-left  .prompt-carousel-chev.left,
+.skills-squares-wrap.open.can-scroll-left  .skills-carousel-chev.left { display: flex; }
+.prompt-squares-wrap.open.can-scroll-right .prompt-carousel-chev.right,
+.skills-squares-wrap.open.can-scroll-right .skills-carousel-chev.right { display: flex; }
+
+/* Edge fades — same mask technique as .agents-carousel-chev */
+.prompt-squares-wrap.open.can-scroll-right .prompt-squares,
+.skills-squares-wrap.open.can-scroll-right .skills-squares {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
+}
+.prompt-squares-wrap.open.can-scroll-left .prompt-squares,
+.skills-squares-wrap.open.can-scroll-left .skills-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px);
+          mask-image: linear-gradient(to right, transparent 0, #000 34px);
+}
+.prompt-squares-wrap.open.can-scroll-left.can-scroll-right .prompt-squares,
+.skills-squares-wrap.open.can-scroll-left.can-scroll-right .skills-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%);
+}
+
+/* Individual square — same visual weight as .agent-card but smaller */
+.prompt-square-square,
+.skill-square-square {
+  width: 82px;
+  height: 82px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  position: relative;
+  box-sizing: border-box;
+}
+.prompt-square-square:hover,
+.skill-square-square:hover {
+  border-color: var(--border);
+  background: var(--bg-2);
+}
+.prompt-square-square.activated,
+.skill-square-square.activated {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+.prompt-square-icon,
+.skill-square-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.prompt-square-icon.color-gray    { background: #1a1a2a; }
+.prompt-square-icon.color-teal    { background: #0d2a2a; }
+.prompt-square-icon.color-purple  { background: #1e1030; }
+.prompt-square-icon.color-red     { background: #2a0d14; }
+.prompt-square-icon.color-blue    { background: #0d1a2a; }
+.skill-square-icon.color-purple   { background: #1e1030; }
+
+.prompt-square-name,
+.skill-square-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-1, var(--fg-1));
+  text-align: center;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+/* + Add tile — dashed border */
+.prompt-square-add,
+.skill-square-add {
+  border-style: dashed;
+  border-color: var(--border-soft, var(--border));
+  color: var(--fg-3, var(--fg-3));
+  font-size: 10px;
+  font-weight: 500;
+}
+.prompt-square-add:hover,
+.skill-square-add:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: rgba(var(--brand-rgb),0.06);
+}
+/* Badges on squares (lock/override) */
+.prompt-square-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  font-size: 9px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  line-height: 1;
+}
+.prompt-square-badge.locked {
+  background: rgba(var(--brand-rgb),0.15);
+  border: 1px solid var(--brand);
+}
+.prompt-square-badge.override {
+  background: rgba(255,158,100,0.15);
+  border: 1px solid var(--warning);
+}
+/* Mode badge on skill squares */
+.skill-square-mode {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  font-size: 8px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 50%;
+  color: var(--fg-3, var(--fg-3));
+  line-height: 1;
+}
+/* Detail area below the carousel — its text viewer claims the remaining viewport. */
+.prompt-detail-area,
+.skill-detail-area {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  margin-top: 8px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg-1);
+}
+.prompt-detail-area .agents-textarea,
+.skill-detail-area .agents-textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.prompt-detail-text {
+  flex: 1 1 auto;
+  min-height: 160px;
+  resize: vertical;
+}
+
+/* Light-mode overrides for prompt/skill squares */
+body.light-mode .prompt-square-square,
+body.light-mode .skill-square-square {
+  background: var(--bg-1);
+  border-color: var(--border);
+}
+body.light-mode .prompt-square-square:hover,
+body.light-mode .skill-square-square:hover {
+  background: var(--bg-elev);
+  border-color: var(--brand);
+}
+body.light-mode .prompt-square-name,
+body.light-mode .skill-square-name { color: var(--fg-1); }
+body.light-mode .prompt-square-icon.color-gray    { background: #f0ece8; }
+body.light-mode .prompt-square-icon.color-teal    { background: #e0f5f0; }
+body.light-mode .prompt-square-icon.color-purple  { background: #f0e8f8; }
+body.light-mode .prompt-square-icon.color-red     { background: #fce8ec; }
+body.light-mode .prompt-square-icon.color-blue    { background: #e4eefb; }
+body.light-mode .skill-square-icon.color-purple   { background: #f0e8f8; }
+body.light-mode .prompt-square-add,
+body.light-mode .skill-square-add {
+  background: var(--bg-1);
+  border-color: var(--border);
+  color: var(--fg-3);
+}
+body.light-mode .prompt-square-add:hover,
+body.light-mode .skill-square-add:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+/* ── Local Claude Code · Skills tab editor ──
+   The Skills tab (ui/main-panel/agents/js/claude-skills.js) reuses the prompt/skill
+   squares + carousel above; these rules style its editor: the Edit/Preview toggle,
+   the source pill, the name field, the on-disk path hint, and the Markdown preview.
+   REMOVE-WHEN: the Local Claude Code engine (claude_code) is dropped. */
+.claude-skills-host { margin-top: 2px; }
+
+/* Edit ⟷ Preview segmented toggle */
+.claude-skill-seg {
+  display: inline-flex;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.claude-skill-seg button {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 11px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.claude-skill-seg button.active {
+  background: rgba(var(--brand-rgb), 0.14);
+  color: var(--brand);
+}
+
+/* Source pill (Personal / Project) */
+.claude-skill-src {
+  font-size: 10px;
+  color: var(--fg-3);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+/* Round icon buttons (delete / close) in the editor top bar */
+.claude-skill-iconbtn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.claude-skill-iconbtn:hover { background: var(--bg-2); color: var(--fg-1); }
+
+/* Skill name field */
+.claude-skill-name {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-0);
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+.claude-skill-name:focus { outline: none; border-color: var(--brand); }
+
+/* Where the SKILL.md lands on disk */
+.claude-skill-path {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+/* Rendered Markdown preview of a SKILL.md */
+.claude-skill-md {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-1);
+  overflow-wrap: anywhere;
+}
+.claude-skill-md h1 { font-size: 16px; margin: 0 0 2px; }
+.claude-skill-md h2 { font-size: 14px; margin: 12px 0 4px; }
+.claude-skill-md h3 { font-size: 13px; margin: 10px 0 4px; }
+.claude-skill-md p  { margin: 6px 0; }
+.claude-skill-md ul, .claude-skill-md ol { margin: 6px 0; padding-left: 20px; }
+.claude-skill-md a { color: var(--brand); }
+.claude-skill-md code {
+  font-family: var(--font-mono, monospace);
+  background: var(--bg-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+.claude-skill-md pre {
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow: auto;
+}
+.claude-skill-md pre code { background: none; padding: 0; }
+.claude-skill-md table { border-collapse: collapse; }
+.claude-skill-md th, .claude-skill-md td {
+  border: var(--border-width) solid var(--border-soft);
+  padding: 3px 8px;
+}
+.claude-skill-desc {
+  color: var(--fg-3);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
+/* ── Tool rows (shared, in ability cards) ── */
+/* The old agent-card "Tools tab" was retired: guardrails/execution moved to the
+   Config tab and per-tool exposure now lives in the Abilities cards, so its
+   `.agents-tool-*` styles were removed. `.agents-tool-always-on` survives because
+   the shared tool rows built by ui/shared/js/dom-utils.js (buildToolRow) still use
+   it for the "always on" pill. */
+.agents-tool-always-on {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--border-soft);
+  color: var(--fg-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Test tab ── */
+.agents-test-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;   /* fill the scrollable body so the loop can take remaining space */
+  min-height: 0;
+}
+.agents-test-input-row { display: flex; gap: 8px; flex-shrink: 0; }
+.agents-test-input {
+  flex: 1;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.agents-test-input:focus { outline: none; border-color: var(--brand); }
+.agents-test-status { font-size: 11px; color: var(--fg-3); min-height: 14px; flex-shrink: 0; }
+
+/* Detail panels inserted as flex siblings above the loop */
+.agents-test-area > .lv-tool-panel,
+.agents-test-area > .lv-edit-panel {
+  flex-shrink: 0;
+  position: relative;
+  width: 100%;
+  max-height: 320px;
+  box-sizing: border-box;
+  left: auto;
+  top: auto;
+  overflow-y: auto;
+}
+
+/* Loop diagram panel — scales to fit width, no horizontal scroll */
+.agents-test-loop {
+  flex: 1;
+  min-height: 80px;
+  position: relative;
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px 20px 20px;
+  background: var(--bg-0);
+  font-family: 'Fira Code', Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Back-to-blueprint button (inline in status line after a test run) */
+.agents-blueprint-back-inline {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: transparent;
+  border: var(--border-width) solid var(--border);
+  color: var(--brand);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  vertical-align: middle;
+}
+.agents-blueprint-back-inline:hover {
+  background: var(--border-soft);
+}
+
+/* ── Live loop mount (shared controller hosted inside the loop panel) ──
+   When streaming the active chat's loop, the panel turns into a flex column so
+   the shared .loop-visual-container/.loop-visual-graph-area chrome fills it and
+   scrolls internally (the chrome owns its own padding/background). */
+.agents-test-loop.is-live {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;   /* keep a usable viewport even if the flex parent is short */
+}
+.agents-loop-live-label {
+  color: var(--fg-3);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.agents-loop-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9ece6a;
+  display: inline-block;
+  animation: agents-loop-pulse 1.8s infinite;
+}
+@keyframes agents-loop-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(158, 206, 106, 0.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(158, 206, 106, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(158, 206, 106, 0); }
+}
+.agents-loop-blueprint-hint {
+  font-size: 11px;
+  color: var(--fg-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.agents-loop-blueprint-host { position: relative; }
+
+/* Light mode */
+body.light-mode .agents-test-input              { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .agents-test-input:focus        { border-color: var(--brand); }
+body.light-mode .agents-test-loop               { background: var(--bg-elev); border-color: var(--border); }
+body.light-mode .agents-blueprint-back-inline   { border-color: var(--border); color: var(--brand); }
+body.light-mode .agents-blueprint-back-inline:hover { background: var(--bg-elev); }
+body.light-mode .agents-test-loop .lv-node         { background: #f0f0f8; border-color: #ccccdd; color: #888899; }
+body.light-mode .agents-test-loop .lv-type-input   { background: #e8f5ff; border-color: #aaddff; color: #4499cc; }
+body.light-mode .agents-test-loop .lv-type-output  { background: #eeffee; border-color: #aaddaa; color: #449944; }
+body.light-mode .agents-test-loop .lv-type-llm     { background: #f5eeff; border-color: #cc99ff; color: #7744cc; }
+body.light-mode .agents-test-loop .lv-type-guard   { background: var(--bg-elev-2); border-color: #ffcc88; color: #cc8844; }
+body.light-mode .agents-test-loop .lv-node.lv-done { border-color: #44aa44 !important; background: #eeffee !important; color: #44aa44 !important; }
+body.light-mode .agents-test-loop .lv-node.lv-active { border-color: #2288cc !important; background: #e0f0ff !important; color: #2288cc !important; }
+body.light-mode .agents-test-loop .lv-node.lv-error  { border-color: #cc4455 !important; background: #ffeeee !important; color: #cc4455 !important; }
+
+/* ── Create modal (removed — replaced by mock card) ── */
+
+/* ── Light mode ── */
+body.light-mode #tab-agents           { background: var(--bg-0); }
+
+body.light-mode .agent-card           { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .agent-card:hover     { background: var(--bg-elev); border-color: var(--brand); }
+body.light-mode .agent-card.active    { border-color: var(--brand); }
+body.light-mode .agent-card.activated { border-color: var(--brand); }
+body.light-mode .agent-row .agent-card.active { border-bottom-color: var(--border); }
+/* Flat redesign: no boxed surface/border in light mode either — sits on the page. */
+body.light-mode .agent-detail-panel   { background: transparent; }
+body.light-mode .agent-card-name      { color: var(--fg-1); }
+
+body.light-mode .agents-btn           { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .agents-btn:hover     { background: var(--bg-tint); border-color: var(--brand); }
+body.light-mode .agents-btn.primary   { background: var(--bg-elev); border-color: var(--brand); color: var(--brand); }
+body.light-mode .agents-btn.danger    { border-color: var(--danger); color: var(--danger); }
+body.light-mode .agents-btn.default-active { border-color: var(--brand); color: var(--brand); background: var(--bg-elev); }
+body.light-mode .agents-field-label   { color: var(--brand); }
+body.light-mode .agents-textarea      { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .agents-textarea:focus { border-color: var(--brand); }
+body.light-mode .agents-input         { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .agents-save-bar      { background: var(--bg-elev); border-top-color: var(--border); }
+
+
+/* Icon wrap – pastel tints per color */
+body.light-mode .agent-card-icon-wrap.color-teal   { background: #e0f5f0; }
+body.light-mode .agent-card-icon-wrap.color-purple  { background: #f0e8f8; }
+body.light-mode .agent-card-icon-wrap.color-red     { background: #fce8ec; }
+body.light-mode .agent-card-icon-wrap.color-blue    { background: #e4eefb; }
+body.light-mode .agent-card-icon-wrap.color-gray    { background: #f0ece8; }
+
+/* Tool "always on" pill (shared, in ability cards) */
+body.light-mode .agents-tool-always-on               { background: var(--bg-tint); color: var(--fg-2); }
+
+/* LLM / Prompt Slots collapsible cards */
+body.light-mode .agents-llm-card                    { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .agents-llm-title                   { color: var(--brand); }
+body.light-mode .agents-llm-badge                   { background: var(--bg-tint); color: var(--fg-2); }
+body.light-mode .agents-llm-badge.custom            { background: rgba(var(--brand-rgb),0.15); color: var(--brand); }
+body.light-mode .agents-llm-chevron                 { color: var(--fg-3); }
+body.light-mode .agents-llm-mode-row label          { border-color: var(--border); color: var(--fg-1); }
+body.light-mode .agents-llm-mode-row label.active   { border-color: var(--brand); background: rgba(var(--brand-rgb),0.08); }
+body.light-mode .agents-llm-field label             { color: var(--brand); }
+body.light-mode .agents-llm-field .agents-llm-hint  { color: var(--fg-3); }
+body.light-mode .agents-llm-model-dropdown          { background: var(--bg-0); border-color: var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+body.light-mode .agents-llm-model-item              { color: var(--fg-1); }
+body.light-mode .agents-llm-model-item:hover        { background: var(--bg-tint); }
+
+/* Prompt slot cards (inline styles use CSS vars — override the fallback colours) */
+body.light-mode .agents-slot-card                   { background: var(--bg-0) !important; border-color: var(--border) !important; }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Interactive loop-diagram edit panel
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Edit panel container ── */
+.lv-edit-panel {
+  position: absolute;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  max-height: 480px;
+  overflow: hidden;
+}
+
+.lv-edit-panel.lv-panel-overlay {
+  inset: 0;
+  width: auto;
+  max-height: none;
+  border-radius: 6px;
+  z-index: 120;
+  overflow-y: auto;
+}
+
+.lv-edit-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(var(--success-rgb), 0.14);
+  color: var(--success);
+  border: 1px solid rgba(var(--success-rgb), 0.3);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+.lv-edit-body {
+  padding: 10px 12px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lv-edit-body::-webkit-scrollbar { width: 4px; }
+.lv-edit-body::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 2px; }
+
+.lv-edit-desc {
+  font-size: 11px;
+  color: var(--fg-3);
+  line-height: 1.5;
+  margin-bottom: 2px;
+}
+
+/* ── Save bar ── */
+.lv-edit-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: var(--border-width) solid var(--border-soft);
+  flex-shrink: 0;
+  background: var(--bg-0);
+}
+
+.lv-edit-save-btn {
+  background: rgba(var(--brand-rgb), 0.12);
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-left: auto;
+  transition: background 0.15s;
+}
+.lv-edit-save-btn:hover:not(:disabled) { background: rgba(var(--brand-rgb), 0.22); }
+.lv-edit-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lv-edit-save-msg {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.lv-edit-save-msg.ok    { color: var(--success); }
+.lv-edit-save-msg.error { color: var(--danger); }
+
+/* ── Toggle rows ── */
+.lv-edit-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+}
+.lv-edit-toggle-row:hover { background: var(--bg-2); }
+
+.lv-edit-toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.lv-edit-toggle {
+  min-width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--bg-tint);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-3);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-family: inherit;
+  padding: 0 6px;
+}
+.lv-edit-toggle[data-on="1"] {
+  background: rgba(var(--success-rgb), 0.14);
+  border-color: var(--success);
+  color: var(--success);
+}
+.lv-edit-toggle.small {
+  min-width: 30px;
+  height: 18px;
+  font-size: 8px;
+}
+
+/* ── Tool toggle rows ── */
+.lv-edit-tool-row {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+}
+.lv-edit-tool-row:hover { background: var(--bg-2); }
+
+.lv-edit-tool-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+.lv-edit-tool-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand);
+  font-family: 'Fira Code', monospace;
+}
+.lv-edit-tool-badge {
+  font-size: 10px;
+}
+.lv-edit-tool-desc {
+  font-size: 10px;
+  color: var(--fg-3);
+  line-height: 1.4;
+  margin-top: 1px;
+}
+
+/* ── Category label ── */
+.lv-edit-cat-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(var(--brand-rgb), 0.55);
+  padding: 4px 2px 2px;
+  border-bottom: var(--border-width) solid var(--border-soft);
+  margin-top: 4px;
+}
+
+/* ── Slider rows ── */
+.lv-edit-slider-row {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+}
+.lv-edit-slider-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand);
+  min-width: 36px;
+  text-align: right;
+}
+.lv-edit-slider {
+  width: 100%;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+/* ── Select rows ── */
+.lv-edit-select-row {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+}
+.lv-edit-select {
+  width: 100%;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-1);
+  font-size: 11px;
+  font-family: 'Fira Code', monospace;
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.lv-edit-select:focus { outline: none; border-color: var(--brand); }
+
+/* ── Prompt editor ── */
+.lv-edit-prompt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.lv-edit-prompt-labelrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.lv-edit-prompt-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bg-tint);
+  border: var(--border-width) solid var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+.lv-edit-prompt-dot.filled {
+  background: var(--success);
+  border-color: var(--success);
+}
+.lv-edit-prompt-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.lv-edit-prompt-hint {
+  font-size: 10px;
+  color: rgba(var(--brand-rgb), 0.55);
+  margin-left: auto;
+}
+.lv-edit-textarea {
+  width: 100%;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-1);
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 4px;
+  padding: 5px 7px;
+  resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.lv-edit-textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+.lv-edit-textarea::placeholder { color: var(--bg-tint); }
+
+/* ── Light mode overrides ── */
+body.light-mode .lv-edit-panel        { background: var(--bg-1); border-color: var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+body.light-mode .lv-edit-badge        { background: rgba(var(--success-rgb), 0.12); color: var(--success); border-color: rgba(var(--success-rgb), 0.4); }
+body.light-mode .lv-edit-body         { /* inherits */ }
+body.light-mode .lv-edit-desc         { color: var(--fg-2); }
+body.light-mode .lv-edit-save-bar     { background: var(--bg-1); border-top-color: var(--border); }
+body.light-mode .lv-edit-save-btn     { background: var(--bg-elev); border-color: var(--brand); color: var(--brand); }
+body.light-mode .lv-edit-save-btn:hover:not(:disabled) { background: var(--border); }
+body.light-mode .lv-edit-save-msg     { color: var(--fg-3); }
+body.light-mode .lv-edit-save-msg.ok  { color: var(--success); }
+body.light-mode .lv-edit-save-msg.error { color: var(--danger); }
+body.light-mode .lv-edit-toggle-row   { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .lv-edit-toggle-row:hover { background: var(--bg-elev); }
+body.light-mode .lv-edit-toggle-label { color: var(--fg-1); }
+body.light-mode .lv-edit-toggle       { background: var(--border); border-color: var(--border); color: var(--fg-3); }
+body.light-mode .lv-edit-toggle[data-on="1"] { background: rgba(var(--success-rgb), 0.2); border-color: var(--success); color: var(--success); }
+body.light-mode .lv-edit-tool-row     { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .lv-edit-tool-row:hover { background: var(--bg-elev); }
+body.light-mode .lv-edit-tool-name    { color: var(--brand); }
+body.light-mode .lv-edit-tool-desc    { color: var(--fg-2); }
+body.light-mode .lv-edit-cat-label    { color: var(--warning); border-bottom-color: var(--border); }
+body.light-mode .lv-edit-slider-row   { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .lv-edit-slider-val   { color: var(--brand); }
+body.light-mode .lv-edit-slider       { accent-color: var(--brand); }
+body.light-mode .lv-edit-select-row   { background: var(--bg-1); border-color: var(--border); }
+body.light-mode .lv-edit-select       { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .lv-edit-prompt-row   { /* inherits */ }
+body.light-mode .lv-edit-prompt-dot   { background: var(--border); border-color: var(--border); }
+body.light-mode .lv-edit-prompt-dot.filled { background: var(--success); border-color: var(--success); }
+body.light-mode .lv-edit-prompt-label { color: var(--fg-1); }
+body.light-mode .lv-edit-prompt-hint  { color: var(--warning); }
+body.light-mode .lv-edit-textarea     { background: var(--bg-0); border-color: var(--border); color: var(--fg-1); }
+body.light-mode .lv-edit-textarea:focus { border-color: var(--brand); }
+
+/* ── Editable node cue (custom agents) ── */
+.lv-node-editable {
+  box-shadow: inset 0 0 0 1.5px rgba(var(--brand-rgb),0.35);
+}
+.lv-node-editable::after {
+  content: '✎';
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-size: 8px;
+  color: rgba(var(--brand-rgb),0.45);
+  pointer-events: none;
+}
+
+/* ── Toggleable node cue (loop-gated nodes) ── */
+.lv-node-toggleable::before {
+  content: '⟳';
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 7px;
+  color: rgba(173, 190, 80, 0.45);
+  pointer-events: none;
+}
+
+/* ── Disabled loop node (loop_logic enabled=false) ── */
+.lv-disabled {
+  opacity: 0.38;
+  filter: grayscale(0.6);
+}
+.lv-disabled .lv-node-label {
+  text-decoration: line-through;
+  text-decoration-color: rgba(var(--danger-rgb), 0.6);
+}
+body.light-mode .lv-disabled { opacity: 0.35; filter: grayscale(0.55); }
+
+/* ── Gate node detail block (DB effect + takes-effect) ── */
+.lv-gate-details {
+  background: rgba(var(--brand-rgb),0.05);
+  border: 1px solid rgba(var(--brand-rgb),0.11);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin: 8px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lv-gate-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.lv-gate-detail-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 72px;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+.lv-gate-detail-val {
+  font-size: 11px;
+  color: #9aa5ce;
+  line-height: 1.45;
+  flex: 1;
+}
+.lv-gate-effect-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+.lv-gate-effect-immediate {
+  background: rgba(var(--success-rgb), 0.12);
+  color: var(--success);
+  border: 1px solid rgba(var(--success-rgb), 0.22);
+}
+body.light-mode .lv-gate-details {
+  background: rgba(100, 130, 200, 0.04);
+  border-color: rgba(100, 130, 200, 0.14);
+}
+body.light-mode .lv-gate-detail-label { color: #8090b0; }
+body.light-mode .lv-gate-detail-val   { color: #5a6585; }
+body.light-mode .lv-gate-effect-immediate {
+  background: rgba(80, 140, 40, 0.1);
+  color: #4a8a20;
+  border-color: rgba(80, 140, 40, 0.2);
+}
+
+/* ── Cancel button ── */
+.lv-edit-cancel-btn {
+  background: transparent;
+  border: var(--border-width) solid var(--border);
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+.lv-edit-cancel-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--fg-1); }
+.lv-edit-cancel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Dirty-state save button ── */
+.lv-edit-save-btn.dirty {
+  background: rgba(var(--brand-rgb), 0.18);
+  border-color: var(--brand);
+  color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb),0.2);
+}
+
+/* Light mode overrides for new elements */
+body.light-mode .lv-node-editable { box-shadow: inset 0 0 0 1.5px rgba(204, 106, 40, 0.4); }
+body.light-mode .lv-node-editable::after { color: rgba(204, 106, 40, 0.5); }
+body.light-mode .lv-edit-cancel-btn { border-color: var(--border); color: var(--fg-3); }
+body.light-mode .lv-edit-cancel-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--fg-1); }
+body.light-mode .lv-edit-save-btn.dirty { background: var(--bg-elev); border-color: var(--brand); color: var(--brand); box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.2); }
+
+/* ── Connections Tab ────────────────────────────────────────────────────────── */
+
+.conn-loading {
+  font-size: 13px;
+  color: var(--fg-3);
+  padding: 24px 0;
+  text-align: center;
+}
+
+.conn-search-wrap {
+  margin-bottom: 12px;
+}
+
+/* Search-only replacement for the old Abilities hybrid chat composer. */
+.ability-search-field {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 11px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elev);
+}
+.ability-search-field:focus-within {
+  border-color: rgba(var(--brand-rgb), 0.65);
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.12);
+}
+.ability-search-field .chat-pill-input {
+  width: 100%;
+  min-height: 24px;
+  padding: 6px 0;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  line-height: 1.35;
+}
+
+
+.conn-banner-notice {
+  font-size: 12px;
+  color: var(--success);
+  background: var(--success-soft);
+  border: 1px solid var(--success-mid);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  transition: opacity 0.35s ease;
+}
+.conn-banner-notice.fade-out { opacity: 0; }
+
+.conn-section-header-static {
+  cursor: default !important;
+}
+.conn-section-header-static:hover .conn-section-label { color: var(--fg-3) !important; }
+
+/* The abilities-tab content column: centered 750px with 5px padding. The
+   scroll container (.agent-detail-body / #agents-grid) stays full-width so the
+   vertical scrollbar remains at the right edge of the viewport. */
+.conn-tab-content {
+  max-width: 750px;
+  margin: 0 auto;
+  padding: 5px;
+}
+
+/* Dense grouped summary: Tier, Base Context, and Agent Abilities stay above the
+   configuration table without treating every metric as a separate stat card. */
+.agent-abilities-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+/* CONTEXT-COMPOSITION / MODEL-ANALYTICS: Mirrors the model usage chart's
+   blue → purple → green palette, compact round keys, and primary-plot/supporting-
+   details hierarchy. The donut is the deliberate part-to-whole variation. */
+.agent-context-composition {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+  overflow: hidden;
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-1);
+}
+.agent-context-composition-primary {
+  /* The donut is the whole primary panel now — its title and description were
+     removed — so the region just centres the chart. Its height comes from
+     CONTEXT-SKELETON-PARAMS (declared on .agent-detail-body), so the loading
+     skeleton is built from the same number the live panel uses. */
+  display: grid;
+  place-items: center;
+  min-height: var(--context-chart-min, 248px);
+  padding: 20px 24px;
+}
+.agent-context-composition-details h4 {
+  margin: 0;
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+}
+.agent-context-composition-chart {
+  position: relative;
+  display: grid;
+  justify-self: center;
+  /* CONTEXT-SKELETON-PARAMS: the disc's size is the shared chart-container parameter. */
+  width: var(--context-chart-size, 188px);
+  height: var(--context-chart-size, 188px);
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(var(--ink-rgb), 0.05);
+}
+/* CONTEXT-COMPOSITION-RADIAL-BARS: The SVG preserves the category palette as
+   translucent tracks, then gives every meaningful context source its own radial
+   bar. SVG keeps the gaps crisp at any density without adding DOM hit targets. */
+.agent-context-composition-bars {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+/* CONTEXT-GROUP-POPOUT: a category is one <g> — its translucent track plus all of its
+   radial bars — and hovering that category slides the whole set off the ring. The offset
+   vector is --context-group-dx/dy, baked onto the group at render time from that
+   category's own bisector, and it is the only direction the pop ever travels: the set
+   lifts straight out along its own bearing and never leans toward the pointer or the
+   touch. Nothing re-writes the vector after the render, so the CSS only has to switch the
+   translate on. Translation is used rather than
+   scaling deliberately: it leaves each bar's angular width untouched, so the set lifts off
+   the ring as one piece instead of widening into its neighbours. The track is the group's
+   own class so it can brighten with the pop without touching the bars. */
+.agent-context-composition-group {
+  transform: translate(0px, 0px);
+  transition: transform 220ms cubic-bezier(.22, .8, .24, 1);
+}
+.agent-context-composition-group.is-popped {
+  transform: translate(calc(var(--context-group-dx, 0) * 1px), calc(var(--context-group-dy, 0) * 1px));
+}
+.agent-context-composition-track { transition: fill-opacity 220ms ease; }
+.agent-context-composition-group.is-popped .agent-context-composition-track { fill-opacity: .3; }
+.agent-context-composition-group.is-popped .agent-context-composition-bar.is-misc { opacity: .72; }
+.agent-context-composition-bar {
+  stroke: var(--bg-1);
+  stroke-width: 0.65px;
+  stroke-linejoin: round;
+  transform: translate(0px, 0px);
+  transition: transform 180ms cubic-bezier(.22, .8, .24, 1), opacity 160ms ease, filter 160ms ease;
+}
+.agent-context-composition-bar.is-misc { opacity: .48; }
+/* CONTEXT-BAR-HOTPOP: the single bar the pointer is over lifts further out along its own
+   mid-bearing, on top of the slide its whole group is doing, so it stands proud of the set
+   rather than merely moving with it. The vector is per-bar (--context-bar-dx/dy, written
+   into the markup at render time) because every bar has its own bearing. Declared after
+   .is-misc so the highlighted bar is fully opaque even when it is one of the thin
+   remainder bars, and the glow repeats the ball's own light so the two read as one cue. */
+.agent-context-composition-bar.is-hot {
+  transform: translate(var(--context-bar-dx, 0), var(--context-bar-dy, 0));
+  opacity: 1;
+  filter: drop-shadow(0 0 3px var(--fg-1));
+}
+/* RADIAL-LOCATOR / MODEL-ANALYTICS: the model chart's vertical cross
+   (.ac-model-analytics-cross — var(--accent) at 1px, opacity .8), turned radially.
+   One hairline holds the pointer's angle and is pinned to the same angle the glowing
+   ball rides, so needle and ball stay one thing. It spans from the bottom of the bars
+   (not the disc centre) out to the edge of the graph container, so it reads across the
+   whole plot region, and it tracks anywhere in the chart container — the centre circle
+   and the panel around the disc, not only the bar band. The bars SVG keeps
+   overflow visible so the tip can
+   reach the container past the ring. non-scaling-stroke keeps the width exactly 1
+   screen pixel like the model cross, whatever the SVG viewBox is scaled to. */
+.agent-context-composition-cross {
+  stroke: var(--accent);
+  stroke-width: 1px;
+  stroke-linecap: butt;
+  vector-effect: non-scaling-stroke;
+  opacity: .8;
+  pointer-events: none;
+}
+.agent-context-composition-cross[hidden] { display: none; }
+.agent-context-composition-chart::after {
+  /* CONTEXT-SKELETON-PARAMS: the centre plate, from the same shared parameters. */
+  width: var(--context-chart-plate, 124px);
+  height: var(--context-chart-plate, 124px);
+  border-radius: 50%;
+  background: var(--bg-1);
+  box-shadow: 0 0 0 1px var(--border-soft);
+  content: '';
+}
+.agent-context-composition-chart > [data-context-composition-total] {
+  position: absolute;
+  z-index: 1;
+  /* CONTEXT-MIN-MAX: widened from 96px so the two stacked rows ("MIN … tokens" /
+     "MAX … tokens") each hold their value on one line without wrapping mid-figure. */
+  max-width: 116px;
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+}
+/* CONTEXT-MIN-MAX: the centre readout carries the live floor and the fully-expanded
+   ceiling as two stacked label+value lines — "MIN 12,567 tokens" over
+   "MAX 25,756 tokens" — rather than the single approximate figure the chart used
+   before. A row is a block so MIN never runs into MAX; the label is a small muted
+   tag and the value keeps the readout's bold weight. An older payload with no
+   reported ceiling reuses the same row class for its lone "≈ … tokens" line, so it
+   still renders exactly as before. */
+.agent-context-composition-total-row {
+  display: block;
+  white-space: nowrap;
+}
+.agent-context-composition-total-row + .agent-context-composition-total-row { margin-top: 3px; }
+.agent-context-composition-total-row b {
+  margin-right: 4px;
+  color: var(--fg-3);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: 1px;
+}
+.agent-context-composition-total-row i {
+  font-style: normal;
+  font-size: 12px;
+}
+/* CONTEXT-COMPOSITION INTERACTION / MODEL-ANALYTICS: the glowing ball follows the
+   pointer's angular position around the ring, riding an invisible rail through the
+   source-bar tips. It is painted with the neutral TEXT token — white in the dark
+   theme — rather than the active segment's category colour, and no connector line is
+   drawn along the rail it travels. */
+/* RADIAL-LOCATOR-HIT: the contact region is the whole primary panel — the same box the
+   needle's tip is measured against — so the crosshair marks the area the locator
+   actually reads, not just the drawn disc. */
+.agent-context-composition-primary:has(.agent-context-composition-chart:not(.is-loading):not(.is-empty)) { cursor: crosshair; }
+.agent-context-composition-chart { touch-action: none; outline: none; }
+.agent-context-composition-chart:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.agent-context-composition-node {
+  position: absolute;
+  z-index: 3;
+  left: var(--context-node-x, 50%);
+  top: var(--context-node-y, 4%);
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, var(--fg-1) 0 52%, transparent 96%);
+  box-shadow: 0 0 4px var(--fg-1), 0 0 10px 1px var(--fg-1);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .agent-context-composition-node { animation: agent-context-node-glow 2.4s ease-in-out infinite; }
+  @keyframes agent-context-node-glow {
+    0%, 100% { box-shadow: 0 0 3px var(--fg-1), 0 0 8px var(--fg-1); }
+    50% { box-shadow: 0 0 6px 1px var(--fg-1), 0 0 15px 3px var(--fg-1); }
+  }
+}
+.agent-context-composition-tip {
+  position: fixed;
+  z-index: 30;
+  min-width: 154px;
+  max-width: 210px;
+  padding: 9px 10px;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-1);
+  box-shadow: 0 8px 20px rgba(var(--ink-rgb), .18);
+  color: var(--fg-1);
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.agent-context-composition-tip strong,
+.agent-context-composition-tip span,
+.agent-context-composition-tip b { display: block; }
+.agent-context-composition-tip strong { color: var(--fg-1); font-size: 12px; }
+.agent-context-composition-tip span { margin-top: 2px; color: var(--fg-3); }
+.agent-context-composition-tip b { margin-top: 5px; color: var(--fg-2); font-weight: 650; }
+/* CONTEXT-CHART-LOADING: the chart container's pending state wears the SHARED skeleton
+   paint (sk-shimmer, ui/shared/css/app3.css) instead of a flat fill, so the placeholder
+   for the disc glimmers — clipped to the container's own radius, with its centre plate
+   on top. The :not(.sk-shimmer) branch keeps a flat surface if the markup ever omits the
+   class (and it must be scoped that way: a class PAIR outranks the single primitive, so
+   otherwise the flat fill would win over the shared paint). `.is-empty` — no data at all
+   — stays flat: that is an outcome, not a pending state. */
+.agent-context-composition-chart.is-loading:not(.sk-shimmer),
+.agent-context-composition-chart.is-empty { background: var(--bg-3); }
+.agent-context-composition-details {
+  /* DOM-FIRST-LEGEND: the legend panel leads the composition grid, so its rule sits on
+     the right edge — against the chart it now precedes rather than follows. */
+  display: grid;
+  align-content: center;
+  gap: 11px;
+  padding: 18px;
+  border-right: var(--border-width) solid var(--border);
+  background: var(--bg-0);
+}
+.agent-context-composition-legend { display: grid; gap: 8px; }
+.agent-context-composition-legend .is-loading { color: var(--fg-4); font-size: 12px; }
+/* AGENT-CONTEXT-COMPACT-LEGEND: one line per group — colour key, short name with its
+   inventory count, then the share. The token/source sub-line was removed. */
+.agent-context-composition-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-areas: 'key label percent';
+  align-items: baseline;
+  column-gap: 7px;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.agent-context-composition-item i {
+  grid-area: key;
+  width: 8px;
+  height: 8px;
+  align-self: center;
+  border-radius: 50%;
+}
+.agent-context-composition-item span { grid-area: label; min-width: 0; }
+.agent-context-composition-item strong { grid-area: percent; color: var(--fg-1); font-weight: 650; }
+.agent-abilities-summary {
+  /* TIER is the only summary group left: the Base Context and Agent Abilities
+     panels folded into the composition card's breakdown legend, so the summary
+     collapsed from its two-column layout to a single full-width row. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+.agent-abilities-summary-group {
+  /* LABEL-ABOVE-CONTENT (matches the Overview page's .inst-fact): the group
+     heading is its own row above the stat details rather than a left column.
+     Groups are separated by the grid gutter, not a divider rule. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  align-items: start;
+  padding: 0;
+}
+.agent-abilities-summary-group h3 {
+  margin: 0;
+  color: var(--fg-4);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+}
+.agent-abilities-summary-group h3 span { color: var(--fg-3); }
+.agent-abilities-tier-control {
+  min-width: 0;
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 26px;
+}
+.agent-abilities-tier-select,
+.agent-abilities-tier-select select {
+  max-width: 280px;
+  width: 100%;
+}
+.agent-abilities-tier-select select {
+  min-height: 26px;
+  padding: 2px 24px 2px 7px;
+  font-size: 12px;
+}
+/* The tier control reuses the shared .member-policy-selector wrapper, which is a
+   two-column grid (label + control) with its own visible card chrome. The
+   abilities summary removes the label, so: (1) collapse the wrapper to a single
+   column so the select fills its width instead of sitting in the narrow `auto`
+   column, and (2) strip the wrapper's border/padding/background/margin so the
+   dropdown reads as a bare select rather than a box inside a box. The select
+   keeps its own .agents-input border. */
+.member-policy-selector.agent-abilities-tier-select {
+  grid-template-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.agent-abilities-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-height: 0;
+}
+.agent-abilities-sync:empty { display: none; }
+.agent-abilities-sync .ac-btn {
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 11px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.agent-abilities-sync .ac-btn:hover:not(:disabled) { background: var(--bg-2); color: var(--fg-1); }
+@media (max-width: 700px) {
+  /* CONTEXT-TOUCH-SQUARE: stacked on a phone the card sheds its own surface — no
+     background, no border, no radius — so the only painted container around the radial
+     readout is the square touch region itself, and the legend becomes a sibling panel
+     under it instead of the second half of one full-width box. Without this the card's
+     own background still painted the wide rectangle around and below the disc, so the
+     darker shape a finger had to land in was not the square it was measured against. */
+  .agent-context-composition {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+  /* Stacked, the chart keeps the top slot: the legend panel leads the DOM, so it is
+     ordered back below to leave the radial readout as the first thing seen. */
+  /* The chart's container shrink-wraps to a square around the disc and becomes the
+     marker's contact region in its own right. The square is width:max-content — the
+     156px chart plus its symmetric padding — held to an exact 1:1 box by aspect-ratio,
+     and centred in the stacked column so the page keeps its normal scroll width.
+     touch-action:none inside the square is what stops a touch or swipe panning the page,
+     so a drag there only drives the locator; everything outside keeps the default and
+     scrolls normally. The padding is deliberately the pop's own reach (9 units ≈ 7px on
+     a 156px disc), so the lifted set and the ball the pointer carries still land inside
+     the square. It now carries the surface as well as the touch region, so the container
+     the chart reads against is the square the finger must land in — its painted edges
+     and its scroll-blocking edges are one and the same box. */
+  .agent-context-composition-primary {
+    order: -1;
+    justify-self: center;
+    width: max-content;
+    min-height: 0;
+    aspect-ratio: 1;
+    /* CONTEXT-SKELETON-PARAMS: the square's inset — the same parameter the Abilities
+       skeleton square sizes itself from. */
+    padding: var(--context-chart-pad, 18px);
+    border: var(--border-width) solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-1);
+    touch-action: none;
+  }
+  /* CONTEXT-SKELETON-PARAMS (stacked): the chart container's parameters shrink to the
+     phone sizes here, on the same ancestor as the base block, so the live chart and every
+     placeholder that stands in for it — the tab-body square and the page-level phantom —
+     all pick them up; the disc/plate rules above therefore need no page-local 156/103
+     override any more. */
+  #agents-grid {
+    --context-chart-size: 156px;
+    --context-chart-plate: 103px;
+  }
+  /* CONTEXT-SKELETON-GEOMETRY (stacked): on a phone the live container IS the square the
+     pointer reads against, so BOTH skeleton surfaces become that square — the chart's own
+     size plus its symmetric inset, centred exactly like the real one, and held to 1:1 by
+     aspect-ratio rather than a fixed height. */
+  .agent-row:has(.agent-card-tabs .agents-detail-tab[data-tab="abilities"].active)
+    .agent-detail-body:empty::after {
+    width: calc(var(--context-chart-size, 156px) + var(--context-chart-pad, 18px) * 2);
+    height: auto;
+    aspect-ratio: 1;
+    margin-inline: auto;
+  }
+  /* The page-level phantom wears the same square from the same parameters, so the first
+     paint is already the container the finger lands in. */
+  #agents-grid.agents-phantom .agents-phantom-card {
+    width: calc(var(--context-chart-size, 156px) + var(--context-chart-pad, 18px) * 2);
+    height: auto;
+    aspect-ratio: 1;
+    margin-inline: auto;
+  }
+  /* CONTEXT-MIN-MAX (stacked): the two-line readout needs a touch more room than the
+     single figure did, and a smaller value size so "MIN 12,567 tokens" still clears the
+     phone-sized plate on one line. */
+  .agent-context-composition-chart > span { max-width: 94px; font-size: 11px; }
+  .agent-context-composition-total-row i { font-size: 10px; }
+  .agent-context-composition-total-row b { font-size: 8px; margin-right: 3px; }
+  /* CONTEXT-TOUCH-SQUARE: with the card's own surface gone the legend is a panel in its
+     own right, so it takes the full border and radius the card used to supply and matches
+     the square's surface — the two stack as one card split into a square and a legend
+     box. */
+  .agent-context-composition-details {
+    padding: 14px 16px;
+    border: var(--border-width) solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-1);
+  }
+  /* Four compact legend rows pair up neatly two-by-two once the details panel
+     drops below the chart. */
+  .agent-context-composition-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-abilities-summary { grid-template-columns: 1fr; }
+  .agent-abilities-summary-group { grid-template-columns: 1fr; gap: 2px; }
+  .agent-abilities-summary-group h3 { line-height: 1.3; }
+  .agent-abilities-sync { justify-content: flex-start; }
+}
+@media (max-width: 460px) {
+  /* CONTEXT-TOUCH-SQUARE: the padding stays symmetric and the chart keeps no margin of
+     its own, so the container remains an exact square and its touch region stays
+     centred on the disc. The inset lives on the shared ancestor so the page-level
+     phantom shrinks its own square in step. */
+  #agents-grid { --context-chart-pad: 14px; }
+  .agent-context-composition-primary { padding: var(--context-chart-pad, 14px); }
+  .agent-context-composition-legend { grid-template-columns: 1fr; }
+}
+.conn-section {
+  margin-bottom: 24px;
+}
+
+.conn-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.conn-section-header:hover .conn-section-label { color: var(--brand); }
+
+.conn-section-chevron {
+  font-size: 9px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.conn-section-header:hover .conn-section-chevron { color: var(--brand); }
+
+.conn-section.collapsed .conn-grid { display: none; }
+
+.conn-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  transition: color 0.15s;
+}
+
+.conn-section-hint {
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+/* The agent-card connection list now uses the SHARED expandable-row component
+   (`.ac-list` / `.ac-row` / `.ac-ability-*` in app3.css). The `.conn-*` classes
+   below are kept ONLY as JS/behaviour hooks — their visual rules are gutted so
+   the shared component governs the look. Change the look in app3.css, not here. */
+.conn-grid {
+  /* Container look comes from `.ac-list`. */
+}
+
+.conn-card {
+  /* Row box / dividers come from `.ac-row` + `.ac-list`. */
+}
+
+.conn-card.coming-soon {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.conn-card-header {
+  /* Head-line layout comes from `.ac-ability-row`. */
+}
+
+.conn-icon {
+  /* Icon box comes from `.ac-ability-icon`. */
+}
+
+.conn-name {
+  /* Name typography comes from `.ac-ability-name`. */
+}
+
+.conn-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.04em;
+}
+
+.conn-badge.coming-soon {
+  background: var(--border-soft);
+  color: var(--fg-3);
+  border: var(--border-width) solid var(--border);
+}
+
+/* Toggle switch — MOVED to the globally-loaded ui/shared/css/app3.css (search
+   "Toggle switch (SISTER-PANEL: AGENT-ABILITY-TABLE)") so the admin config pages
+   (App Settings / Agent Settings), which don't load this per-page sheet, render
+   the same `.conn-toggle` switch. The dark + light + saving-state rules and the
+   `ac-ability-spin` keyframe all live there now — do NOT re-add them here. */
+
+/* Clickable card header */
+.conn-card-header-clickable {
+  cursor: pointer;
+}
+.conn-card-header-clickable:hover .conn-name { color: var(--brand); }
+
+/* Token / config fields — show/hide + padding/border come from the shared
+   `.ac-ability-body` + `.ac-row.expanded`; `.conn-fields` stays as a JS hook. */
+.conn-fields {
+  /* visual rules intentionally empty — see app3.css `.ac-ability-body` */
+}
+
+.conn-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.conn-token-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.conn-token-input {
+  flex: 1;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.conn-field-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--fg-4);
+  margin-top: 5px;
+}
+
+.conn-save-msg {
+  display: block;
+  font-size: 12px;
+  color: var(--success);
+  margin-top: 6px;
+  min-height: 16px;
+}
+
+.conn-save-msg.error {
+  color: var(--danger);
+}
+
+/* Light mode (conn-card / conn-name / conn-fields colours now come from the
+   shared `.ac-*` light-mode rules in app3.css). */
+body.light-mode .conn-section-label { color: var(--fg-3); }
+body.light-mode .conn-section-hint  { color: var(--fg-3); }
+/* (light-mode .conn-toggle-track rules moved to app3.css with the switch) */
+body.light-mode .conn-field-label   { color: var(--fg-3); }
+body.light-mode .conn-field-hint    { color: var(--fg-3); }
+body.light-mode .conn-badge.coming-soon { background: var(--bg-tint); color: var(--fg-3); border-color: var(--border); }
+body.light-mode .conn-save-msg      { color: var(--success); }
+body.light-mode .conn-save-msg.error { color: var(--danger); }
+
+/* Google account info in connection card */
+.conn-google-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-base, var(--bg-0));
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+}
+body.light-mode .conn-google-account { background: var(--bg-1); border-color: var(--border-strong); }
+
+/* ── Members tab ── */
+.members-loading {
+  font-size: 12px;
+  color: var(--fg-3);
+  padding: 8px 12px;
+}
+/* ── Members loading skeleton — shape helpers only; shimmer fill from .sk-shimmer (app3.css) ── */
+.members-skeleton { padding: 4px 2px; }
+.mem-sk { display: block; height: 11px; border-radius: 6px; }
+.mem-sk-head { height: 12px; margin-bottom: 12px; }
+.mem-sk-policy {
+  padding: 12px 14px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.mem-sk-opt { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.mem-sk-section { margin-bottom: 18px; }
+.mem-sk-row { padding: 10px 0; border-bottom: var(--border-width) solid var(--border); }
+.mem-sk-row:last-child { border-bottom: none; }
+.members-notice {
+  font-size: 11px;
+  color: var(--fg-3);
+  padding: 8px 12px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+body.light-mode .members-notice {
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+  color: var(--fg-3);
+}
+.members-section { margin-bottom: 18px; }
+.members-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.members-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-1);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+body.light-mode .members-section-title { color: var(--fg-1); }
+.members-section-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-3);
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+body.light-mode .members-section-count {
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+  color: var(--fg-3);
+}
+.members-empty {
+  font-size: 11px;
+  color: var(--fg-3);
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+body.light-mode .members-empty {
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+}
+.members-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+body.light-mode .members-table {
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+}
+/* Wide tables scroll horizontally inside the tab body instead of overflowing.
+   The wrapper owns the rounded corners; the table keeps its own border so the
+   scrollbar sits inside the outline. */
+.members-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 6px;
+}
+.members-table-wrap .members-table {
+  min-width: 100%;
+}
+.members-table thead th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-3);
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border-bottom: var(--border-width) solid var(--border);
+}
+body.light-mode .members-table thead th {
+  background: var(--bg-elev);
+  border-bottom-color: var(--border-strong);
+  color: var(--fg-3);
+}
+.members-table tbody td {
+  padding: 8px 10px;
+  border-bottom: var(--border-width) solid var(--border);
+  color: var(--fg-1);
+  vertical-align: top;
+}
+body.light-mode .members-table tbody td {
+  border-bottom-color: var(--border);
+  color: var(--fg-1);
+}
+.members-table tbody tr:last-child td { border-bottom: none; }
+.members-table th.members-num,
+.members-table td.members-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.members-user-name {
+  font-weight: 600;
+  color: var(--fg-1);
+}
+body.light-mode .members-user-name { color: var(--fg-1); }
+.members-user-sub {
+  font-size: 10px;
+  color: var(--fg-3);
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Access policy */
+.members-policy {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+}
+body.light-mode .members-policy { background: var(--bg-1); border-color: var(--border-strong); }
+.members-policy-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-1);
+  margin-bottom: 10px;
+}
+body.light-mode .members-policy-title { color: var(--fg-1); }
+.members-policy-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.members-policy-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--bg-1);
+  transition: border-color 0.12s, background 0.12s;
+}
+body.light-mode .members-policy-opt {
+  background: var(--bg-elev);
+  border-color: var(--border-strong);
+}
+.members-policy-opt:hover { border-color: var(--brand); }
+.members-policy-opt.active {
+  border-color: var(--brand);
+  background: rgba(var(--brand-rgb),0.08);
+}
+.members-policy-opt input[type="radio"] {
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+.members-policy-opt-body { flex: 1; }
+.members-policy-opt-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+body.light-mode .members-policy-opt-label { color: var(--fg-1); }
+.members-policy-opt-hint {
+  font-size: 11px;
+  color: var(--fg-3);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Member levels & policies — standalone, collapsed by default via <details>. */
+.members-levels { margin-bottom: 18px; }
+.members-levels > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.members-levels > summary::-webkit-details-marker { display: none; }
+.members-levels > summary::before { content: '›'; font-size: 17px; line-height: 12px; color: var(--fg-3); transition: transform 0.12s ease; }
+.members-levels[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.members-levels[open] > summary::before { transform: rotate(90deg); }
+.members-levels-count { margin-left: auto; font-size: 10px; color: var(--fg-3); background: var(--bg-1); border: var(--border-width) solid var(--border); border-radius: 10px; padding: 1px 7px; }
+.members-levels-body { border: var(--border-width) solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; padding: 10px; background: var(--bg-elev); }
+.members-level-card { padding: 10px; border: var(--border-width) solid var(--border); border-radius: 6px; background: var(--bg-1); margin-bottom: 8px; }
+.members-level-card:last-child { margin-bottom: 0; }
+.members-level-name { font-size: 12px; font-weight: 700; color: var(--fg-1); }
+.members-level-description { margin-top: 2px; color: var(--fg-3); font-size: 11px; line-height: 1.4; }
+.members-level-meta { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
+.members-level-meta span, .members-level-badge, .members-level-limit-chip { display: inline-block; padding: 2px 7px; border: var(--border-width) solid var(--border); border-radius: 10px; background: var(--bg-elev); color: var(--fg-2); font-size: 10px; white-space: nowrap; }
+.members-level-badge { font-weight: 600; color: var(--brand); }
+body.light-mode .members-levels > summary, body.light-mode .members-levels-body { background: var(--bg-1); border-color: var(--border-strong); }
+body.light-mode .members-level-card { background: var(--bg-elev); border-color: var(--border-strong); }
+
+/* ── Membership-level policy editing ───────────────────────────────────────── */
+.member-policy-selector {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 260px);
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+}
+.member-policy-selector > label { font-size: 11px; font-weight: 700; color: var(--fg-2); text-transform: uppercase; letter-spacing: .05em; }
+.member-policy-select { min-width: 0; }
+.member-policy-cue { grid-column: 1 / -1; font-size: 11px; color: var(--fg-3); line-height: 1.4; }
+.member-policy-error { margin: 0 0 10px; padding: 8px 10px; border: var(--border-width) solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 12px; }
+.member-policy-editor { margin: 0 0 18px; padding: 14px; border: var(--border-width) solid var(--border); border-radius: 8px; background: var(--bg-1); }
+.member-policy-editor-title { color: var(--fg-1); font-size: 14px; font-weight: 700; }
+.member-policy-editor-hint { margin: 5px 0 12px; color: var(--fg-3); font-size: 12px; line-height: 1.45; }
+.member-policy-preview { margin: 0 0 12px; border: var(--border-width) solid var(--border-soft); border-radius: 6px; background: var(--bg-elev); }
+.member-policy-preview > summary { cursor: pointer; padding: 8px 10px; color: var(--fg-2); font-size: 12px; font-weight: 600; }
+.member-policy-preview > pre { max-height: 260px; overflow: auto; margin: 0; padding: 10px; border-top: var(--border-width) solid var(--border-soft); color: var(--fg-2); font: 11px/1.45 var(--font-mono); white-space: pre-wrap; }
+.member-policy-overlay { min-height: 180px; }
+.member-policy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.member-policy-save-status { min-height: 16px; color: var(--fg-3); font-size: 11px; }
+.member-policy-list { margin: 12px 0; border: var(--border-width) solid var(--border-soft); border-radius: 7px; overflow: hidden; }
+.member-policy-list-title { padding: 9px 10px 1px; color: var(--fg-1); font-size: 12px; font-weight: 700; }
+.member-policy-list-hint { padding: 0 10px 8px; color: var(--fg-3); font-size: 11px; }
+.member-policy-check { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-top: var(--border-width) solid var(--border-soft); cursor: pointer; color: var(--fg-2); font-size: 12px; }
+.member-policy-check:hover { background: var(--bg-tint); }
+.member-policy-check input { margin: 2px 0 0; accent-color: var(--accent); }
+.member-policy-check span { display: grid; gap: 2px; }
+.member-policy-check strong { color: var(--fg-1); font-size: 12px; }
+.member-policy-check small { color: var(--fg-3); font-size: 11px; }
+.members-level-limit-chip {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.members-level-limit-chip:hover, .members-level-limit-chip:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+.members-level-limit-editor { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 9px; border: var(--border-width) solid var(--border-soft); border-radius: 6px; background: var(--bg-elev); color: var(--fg-2); font-size: 11px; }
+.members-level-limit-editor > label:first-child { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.members-level-limit-editor .agents-input { width: 90px; padding: 5px 7px; }
+.members-level-limit-inherit { color: var(--fg-3); }
+@media (max-width: 700px) {
+  .member-policy-selector { grid-template-columns: 1fr; gap: 5px; }
+  .member-policy-select { width: 100%; }
+}
+
+
+/* Member status + actions */
+.members-status {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.members-status.ok {
+  color: var(--success);
+  background: rgba(var(--success-rgb),0.12);
+  border: 1px solid rgba(var(--success-rgb),0.3);
+}
+.members-status.pending {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb),0.12);
+  border: 1px solid rgba(var(--warning-rgb),0.3);
+}
+.members-actions { text-align: right; white-space: nowrap; }
+.members-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.members-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.members-btn.authorize {
+  color: var(--success);
+  border-color: rgba(var(--success-rgb),0.4);
+}
+.members-btn.authorize:hover { background: rgba(var(--success-rgb),0.12); }
+.members-btn.restrict {
+  color: var(--danger);
+  border-color: rgba(var(--danger-rgb),0.4);
+}
+.members-btn.restrict:hover { background: rgba(var(--danger-rgb),0.12); }
+
+
+/* ── Mock agent card ──────────────────────────────────────────────────── */
+.agent-card-mock .agent-card-name {
+  color: var(--brand);
+  font-style: italic;
+}
+.agent-card-mock-hint {
+  font-size: 11px;
+  color: var(--fg-3);
+  font-style: italic;
+}
+body.light-mode .agent-card-mock .agent-card-name {
+  color: var(--brand);
+}
+
+/* ── Mock card inline create field (name input + template dropdown) ──────── */
+.agent-mock-create-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+/* Contenteditable name field (a <div>, not an <input>, so browser password
+   managers never offer saved credentials on it). Styled to look like an input. */
+.agent-mock-name-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-1);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+  /* keep it a single line that scrolls rather than wrapping */
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  line-height: 1.4;
+  cursor: text;
+  scrollbar-width: none;
+}
+.agent-mock-name-input::-webkit-scrollbar { display: none; }
+/* Placeholder for the empty contenteditable. */
+.agent-mock-name-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--fg-3);
+  font-weight: 600;
+  font-style: italic;
+  pointer-events: none;
+}
+.agent-mock-name-input:focus { border-color: var(--brand); }
+
+/* Big "+" create button on the right of the create bar. */
+.agent-mock-create-go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: var(--brand);
+  color: var(--bg-0);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.05s;
+}
+.agent-mock-create-go:hover { filter: brightness(1.08); }
+.agent-mock-create-go:active { transform: scale(0.94); }
+.agent-mock-create-go:disabled { opacity: 0.55; cursor: default; }
+/* While a create is in flight the "+" shows a spinning loader (global `spin`). */
+.agent-mock-create-go:disabled svg { animation: spin 0.8s linear infinite; }
+.agent-mock-create-go.registration-gated {
+  background: var(--bg-elev);
+  color: var(--brand);
+  border: var(--border-width) solid var(--brand);
+}
+.agent-mock-create-go.registration-gated:hover {
+  background: rgba(var(--brand-rgb), 0.1);
+  filter: none;
+}
+.agent-card-badge-wrap:has(.agent-create-registration-popover) { position: relative; }
+.agent-create-registration-popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(310px, calc(100vw - 32px));
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+  color: var(--fg-1);
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+}
+.agent-create-registration-popover strong { font-size: 13px; }
+.agent-create-registration-popover > span {
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.agent-create-registration-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 3px;
+}
+.agent-create-registration-actions button {
+  border: var(--border-width) solid var(--border);
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+.agent-create-registration-actions .agent-create-registration-open {
+  border-color: var(--brand);
+  color: var(--bg-0);
+  background: var(--brand);
+}
+
+/* ── Create card: WebAgent / Claude / Terminal type chooser ──────────────────
+   One segmented pill at the top of the single "New Agent" create card. Picking a
+   segment swaps the lower area (WebAgent tabs ↔ inline Claude/Terminal form) and
+   the accept "+" finalises it. JS: view.js _buildMockTypeToggle. Admin-only (the
+   two engine types are admin-gated), so a non-admin never sees this strip. */
+.agent-mock-type-seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 10px 0 2px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+}
+.agent-mock-type-seg-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-3);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.agent-mock-type-seg-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+.agent-mock-type-seg-btn:hover { color: var(--fg-1); background: rgba(var(--brand-rgb), 0.08); }
+.agent-mock-type-seg-btn.active { color: var(--bg-0); background: var(--brand); }
+.agent-mock-type-seg-btn.active:hover { color: var(--bg-0); filter: brightness(1.05); }
+
+/* Small "Claude Code" tag on the open card's name row. */
+.agent-card-claude-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(var(--brand-rgb), 0.16);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.claude-agent-intro {
+  font-size: 12px;
+  color: var(--fg-3);
+  line-height: 1.5;
+  margin: 2px 0 12px;
+}
+.claude-agent-toggles { margin-top: 4px; }
+
+/* Account sign-in block (button + paste-a-code field) — see claude-agent.js
+   renderClaudeAuth + app/api/claude_auth.py. Palette-driven, dark + light. */
+.claude-agent-auth {
+  margin: 2px 0 14px;
+  padding: 12px 14px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 10px;
+  background: rgba(var(--brand-rgb), 0.05);
+}
+.claude-auth-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.claude-auth-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-4);
+  flex: none;
+}
+.claude-auth-dot.on { background: var(--success); box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.18); }
+.claude-auth-text { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.claude-auth-actions { margin-top: 10px; }
+.claude-auth-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: filter 0.15s, opacity 0.15s;
+}
+.claude-auth-btn:hover { filter: brightness(1.06); }
+.claude-auth-btn:disabled { opacity: 0.65; cursor: default; }
+.claude-auth-signout {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-3);
+  background: transparent;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.claude-auth-signout:hover { color: var(--fg-2); background: rgba(var(--brand-rgb), 0.08); }
+.claude-auth-form { display: flex; flex-direction: column; gap: 8px; }
+.claude-auth-step { font-size: 12px; color: var(--fg-3); line-height: 1.5; }
+.claude-auth-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.claude-auth-link:hover { text-decoration: underline; }
+.claude-auth-input-row { display: flex; gap: 8px; align-items: center; }
+.claude-auth-code { flex: 1 1 auto; min-width: 0; }
+.claude-auth-cancel {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--fg-3);
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.claude-auth-cancel:hover { color: var(--fg-2); }
+.claude-auth-msg { font-size: 11.5px; color: var(--fg-3); line-height: 1.5; word-break: break-word; }
+.claude-auth-msg.err { color: var(--danger); }
+
+.claude-agent-danger {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: var(--border-width) solid var(--border-soft);
+}
+.claude-agent-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.08);
+  border: var(--border-width) solid rgba(var(--danger-rgb), 0.25);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.claude-agent-delete-btn:hover { background: rgba(var(--danger-rgb), 0.16); }
+.claude-agent-delete-btn.armed { background: rgba(var(--danger-rgb), 0.22); }
+.claude-agent-delete-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Icon picker popover ── */
+.icon-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-picker-popover {
+  background: var(--bg-elev, var(--bg-elev));
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  width: 420px;
+  max-width: 92vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.icon-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.icon-picker-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-1, var(--fg-1));
+}
+
+.icon-picker-close {
+  background: none;
+  border: none;
+  color: var(--fg-3, var(--fg-3));
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.icon-picker-close:hover {
+	color: var(--fg-1, var(--fg-1));
+	background: rgba(var(--ink-rgb), 0.06);
+}
+
+.icon-picker-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.icon-picker-save {
+	background: none;
+	border: none;
+	color: var(--fg-3, var(--fg-3));
+	font-size: 16px;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+.icon-picker-save:hover {
+	color: var(--success, var(--success));
+	background: rgba(var(--success-rgb),0.12);
+}
+
+.icon-picker-search-wrap {
+  padding: 0 14px 8px;
+}
+
+.icon-picker-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--fg-1, var(--fg-1));
+  outline: none;
+}
+.icon-picker-search:focus {
+  border-color: var(--brand);
+}
+.icon-picker-search::placeholder {
+  color: var(--fg-4);
+}
+
+.icon-picker-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 4px;
+  padding: 0 14px 12px;
+}
+.icon-picker-grid::-webkit-scrollbar { width: 4px; }
+.icon-picker-grid::-webkit-scrollbar-thumb { background: var(--border, var(--bg-tint)); border-radius: 3px; }
+
+.icon-picker-item {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--bg-2);
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+.icon-picker-item:hover {
+  background: rgba(var(--brand-rgb),0.12);
+  border-color: var(--brand);
+}
+.icon-picker-item.selected {
+  background: rgba(var(--brand-rgb),0.18);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+.icon-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 24px;
+  color: var(--fg-3, var(--fg-3));
+  font-size: 13px;
+}
+
+/* ══ Merged Sessions section (Agents + Sessions combined page) ════════════════
+   The Sessions page is embedded BELOW the agents carousel on this tab. When no
+   agent card is open, #tab-agents carries .agents-show-sessions (toggled by
+   _syncMergedLayout in js/view.js):
+     • #agents-grid shrinks to its toolbar + strip (auto height);
+     • the squares render as a horizontal carousel strip (the SAME treatment as
+       the open-card carousel — see the #agents-grid.carousel rules above), with
+       chevrons + edge fades;
+     • the page scrolls just enough to lift the strip off the top (the sessions
+       toolbar pins at the top), then the table takes over scrolling — see the
+       two-phase scroll notes below.
+   Opening a card removes .agents-show-sessions: the section hides and the card
+   takes the space, exactly as before. */
+/* ── Two-phase scroll ────────────────────────────────────────────────────────
+   Overview mode uses ONE page scroller (#tab-agents) that pushes the agents
+   strip off the top, then hands scrolling to the table:
+     • The page's scrollable height is exactly the strip's height — the sessions
+       section below is sized (by JS, _wireMergedScroll) to fill the remaining
+       viewport (toolbar + viewport-height table wrap).
+     • #sessions-toolbar is sticky at top:0, so it pins in place as the strip
+       clears it (and stays put even if heights drift by a pixel or two).
+     • #sessions-table-wrap is clipped (overflow-y hidden) until .sessions-locked
+       flips it to its own scroller; JS routes the wheel between the two scrollers
+       at the handoff. Its overscroll is contained, so the rubber-band at the
+       bottom bounces the data table — never the whole page. */
+#tab-agents.agents-show-sessions {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;   /* no native page rubber-band */
+  scrollbar-width: none;         /* hide the PAGE scrollbar — the table has its own */
+}
+/* The page's own scrollbar is hidden; only the sessions table shows one. */
+#tab-agents.agents-show-sessions::-webkit-scrollbar { width: 0; height: 0; display: none; }
+#tab-agents.agents-show-sessions::-webkit-scrollbar-thumb { background: transparent; }
+
+#tab-agents.agents-show-sessions #sessions-section {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;         /* natural height: toolbar + viewport-height wrap */
+  overflow: visible;      /* keep the toolbar sticky against the PAGE scroller */
+}
+
+#tab-agents.agents-show-sessions #agents-grid {
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+#tab-agents.agents-show-sessions #sessions-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  flex-shrink: 0;
+  background: var(--bg-0);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+/* Height is set inline by _wireMergedScroll to (page height − toolbar height),
+   capping the page's scroll extent at the strip height. Clipped until
+   .sessions-locked turns it into the inner scroller that owns further scrolling.
+   Phase 1 keeps touch-action: auto so a VERTICAL swipe inside the table chains
+   to the PAGE scroller (pushing the strip away) while a horizontal swipe still
+   scrolls the wide table natively. NOTE: touch-action pan-x here would REFUSE
+   vertical panning outright (the wrap's only permitted gesture becomes
+   horizontal), so vertical swipes would never reach the page — leave it auto. */
+#tab-agents.agents-show-sessions #sessions-table-wrap {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-y: auto;   /* phase 1: vertical overscroll chains to the page */
+  overscroll-behavior-x: none;   /* wide table's edge never chains to history nav */
+  touch-action: auto;            /* vertical swipe → page; horizontal swipe → table */
+}
+#tab-agents.agents-show-sessions.sessions-locked #sessions-table-wrap {
+  overflow-y: auto;
+  touch-action: auto;            /* phase 2: both axes scroll the table now */
+  /* Bottom rubber-band stays inside the table (contain). At the table's TOP the
+     JS relaxes this to auto so a downward swipe chains back to the page and
+     brings the strip back — see _syncTableOverscroll in view.js. */
+  overscroll-behavior-y: contain;
+  overscroll-behavior-x: none;   /* wide table's edge never chains to history nav */
+}
+
+#tab-agents.agents-show-sessions .agents-squares-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Same split padding as the open-card carousel row (13+3 top, 9+3 bottom). */
+  padding: 13px var(--agents-content-inset) 9px;
+}
+#tab-agents.agents-show-sessions .agents-squares {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-content: center;
+  /* Same end-gutters (20px left / 40px right) as the open-card carousel (see
+     the carousel block). */
+  padding: 3px 40px 3px 20px;
+  scrollbar-width: none;
+  overscroll-behavior-x: none;
+}
+#tab-agents.agents-show-sessions .agents-squares::-webkit-scrollbar { display: none; }
+#tab-agents.agents-show-sessions .agents-squares .agent-row { flex: 0 0 auto; }
+
+#tab-agents.agents-show-sessions .agents-squares-wrap.can-scroll-left  .agents-carousel-chev.left  { display: flex; }
+#tab-agents.agents-show-sessions .agents-squares-wrap.can-scroll-right .agents-carousel-chev.right { display: flex; }
+
+#tab-agents.agents-show-sessions .agents-squares-wrap.can-scroll-right .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+}
+#tab-agents.agents-show-sessions .agents-squares-wrap.can-scroll-left .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px);
+}
+#tab-agents.agents-show-sessions .agents-squares-wrap.can-scroll-left.can-scroll-right .agents-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+}
+.ac-manager-loop { display:flex; flex-direction:column; gap:8px; }
+.ac-manager-stage { border:var(--border-width) solid var(--border); border-radius:8px; background:var(--bg-1); overflow:hidden; }
+.ac-manager-stage > summary { cursor:pointer; display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:9px 11px; font-size:12px; font-weight:650; }
+.ac-manager-stage > summary > span:last-child { color:var(--fg-3); font-size:10px; font-weight:400; text-align:right; }
+.ac-manager-stage-body { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; padding:2px 11px 11px; border-top:var(--border-width) solid var(--border); }
+.ac-manager-check { display:flex; align-items:center; gap:7px; min-height:28px; color:var(--fg-2); font-size:11px; }
+.ac-manager-check:has(> span:empty) { min-height:auto; }
+.ac-manager-field { display:flex; flex-direction:column; gap:4px; grid-column:1/-1; color:var(--fg-3); font-size:11px; }
+.ac-manager-field-number { grid-column:auto; }
+.ac-manager-modes { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:5px 14px; padding:7px 0; }
+.ac-manager-modes > span:first-child { color:var(--fg-3); font-size:11px; margin-right:4px; }
+.ac-manager-modes .ac-manager-check { min-height:auto; }
+@media (max-width:700px) {
+  .ac-manager-stage > summary { align-items:flex-start; flex-direction:column; gap:2px; }
+  .ac-manager-stage > summary > span:last-child { text-align:left; }
+  .ac-manager-stage-body { grid-template-columns:1fr; }
+  .ac-manager-field-number { grid-column:1/-1; }
+}
+
+
+
+/* ── List view ─────────────────────────────────────────────────────────────── */
+#agents-grid.agents-list-view {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px var(--agents-content-inset) 24px;
+}
+#agents-grid.agents-list-view::-webkit-scrollbar { width: 5px; }
+#agents-grid.agents-list-view::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+#agents-grid.agents-list-view .agents-top-row { display: block; flex: 0 0 auto; position: relative; }
+
+.agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agents-list-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.agents-list-row:hover { background: rgba(var(--ink-rgb), 0.06); }
+.agents-list-row.active { background: rgba(var(--brand-rgb), 0.10); }
+.agents-list-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  color: var(--fg-2);
+  background: transparent;
+}
+.agents-list-avatar > svg { width: 20px; height: 20px; }
+.agents-list-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.agents-list-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agents-list-row-actions { position: relative; flex-shrink: 0; }
+.agents-list-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.agents-list-more-btn:hover,
+.agents-list-more-btn[aria-expanded="true"] {
+  border-color: var(--border);
+  background: rgba(var(--ink-rgb), 0.08);
+  color: var(--fg-1);
+}
+.agents-list-more-btn > svg { width: 16px; height: 16px; pointer-events: none; }
+
+/* +chat icon (start a new session) — a tight pair with the row ⋮ menu. */
+.agents-list-row-actions-cluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.agents-list-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.agents-list-chat-btn:hover {
+  border-color: var(--border);
+  background: rgba(var(--brand-rgb), 0.10);
+  color: var(--accent);
+}
+.agents-list-chat-btn > svg { width: 16px; height: 16px; pointer-events: none; }
+
+/* + button (create a new agent) — a tight pair with the All Agents ⋮ menu. */
+.agents-list-create-agent-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.agents-list-create-agent-btn:hover {
+  border-color: var(--border);
+  background: rgba(var(--brand-rgb), 0.10);
+  color: var(--accent);
+}
+.agents-list-create-agent-btn > svg { width: 16px; height: 16px; pointer-events: none; }
+
+/* Mobile roster selector — preserve the compact All Agents row layout. Only
+   its adjacent chevron is interactive; the full roster opens from that control.
+   The menu is re-parented under .agents-list-top by view.js, so it drops below
+   the whole list instead of covering the favorite rows and eating their clicks. */
+.agents-my-agents-selector { position: relative; }
+.agents-my-agents-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 0 -3px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.agents-my-agents-trigger:hover,
+.agents-my-agents-trigger[aria-expanded="true"] {
+  border-color: var(--border);
+  background: rgba(var(--brand-rgb), 0.10);
+  color: var(--accent);
+}
+.agents-my-agents-trigger > svg { width: 16px; height: 16px; pointer-events: none; }
+.agents-my-agents-menu {
+  position: absolute;
+  top: calc(100% + 6px);   /* anchored to .agents-list-top → under the whole list */
+  left: 0;
+  z-index: 120;
+  display: none;
+  width: min(300px, calc(100vw - 48px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 5px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-lg);
+}
+.agents-my-agents-menu.open { display: flex; flex-direction: column; }
+.agents-my-agents-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 4px;
+  border-radius: 7px;
+}
+.agents-my-agents-menu-select {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 6px 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.agents-my-agents-menu-select:hover { background: rgba(var(--brand-rgb), 0.10); }
+.agents-my-agents-menu-avatar { width: 22px; height: 22px; }
+.agents-my-agents-menu-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Dropdown rows mirror the favorite-row action cluster: star, Chat+, and ⋮. */
+.agents-my-agents-menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.agents-list-empty { padding: 8px 10px 10px; color: var(--fg-3); font-size: 13px; line-height: 1.4; }
+.agents-list-favorite-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.agents-list-favorite-btn:hover { border-color: var(--border); background: rgba(var(--ink-rgb), 0.08); color: var(--fg-1); }
+.agents-list-favorite-btn.is-favorite { color: var(--accent); }
+.agents-list-favorite-btn.is-favorite svg { fill: currentColor; }
+.agents-list-favorite-btn > svg { width: 16px; height: 16px; pointer-events: none; }
+
+/* Divider between the agent rows and the sub-page content region. */
+.agents-list-divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 0 0;
+  flex-shrink: 0;
+}
+
+.agents-list-row-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 150px;
+  padding: 5px;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-lg);
+  display: none;
+  flex-direction: column;
+}
+.agents-list-row-menu.open { display: flex; }
+.agents-list-row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+  text-align: left;
+}
+.agents-list-row-menu-item:hover { background: rgba(var(--brand-rgb), 0.10); color: var(--fg-1); }
+.agents-list-row-menu-item > svg { width: 14px; height: 14px; flex-shrink: 0; }
+.agents-list-row-menu-item.danger {
+  color: var(--danger);
+}
+.agents-list-row-menu-item.danger:hover {
+  background: rgba(var(--danger-rgb), 0.12);
+  color: var(--danger);
+}
+.agents-list-row-menu { max-height: 60vh; overflow-y: auto; }
+.agents-list-row-menu-item.subpage.active {
+  background: rgba(var(--brand-rgb), 0.10);
+  color: var(--brand);
+}
+.agents-list-row-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 5px 4px;
+  flex: 0 0 auto;
+}
+
+/* Sub-pages dropdown — a plain text trigger ("<icon> Sessions <chevron>") that
+   opens an icon-labelled menu. The control is a sibling that renders BELOW the
+   agent list; the selected sub-page renders in #agents-detail-region beneath it. */
+.agents-subpages {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 14px 0 10px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.agents-subpages-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.agents-subpages-trigger:hover { background: rgba(var(--ink-rgb), 0.06); }
+.agents-subpages-trigger[aria-expanded="true"] { background: rgba(var(--brand-rgb), 0.10); color: var(--accent); }
+.agents-subpages-trigger > svg { width: 16px; height: 16px; }
+.agents-subpages-trigger-chev { color: var(--fg-3); }
+.agents-subpages-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 120;
+  min-width: 176px;
+  padding: 5px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  display: none;
+  flex-direction: column;
+}
+.agents-subpages-menu.open { display: flex; }
+.agents-subpages-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+  text-align: left;
+}
+.agents-subpages-menu-item:hover { background: rgba(var(--brand-rgb), 0.10); color: var(--fg-1); }
+.agents-subpages-menu-item.active { color: var(--brand); }
+.agents-subpages-menu-item > svg { width: 15px; height: 15px; flex-shrink: 0; }
+#agents-grid.agents-list-view #agents-detail-region { margin-top: 0; }
+#agents-grid.agents-list-view .agent-detail-body { padding-top: 0; }
+#agents-grid.agents-list-view #agents-detail-region.open {
+  display: block;
+  flex: 0 0 auto;
+  padding: 0 var(--agents-content-inset) 24px;
+}
+/* When the All Agents Sessions footer is docked (pinned to the bottom of the
+   tab, like the cards view), reserve room under the table so the dock doesn't
+   cover the last row. */
+#agents-grid.agents-list-view #agents-detail-region .all-agents-sessions-body {
+  padding-bottom: 38px;
+}
+
+/* List mode reuses the desktop carousel immediately above an active agent's
+   detail panel. Hide only tab strips left behind by unrelated card renderers. */
+#agents-grid.agents-list-view .agent-card-tabs-wrap:not(.agents-list-tab-carousel),
+#agents-grid.agents-list-view .agent-card-tabs-wrap:not(.agents-list-tab-carousel) .agent-card-tabs-chev {
+  display: none !important;
+}
+#agents-grid.agents-list-view .agents-list-tab-carousel {
+  display: block;
+  margin: 0 0 10px;
+  border-top: var(--border-width) solid var(--border-soft);
+  border-bottom: var(--border-width) solid var(--border-soft);
+}
+#agents-grid.agents-list-view .agents-list-tab-carousel .agent-card-tabs {
+  padding-inline: 8px;
+}

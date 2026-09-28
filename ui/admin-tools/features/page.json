@@ -1,0 +1,12 @@
+{
+  "id": "features",
+  "label": "Features",
+  "icon": "layers",
+  "order": 9,
+  "locked": true,
+  "html": "features-view.html",
+  "mount": "#files-features-main",
+  "entry": "ui/admin-tools/features/features-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

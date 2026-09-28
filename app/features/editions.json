@@ -1,0 +1,38 @@
+{
+  "active": null,
+  "editions": {
+    "full": {
+      "label": "Full / dev",
+      "description": "Every feature in the codebase, regardless of maturity. The default.",
+      "rule": "all"
+    },
+    "production": {
+      "label": "Production",
+      "description": "Only features marked stable, plus anything explicitly promoted below.",
+      "rule": "min_status",
+      "min_status": "stable",
+      "include": [],
+      "exclude": []
+    },
+    "beta": {
+      "label": "Beta channel",
+      "description": "Stable + beta features; experimental excluded.",
+      "rule": "min_status",
+      "min_status": "beta",
+      "include": [],
+      "exclude": []
+    },
+    "public": {
+      "label": "Public (agent-only)",
+      "description": "Everything except the platform / marketplace billing tier, whose code, UI and schema are physically stripped so the public artifact has no trace of it.",
+      "rule": "all",
+      "include": [],
+      "exclude": [],
+      "exclude_paths": [
+        "plugins/admin/billing",
+        "ui/admin-tools/billing",
+        "migrations/021_billing_platform.sql"
+      ]
+    }
+  }
+}

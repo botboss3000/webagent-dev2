@@ -1,0 +1,21 @@
+{
+  "display_name": "P2P Mirror",
+  "entitlement_group": "platform_infra",
+  "risk_class": "admin",
+  "action_class": "external_action",
+  "kind": "ability",
+  "icon": "share-2",
+  "color": "#7dcfff",
+  "description": "Peer-to-peer data mirroring between WebAgent instances with Ed25519 mutual auth. Agents can add peers and trigger on-demand syncs.",
+  "skill_summary": "Manage P2P sync peers and trigger data mirror syncs between WebAgent instances. Load when the user asks to set up instance mirroring, add a sync peer, or sync data between instances.",
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "add_peer",
+    "remove_peer",
+    "list_peers",
+    "sync_now"
+  ],
+  "config": {},
+  "order": 20
+}

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Journey Reports</title>
+<!-- Journey Reports — recorder-owned GenUI shell. styles.css and app.js are
+inlined by the recorder page provider. API ownership, storage and approval
+contracts live in plugins/recorder/README.md. No report data is executable HTML. -->
+</head><body><main id="journey-reports" class="jr">
+<header class="jr-header"><div><h1>Journey Reports</h1><p class="jr-muted">Review the chat experience captured in your browser.</p></div><button type="button" id="jr-refresh">Refresh</button></header>
+<p id="jr-notice" role="status" aria-live="polite" class="jr-muted">Loading recordings…</p>
+<div class="jr-layout"><aside aria-label="Recordings"><label for="jr-search">Find a recording</label><input id="jr-search" type="search" placeholder="Session, date, or recording…"><label for="jr-filter">Show</label><select id="jr-filter"><option value="all">All recordings</option><option value="active">In progress</option><option value="issues">With findings</option></select><div id="jr-captures" class="jr-captures"></div></aside>
+<article id="jr-detail" aria-label="Selected recording"><div class="jr-empty">Toggle the recorder in chat to begin. Capture issue adds a timestamped note or screenshot.</div></article></div>
+</main></body></html>

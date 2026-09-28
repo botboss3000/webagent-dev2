@@ -1,0 +1,67 @@
+{
+  "display_name": "Computer Control",
+  "kind": "ability",
+  "icon": "monitor-cog",
+  "color": "#f7768e",
+  "description": "Lets the agent see the full desktop and operate the mouse and keyboard through native Windows UI control. Non-Windows input backends are a later phase.",
+  "skill_summary": "How to observe and operate the host desktop with screenshot, pointer, literal text, and key/chord tools using the mandatory screenshot→inspect→one action→verify loop. Load when a task requires seeing or operating a native desktop UI.",
+  "skill_mode": "selectable",
+  "note": "High-trust host access. Pointer and keyboard actions currently support Windows.",
+  "simple": true,
+  "placeholder": false,
+  "default_enabled": false,
+  "tools": [
+    "computer_screenshot",
+    "computer_move",
+    "computer_click",
+    "computer_scroll",
+    "computer_drag",
+    "computer_type",
+    "computer_key"
+  ],
+  "tool_metadata": {
+    "computer_screenshot": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": false
+    },
+    "computer_move": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": false
+    },
+    "computer_click": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": true
+    },
+    "computer_scroll": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": false
+    },
+    "computer_drag": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": true
+    },
+    "computer_type": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": true
+    },
+    "computer_key": {
+      "stages": [
+        "execute_tools"
+      ],
+      "destructive": true
+    }
+  },
+  "order": 5
+}

@@ -1,0 +1,7 @@
+{
+  "id": "active_session_bonus",
+  "kind": "application",
+  "name": "Active Session Bonus",
+  "entry": "active-session-bonus.js",
+  "assets": "frontend"
+}

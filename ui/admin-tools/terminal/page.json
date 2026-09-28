@@ -1,0 +1,12 @@
+{
+  "id": "terminal",
+  "kind": "admin",
+  "label": "Terminal Launcher",
+  "icon": "terminal",
+  "order": 3,
+  "html": "terminal.html",
+  "mount": "#files-terminal-main",
+  "entry": "ui/admin-tools/terminal/terminal-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

@@ -1,0 +1,194 @@
+.user-policies-host {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.user-policy-card {
+  min-width: 0;
+}
+
+.user-policy-help {
+  margin: 8px 0 14px;
+  color: var(--fg3, #6b7280);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.user-policy-scope + .user-policy-scope {
+  margin-top: 16px;
+}
+
+.user-policy-scope-head {
+  margin-bottom: 7px;
+}
+
+.user-policy-scope-head strong,
+.user-policy-scope-head span {
+  display: block;
+}
+
+.user-policy-scope-head span {
+  margin-top: 2px;
+  color: var(--fg3, #6b7280);
+  font-size: 12px;
+}
+
+.user-policy-page-list {
+  overflow: hidden;
+  border: 1px solid var(--border, #d6d6d6);
+  border-radius: 10px;
+}
+
+.user-policy-page-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(145px, auto) 54px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 11px;
+}
+
+.user-policy-page-row + .user-policy-page-row {
+  border-top: 1px solid var(--border, #d6d6d6);
+}
+
+.user-policy-page-name {
+  display: flex;
+  min-width: 0;
+  gap: 9px;
+  align-items: center;
+}
+
+.user-policy-page-name > i {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.user-policy-page-name b,
+.user-policy-page-name small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-policy-page-name small {
+  color: var(--fg3, #6b7280);
+  font-size: 11px;
+}
+
+.user-policy-page-row select {
+  max-width: 190px;
+  padding: 6px 8px;
+  color: inherit;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d6d6d6);
+  border-radius: 8px;
+}
+
+.user-policy-save {
+  color: var(--fg3, #6b7280);
+  font-size: 11px;
+}
+
+.user-tier-policy-host .ent-page {
+  padding: 0;
+}
+
+.user-tier-policy-host .ent-page-head {
+  margin-bottom: 8px;
+}
+
+.anonymous-limits-card details > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+
+.anonymous-limits-card details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.anonymous-limits-card summary b,
+.anonymous-limits-card summary small {
+  display: block;
+}
+
+.anonymous-limits-card summary small {
+  margin-top: 3px;
+  color: var(--fg3, #6b7280);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.anonymous-limits-badge {
+  color: var(--accent, #2563eb);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.anonymous-limits-card form {
+  margin-top: 14px;
+}
+
+.anonymous-limits-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 12px;
+}
+
+.anonymous-limits-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--fg2, #374151);
+  font-size: 12px;
+}
+
+.anonymous-limits-grid input {
+  width: 100%;
+  padding: 7px 8px;
+  color: inherit;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d6d6d6);
+  border-radius: 8px;
+}
+
+.anonymous-limits-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.anonymous-limits-actions [role="status"] {
+  color: var(--fg3, #6b7280);
+  font-size: 12px;
+}
+
+.anonymous-limits-actions button {
+  padding: 7px 11px;
+  color: var(--button-fg, #fff);
+  background: var(--accent, #2563eb);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 680px) {
+  .user-policy-page-row {
+    grid-template-columns: minmax(0, 1fr) minmax(125px, auto);
+  }
+
+  .user-policy-save {
+    display: none;
+  }
+
+  .anonymous-limits-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "display_name": "PayPal",
+  "kind": "ability",
+  "icon": "wallet",
+  "color": "#0070ba",
+  "description": "Create, inspect, and capture PayPal Orders v2 payments.",
+  "note": "Connect a PayPal REST app with its client ID and secret.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["paypal_get_order", "paypal_create_order", "paypal_capture_order"],
+  "order": 9,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["client_id", "client_secret"],
+    "fields": [
+      {"key": "environment", "label": "Environment", "type": "select", "options": ["sandbox", "live"], "default": "sandbox"},
+      {"key": "client_id", "label": "Client ID", "type": "text", "placeholder": "PayPal REST app client ID"},
+      {"key": "client_secret", "label": "Client secret", "type": "password", "secret": true, "placeholder": "PayPal REST app secret"}
+    ]
+  }
+}

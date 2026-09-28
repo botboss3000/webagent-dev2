@@ -1,0 +1,591 @@
+/* Admin Dashboard — movable/resizable metric grid (embedded tab inside the
+   Instances view's "This device" tile; the DOM is built by dashboard.js).
+   Breadcrumb: ui/main-panel/app/dashboard/dashboard.js,
+   ui/main-panel/app/dashboard/dashboard.html,
+   ui/shared/css/design-system.css.
+
+   COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: themed colours via var(--brand)/var(--accent),
+   rgba(var(--brand-rgb), a) for accent tints, var(--success|warning|danger)
+   for status. Works in dark AND light because every colour is a token. */
+
+.dash-main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+/* ── footer toolbar ───────────────────────────────────────────────────
+   Dashboard-only dock: the card grid keeps its own scrollport while this footer
+   remains visible through the Instances page's two-stage scroll transition. */
+
+.dash-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  border-top: var(--border-width) solid var(--border);
+  background: var(--bg-0);
+  box-shadow: 0 -1px 0 rgba(var(--ink-rgb), 0.03);
+}
+.dash-spacer { flex: 1; }
+.dash-select {
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dash-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  font-size: 12.5px; font-weight: 500;
+  cursor: pointer;
+}
+.dash-btn:hover { background: var(--bg-elev-2); border-color: var(--border-strong); }
+.dash-btn.active { border-color: var(--accent-line); background: var(--accent-soft); color: var(--brand); }
+.dash-btn-primary { background: var(--brand); color: var(--bg-0); border-color: var(--brand); }
+.dash-btn-primary:hover { background: var(--brand-strong); border-color: var(--brand-strong); }
+.dash-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  background: transparent; color: var(--fg-2);
+  border: none;
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.dash-icon-btn:hover { background: var(--bg-elev); color: var(--fg-1); }
+/* Pressed look while its dropdown/state is open (e.g. the ⋮ More button). */
+.dash-icon-btn.active { background: var(--bg-elev-2); color: var(--fg-1); }
+/* Brief green tick after "Save as default" succeeds (see saveAsDefault). */
+.dash-icon-btn.dash-saved-ok { color: var(--success); }
+
+.dash-footer-actions { display: inline-flex; align-items: center; gap: 2px; }
+.dash-dashboard-list { position: relative; display: inline-flex; }
+.dash-dashboard-list-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 6px; background: transparent; color: var(--fg-2);
+  border: none; border-radius: var(--r-sm); cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 500;
+}
+.dash-dashboard-list-btn:hover, .dash-dashboard-list-btn.active { background: var(--bg-elev); color: var(--fg-1); }
+.dash-dashboard-list-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
+  min-width: 220px; max-width: min(320px, calc(100vw - 28px));
+  max-height: 280px; overflow: auto; padding: 5px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-float);
+}
+.dash-dashboard-list-label { padding: 6px 9px 5px; color: var(--fg-3); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.dash-dashboard-list-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; background: transparent; color: var(--fg-1);
+  border: none; border-radius: var(--r-sm); cursor: pointer;
+  font: inherit; font-size: 12.5px; text-align: left;
+}
+.dash-dashboard-list-item:hover { background: var(--bg-elev-2); }
+.dash-dashboard-list-item i { color: var(--fg-3); flex: 0 0 auto; }
+.dash-dashboard-list-empty { padding: 8px 9px; color: var(--fg-3); font-size: 12.5px; }
+
+/* ── "More" actions dropdown ─────────────────────────────────────────────
+   Edit / Add card / Save as default / Reset are anchored to the footer ⋮ button,
+   opening upward so the menu stays next to its new footer location.
+   Markup: dashboard.js; toggle: dashboard.js (toggleMoreMenu / closeMoreMenu).
+   All colours are design-system tokens. */
+.dash-more { position: relative; display: inline-flex; }
+.dash-more-menu {
+  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30;
+  min-width: 190px; padding: 5px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-float);
+}
+.dash-more-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 9px; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--fg-1); cursor: pointer;
+  font-size: 12.5px; font-weight: 500; font-family: inherit; text-align: left; white-space: nowrap;
+}
+.dash-more-item i { color: var(--fg-3); flex-shrink: 0; }
+.dash-more-item:hover { background: var(--bg-elev-2); }
+.dash-more-item:hover i { color: var(--fg-1); }
+.dash-more-item.active { background: var(--accent-soft); color: var(--brand); }
+.dash-more-item.active i { color: var(--brand); }
+.dash-more-item.dash-saved-ok, .dash-more-item.dash-saved-ok i { color: var(--success); }
+.dash-more-sep { height: var(--border-width); background: var(--border); margin: 4px 4px; }
+
+/* ── grid ────────────────────────────────────────────────────────────── */
+.dash-grid-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  position: relative;
+}
+.dash-grid { position: relative; width: 100%; }
+
+.dash-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-rest);
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+.dash-card:hover { box-shadow: var(--shadow-float); }
+/* In edit mode the other cards glide as they make way for a drag/resize. The
+   card under the cursor is excluded (see .dragging below) so it tracks 1:1. */
+.dash-grid.edit .dash-card { transition: left 0.16s ease, top 0.16s ease, width 0.16s ease, height 0.16s ease, box-shadow 0.15s ease; }
+.dash-card.dragging { box-shadow: var(--shadow-lg); opacity: 0.94; z-index: 5; transition: none; }
+
+.dash-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px 6px;
+  flex-shrink: 0;
+}
+.dash-card-title {
+  display: inline-flex; align-items: center; gap: 7px;
+  flex: 1 1 auto; min-width: 0;   /* grow so the AI star lands in the top-right corner */
+  font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--fg-2);
+  text-transform: uppercase;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.dash-card-title i { color: var(--brand); flex-shrink: 0; }
+.dash-card-tools { display: none; gap: 2px; flex-shrink: 0; }
+.dash-grid.edit .dash-card-tools { display: inline-flex; }
+.dash-card-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; color: var(--fg-3);
+  border: none; border-radius: var(--r-xs); cursor: pointer;
+}
+.dash-card-btn:hover { background: var(--bg-elev-2); color: var(--fg-1); }
+.dash-grid.edit .dash-card { cursor: move; }
+.dash-grid.edit .dash-card.dragging { cursor: grabbing; }
+.dash-grid.edit .dash-card button,
+.dash-grid.edit .dash-card a,
+.dash-grid.edit .dash-card input,
+.dash-grid.edit .dash-card select,
+.dash-grid.edit .dash-card textarea { cursor: pointer; }
+.dash-card-remove:hover { color: var(--danger); }
+/* AI star — an always-on affordance (sits OUTSIDE .dash-card-tools, so it shows
+   in normal mode too, not just edit). Soft brand tint at rest so it reads as the
+   "ask AI" accent; full brand on hover. Opens the per-card WebAgent assistant. */
+.dash-card-ai { color: var(--brand); opacity: 0.5; flex-shrink: 0; margin-left: 2px; }
+.dash-card-ai:hover { opacity: 1; color: var(--brand); background: var(--bg-elev-2); }
+
+.dash-card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 14px 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Edit mode makes each card surface draggable and exposes generous edge hit zones.
+   The edge zones are visually quiet but use native directional resize cursors. */
+.dash-card-resize { display: none; position: absolute; z-index: 2; }
+.dash-card-resize[data-edge="n"], .dash-card-resize[data-edge="s"] { left: 8px; right: 8px; height: 10px; cursor: ns-resize; }
+.dash-card-resize[data-edge="n"] { top: -5px; }
+.dash-card-resize[data-edge="s"] { bottom: -5px; }
+.dash-card-resize[data-edge="e"], .dash-card-resize[data-edge="w"] { top: 8px; bottom: 8px; width: 10px; cursor: ew-resize; }
+.dash-card-resize[data-edge="e"] { right: -5px; }
+.dash-card-resize[data-edge="w"] { left: -5px; }
+.dash-grid.edit .dash-card-resize { display: block; }
+.dash-grid.edit .dash-card { border-style: dashed; border-color: var(--accent-line); }
+
+/* Flow (narrow / mobile) mode — the grid linearises into wrapping tiles that
+   keep a legible minimum width (dashboard.js → computeFlowRects). Cards are
+   auto-arranged, so the drag + resize handles don't map to the 12-col grid;
+   hide them (and drop the edit-mode dashed frame) to keep the mobile view clean.
+   The AI star + remove button stay available. */
+.dash-grid.flow.edit .dash-card-tools,
+.dash-grid.flow .dash-card-resize { display: none; }
+.dash-grid.flow.edit .dash-card { border-style: solid; border-color: var(--border); }
+
+/* ── stat / gauge / bars / list ──────────────────────────────────────── */
+.dash-stat { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 2px; }
+.dash-stat-big { font-size: 30px; font-weight: 700; line-height: 1.05; color: var(--fg-1); }
+.dash-stat-sub { font-size: 11.5px; color: var(--fg-3); }
+.dash-unit { font-size: 15px; font-weight: 600; color: var(--fg-3); }
+
+.dash-duo, .dash-trio { display: grid; gap: 10px; height: 100%; align-items: center; }
+.dash-duo { grid-template-columns: 1fr 1fr; }
+.dash-trio { grid-template-columns: 1fr 1fr 1fr; }
+.dash-duo .dash-stat-big, .dash-trio .dash-stat-big { font-size: 22px; }
+
+/* Database Latency connection info bar */
+.dash-dblat { display: flex; flex-direction: column; height: 100%; gap: 6px; }
+.dash-dblat .dash-trio { flex: 1; }
+.dash-dblat-conn { display: flex; align-items: center; gap: 8px; padding: 4px 0 0; border-top: 1px solid var(--border); font-size: 12px; }
+.dash-dblat-host { color: var(--fg-3); font-family: var(--font-mono); font-size: 11.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dash-gauge { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 6px; }
+.dash-gauge-big { font-size: 28px; font-weight: 700; color: var(--fg-1); }
+.dash-gauge-big span { font-size: 15px; color: var(--fg-3); }
+.dash-gauge-bar { height: 7px; border-radius: var(--r-pill); background: var(--bg-tint); overflow: hidden; }
+.dash-gauge-bar > span { display: block; height: 100%; border-radius: var(--r-pill); width: var(--bar-w, 0%); }
+
+.dash-bars { display: flex; flex-direction: column; gap: 8px; justify-content: center; height: 100%; }
+.dash-bar-row { display: grid; grid-template-columns: 68px 1fr auto; align-items: center; gap: 8px; font-size: 12px; }
+.dash-bar-label { color: var(--fg-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dash-bar-track { height: 7px; border-radius: var(--r-pill); background: var(--bg-tint); overflow: hidden; }
+.dash-bar-track > span { display: block; height: 100%; border-radius: var(--r-pill); min-width: 2px; width: var(--bar-w, 0%); }
+.dash-bar-val { color: var(--fg-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.dash-list { display: flex; flex-direction: column; gap: 2px; height: 100%; overflow: auto; }
+.dash-list-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12.5px; border-bottom: var(--border-width) solid var(--border-soft); }
+.dash-list-row:last-child { border-bottom: none; }
+.dash-list-k { color: var(--fg-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 6px; }
+.dash-list-v { color: var(--fg-1); font-weight: 600; flex-shrink: 0; }
+
+/* Metric information — a portal panel, rather than a native title tooltip.
+   The trigger lives beside each label; its panel is appended to document.body by
+   card-lib.js so it can escape the dashboard card's intentional overflow clip. */
+.dash-metric-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; padding: 0; flex: 0 0 auto;
+  border: var(--border-width) solid var(--border-strong); border-radius: var(--r-pill);
+  background: transparent; color: var(--fg-3); font: 700 10px/1 var(--font-sans); cursor: pointer;
+}
+.dash-metric-info:hover,
+.dash-metric-info:focus-visible,
+.dash-metric-info[aria-expanded="true"] {
+  color: var(--brand); border-color: var(--brand); background: var(--accent-soft); outline: none;
+}
+.dash-gauge-label { display: inline-flex; align-items: center; gap: 5px; }
+
+.dash-metric-popover {
+  position: fixed; z-index: 120; width: min(300px, calc(100vw - 24px));
+  padding: 10px 12px; box-sizing: border-box;
+  background: var(--bg-elev); color: var(--fg-1);
+  border: var(--border-width) solid var(--border-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.45;
+}
+.dash-metric-popover::before {
+  content: ''; position: absolute; left: 50%; width: 9px; height: 9px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border-strong);
+  transform: translateX(-50%) rotate(45deg);
+}
+.dash-metric-popover[data-side="top"]::before { bottom: -5px; border-top: 0; border-left: 0; }
+.dash-metric-popover[data-side="bottom"]::before { top: -5px; border-right: 0; border-bottom: 0; }
+.dash-metric-popover-title { display: block; margin-bottom: 3px; color: var(--fg-1); font-size: 12px; }
+.dash-metric-popover-body { margin: 0; color: var(--fg-2); white-space: pre-line; }
+.dash-metric-value-button {
+  appearance: none; padding: 0; border: none; border-bottom: 1px dotted currentColor;
+  background: transparent; color: inherit; font: inherit; font-weight: inherit;
+  cursor: pointer; text-align: right;
+}
+.dash-metric-value-button:hover { color: var(--brand); border-bottom-style: solid; }
+.dash-metric-value-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--r-xs); }
+
+.dash-muted { color: var(--fg-3); font-size: 12.5px; display: flex; align-items: center; height: 100%; }
+.dash-muted-inline { color: var(--fg-4); font-size: 11px; }
+
+/* status dot + pill */
+.dash-dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex-shrink: 0; background: var(--fg-4); }
+.dash-dot.on { background: var(--success); }
+.dash-dot.off { background: var(--fg-4); }
+.dash-pill { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+
+/* sparkline */
+.dash-spark { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 6px; }
+.dash-spark svg { width: 100%; height: 42px; }
+.dash-spark svg polyline { stroke: var(--brand); stroke-width: 2px; stroke-linejoin: round; stroke-linecap: round; }
+
+/* failures */
+.dash-fail-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.dash-fail-head .dash-stat-big { font-size: 22px; }
+.dash-fail-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.dash-fail-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.dash-fail-msg { color: var(--fg-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ── tones ───────────────────────────────────────────────────────────── */
+.tone-brand   { color: var(--brand); }   span.tone-brand,   .dash-gauge-bar > span.tone-brand,   .dash-bar-track > span.tone-brand   { background: var(--brand); color: unset; }
+.tone-purple  { color: var(--purple); }  span.tone-purple,  .dash-gauge-bar > span.tone-purple,  .dash-bar-track > span.tone-purple  { background: var(--purple); color: unset; }
+.tone-success { color: var(--success); } span.tone-success, .dash-gauge-bar > span.tone-success, .dash-bar-track > span.tone-success { background: var(--success); color: unset; }
+.tone-warning { color: var(--warning); } span.tone-warning, .dash-gauge-bar > span.tone-warning, .dash-bar-track > span.tone-warning { background: var(--warning); color: unset; }
+.tone-danger  { color: var(--danger); }  span.tone-danger,  .dash-gauge-bar > span.tone-danger,  .dash-bar-track > span.tone-danger  { background: var(--danger); color: unset; }
+.dash-spark svg.tone-purple polyline { stroke: var(--purple); }
+.dash-pill.tone-success { background: var(--success-soft); color: var(--success); }
+.dash-pill.tone-warning { background: var(--warning-soft); color: var(--warning); }
+.dash-pill.tone-danger  { background: var(--danger-soft);  color: var(--danger); }
+.dash-pill.tone-brand   { background: var(--accent-soft);  color: var(--brand); }
+.dash-list-v.tone-success { color: var(--success); }
+
+/* ── loading states ──────────────────────────────────────────────────── */
+/* Shared spinner ring (matches the App Settings model/tree loaders): neutral
+   border with the accent picking out the top so it reads as a rotating arc. */
+@keyframes dash-spin { to { transform: rotate(360deg); } }
+.dash-spinner {
+  display: inline-block; box-sizing: border-box;
+  width: 18px; height: 18px;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: dash-spin 0.7s linear infinite;
+}
+.dash-spinner-lg { width: 30px; height: 30px; border-width: 3px; }
+
+/* Overall overlay — while the layout loads, before card sizes are known. Opaque
+   page-background fill so the empty grid behind it doesn't flash through. */
+.dash-loading {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: var(--bg-0);
+  color: var(--fg-3); font-size: 13px;
+}
+.dash-loading[hidden] { display: none; }
+.dash-loading-text { letter-spacing: 0.01em; }
+
+/* Per-card spinner — centred in the card body until that card's data arrives. */
+.dash-card-body.is-loading { display: flex; align-items: center; justify-content: center; }
+.dash-loading-card { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-spinner { animation-duration: 1.5s; }
+}
+
+/* ── empty state ─────────────────────────────────────────────────────── */
+.dash-empty {
+  position: absolute; inset: 0; margin: auto;
+  width: max-content; height: max-content;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  color: var(--fg-3);
+}
+/* The `display:flex` above would otherwise beat the `hidden` attribute (UA
+   display:none), leaving the empty-state text visible even when the grid is
+   full. This makes `elEmpty.hidden = true` (set in renderAll) actually hide it. */
+.dash-empty[hidden] { display: none; }
+.dash-empty i { color: var(--fg-4); }
+.dash-empty-title { font-size: 15px; font-weight: 600; color: var(--fg-1); }
+.dash-empty-desc { font-size: 12.5px; margin-bottom: 6px; }
+
+/* ── Legacy inline Add card tile styles ─────────────────────────────────── */
+/* A permanent card; read as an add affordance (accent-tinted, dashed edge). */
+.dash-card[data-type="add_card"] {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-elev);
+}
+.dash-card[data-type="add_card"] .dash-card-title i { color: var(--brand); }
+
+.dash-adder { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+/* The chat pill sits full-width at the top of the tile (shared .chat-pill look). */
+.dash-adder-pill { flex-shrink: 0; }
+.dash-adder-plus.active { color: var(--brand); }
+.dash-adder-status { font-size: 12px; color: var(--fg-3); flex-shrink: 0; }
+.dash-adder-status.err { color: var(--danger); }
+
+/* The inline card-type picker, revealed by the + button; scrolls within the tile. */
+.dash-adder-picker { flex: 1; min-height: 0; overflow: auto; }
+.dash-adder-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 1px; }
+
+.dash-picker-item {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 12px 8px; text-align: center;
+  background: var(--bg-0); color: var(--fg-2);
+  border: var(--border-width) solid var(--border); border-radius: var(--r-md);
+  font-size: 12px; cursor: pointer;
+}
+.dash-picker-item:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--brand); }
+.dash-picker-item i { color: var(--brand); }
+
+/* Footer Add card panel: same upward popover behavior as the other footer panels. */
+.dash-add-card-menu {
+  position: absolute; z-index: 22; right: 8px; bottom: calc(100% + 6px);
+  width: min(460px, calc(100vw - 32px)); max-height: min(420px, calc(100vh - 120px));
+  overflow: auto; padding: 10px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+}
+.dash-add-card-label { padding: 3px 4px 9px; color: var(--fg-2); font-size: 12px; font-weight: 650; }
+.dash-add-card-grid { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 8px; }
+
+/* Brief accent ring reserved for card focus feedback. */
+.dash-card.dash-flash { box-shadow: 0 0 0 2px var(--brand); }
+
+/* ── "Metrics over time" hero chart ──────────────────────────────────── */
+/* Full-width chart card: a control bar + legend on top, the SVG plot filling
+   the rest. All colours from design-system tokens (dark + light correct). */
+.dash-chart { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
+
+.dash-chart-ctl {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+}
+.dash-chart-times { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Time-frame preset pills (5m · 1h · 24h · 7d). */
+.dash-chart-win {
+  background: var(--bg-elev); color: var(--fg-2);
+  border: var(--border-width) solid var(--border); border-radius: var(--r-pill);
+  padding: 3px 11px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.dash-chart-win:hover { background: var(--bg-elev-2); color: var(--fg-1); border-color: var(--border-strong); }
+.dash-chart-win.active { background: var(--accent-soft); color: var(--brand); border-color: var(--accent-line); }
+
+/* Custom date range. The two native date inputs adopt .dash-select styling; the
+   colour-scheme keeps the native calendar UI legible in each theme. */
+.dash-chart-range { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
+.dash-chart-from, .dash-chart-to { padding: 4px 6px; font-size: 12px; color-scheme: dark; }
+body.light-mode .dash-chart-from, body.light-mode .dash-chart-to { color-scheme: light; }
+.dash-chart-dash { color: var(--fg-3); }
+.dash-chart-apply { padding: 4px 10px; font-size: 12px; }
+
+/* Metrics add/remove menu (dropdown anchored to its button). */
+.dash-chart-metrics { position: relative; flex-shrink: 0; }
+.dash-chart-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  min-width: 180px; padding: 6px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-float);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dash-chart-menu[hidden] { display: none; }
+.dash-chart-opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--r-sm); cursor: pointer;
+  font-size: 12.5px; color: var(--fg-1);
+}
+.dash-chart-opt:hover { background: var(--bg-elev-2); }
+.dash-chart-opt input { accent-color: var(--brand); cursor: pointer; }
+
+/* Legend chips — colour swatch + label + value for each active series. */
+.dash-chart-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; flex-shrink: 0; font-size: 11.5px; }
+.dash-leg { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-3); }
+.dash-leg b { color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.dash-leg-sw { width: 10px; height: 10px; border-radius: var(--r-xs); flex-shrink: 0; background: var(--leg-bg, var(--fg-4)); }
+
+/* The SVG plot fills the remaining height. While a refetch is in flight the
+   previous render holds at reduced opacity (no skeleton, no layout jump). */
+.dash-chart-plot { flex: 1; min-height: 0; position: relative; touch-action: pan-y; }
+.dash-chart-plot.refetching .dash-chart-svg { opacity: 0.55; transition: opacity 0.15s ease; }
+.dash-chart-svg { display: block; width: 100%; height: 100%; }
+.dash-chart-ax { fill: var(--fg-3); font-size: 10px; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+.dash-chart-lane { fill: var(--fg-4); font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-family: var(--font-sans); }
+/* Grid/axis chrome: solid hairlines one step off the surface, recessive. */
+.dash-chart-base { stroke: var(--border); stroke-width: 1px; }
+.dash-chart-grid { stroke: var(--border-soft); stroke-width: 1px; }
+.dash-chart-grid-v { stroke: var(--border-soft); stroke-width: 1px; }
+
+/* Legend chips double as show/hide toggles for their series. */
+.dash-leg-btn { cursor: pointer; border-radius: var(--r-sm); padding: 1px 4px; margin: -1px -4px; }
+.dash-leg-btn:hover { background: var(--bg-elev-2); }
+.dash-leg-btn.off { opacity: 0.42; }
+.dash-leg-btn.off b { text-decoration: line-through; }
+
+/* Hover layer: crosshair hairline + one tooltip listing EVERY visible series
+   at the hovered time, + the drag-to-zoom selection band. All positioned by
+   dashboard.js (wireChartHover) inside the relative .dash-chart-plot. */
+.dash-chart-cross {
+  position: absolute; width: 1px; pointer-events: none;
+  background: var(--fg-4); opacity: 0.8; z-index: 3;
+}
+.dash-chart-tip {
+  position: absolute; z-index: 4; pointer-events: none;
+  min-width: 130px; max-width: 240px; padding: 7px 9px;
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-float);
+  font-size: 11.5px;
+}
+.dash-tip-head { color: var(--fg-3); font-weight: 600; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.dash-tip-row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+/* Line-key: a short stroke of the series colour (not a box) keys each row. */
+.dash-tip-key { width: 10px; height: 2.5px; border-radius: 2px; flex-shrink: 0; background: var(--tip-bg, var(--fg-4)); }
+.dash-tip-name { color: var(--fg-3); flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dash-tip-row b { color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.dash-chart-zoombox {
+  position: absolute; z-index: 2; pointer-events: none;
+  background: var(--accent-soft); border: 1px solid var(--accent-line);
+  border-top: none; border-bottom: none;
+}
+.dash-chart-zoomout { padding: 3px 9px; font-size: 12px; }
+/* .dash-btn's display:inline-flex would beat the UA [hidden] rule (same trap as
+   .dash-empty above) — without this the button shows before any zoom happened. */
+.dash-chart-zoomout[hidden] { display: none; }
+
+/* ── operational cards (Agents · Users · Sessions · Health · Tools · Security) ── */
+/* The generic `span.tone-*` rules above paint a solid status BACKGROUND (they
+   exist for gauge/track fills). Inside these cards a tone class on text means
+   text colour only — undo the fill. */
+.dash-ophead [class*="tone-"], .dash-oprow-val[class*="tone-"],
+.dash-tm-val [class*="tone-"], .dash-oplist-cap [class*="tone-"],
+.dash-list-v[class*="tone-"] { background: none; }
+.dash-opwrap { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 6px; }
+/* Mini stat header row (counts). */
+.dash-ophead { display: flex; flex-wrap: wrap; gap: 4px 14px; flex-shrink: 0; font-size: 12px; color: var(--fg-3); }
+.dash-ophead b { color: var(--fg-1); font-size: 15px; font-weight: 700; }
+.dash-ophead .tone-warning b, .dash-ophead .tone-danger b, .dash-ophead .tone-success b { color: inherit; }
+
+.dash-oplist { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.dash-oplist-cap { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-4); padding: 6px 0 3px; }
+.dash-oplist-foot { flex-shrink: 0; font-size: 10.5px; color: var(--fg-4); padding-top: 4px; border-top: var(--border-width) solid var(--border-soft); }
+
+.dash-oprow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 2px; font-size: 12.5px;
+  border-bottom: var(--border-width) solid var(--border-soft);
+  border-radius: var(--r-sm);
+}
+.dash-oprow:last-child { border-bottom: none; }
+.dash-op-click { cursor: pointer; }
+.dash-op-click:hover { background: var(--bg-elev-2); }
+.dash-oprow-ico { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: var(--r-sm); background: var(--bg-tint); color: var(--brand); flex-shrink: 0; }
+.dash-oprow-main { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
+.dash-oprow-name { color: var(--fg-1); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-oprow-name.dash-oprow-wrap { white-space: normal; font-weight: 500; font-size: 12px; }
+.dash-oprow-sub { color: var(--fg-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-oprow-val { color: var(--fg-1); font-weight: 600; font-size: 11.5px; text-align: right; flex-shrink: 0; display: flex; flex-direction: column; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.dash-oprow-val.tone-success { color: var(--success); }
+.dash-oprow-vsub { color: var(--fg-4); font-weight: 500; font-size: 10.5px; }
+.dash-oprow-acts { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.dash-oprow-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; flex-shrink: 0;
+  background: transparent; color: var(--fg-3);
+  border: var(--border-width) solid var(--border); border-radius: var(--r-sm); cursor: pointer;
+}
+.dash-oprow-btn:hover { background: var(--bg-elev-2); color: var(--fg-1); }
+.dash-oprow-btn.ok:hover { color: var(--success); border-color: var(--success); }
+.dash-oprow-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+.dash-oprow-btn.busy, .dash-oprow-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Session/run + health dots. Status hues are legitimate here — they MEAN state. */
+.dash-dot.run { background: var(--success); box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.18); animation: dash-pulse 1.6s ease-in-out infinite; }
+.dash-dot.stale { background: var(--warning); box-shadow: 0 0 0 3px rgba(var(--warning-rgb), 0.18); }
+.dash-dot.hb-ok { background: var(--success); }
+.dash-dot.hb-warn { background: var(--warning); }
+.dash-dot.hb-err { background: var(--danger); }
+.dash-dot.hb-off { background: var(--fg-4); }
+@keyframes dash-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.18); }
+  50% { box-shadow: 0 0 0 5px rgba(var(--success-rgb), 0.08); }
+}
+
+/* Tool / model usage rows: name + thin track + numbers. */
+.dash-tm-row { display: grid; grid-template-columns: minmax(72px, 130px) 1fr auto; align-items: center; gap: 8px; padding: 3.5px 0; font-size: 12px; }
+.dash-tm-row.no-track { grid-template-columns: 1fr auto; }
+.dash-tm-name { color: var(--fg-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 11.5px; }
+.dash-tm-val { color: var(--fg-1); font-weight: 600; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dash-tm-val .tone-danger { color: var(--danger); }
+
+/* ── CSP compliance: lucide icon sizes (was style="width:Npx;height:Npx") ──── */
+.dash-ico-12 { width: 12px; height: 12px; }
+.dash-ico-13 { width: 13px; height: 13px; }
+.dash-ico-14 { width: 14px; height: 14px; }
+.dash-ico-15 { width: 15px; height: 15px; }
+.dash-ico-16 { width: 16px; height: 16px; }
+.dash-ico-18 { width: 18px; height: 18px; }
+.dash-ico-28 { width: 28px; height: 28px; }

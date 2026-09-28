@@ -1,0 +1,22 @@
+{
+  "display_name": "User Files",
+  "entitlement_group": "user_files",
+  "risk_class": "write",
+  "action_class": "mixed",
+  "kind": "ability",
+  "icon": "folder",
+  "color": "#9ece6a",
+  "description": "Lets the agent save files for the user (reports, documents, downloads) into that user's own data folder and read them back — instead of writing into the codebase.",
+  "skill_summary": "How to hand files to the user with save_file (into their own data home) and read them back — and why deliverables and scratch must never be written into the codebase. Load before producing any report, document, export, chart, or download for the user.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "save_file",
+    "list_user_files",
+    "read_user_file",
+    "attach_file"
+  ],
+  "order": 10
+}

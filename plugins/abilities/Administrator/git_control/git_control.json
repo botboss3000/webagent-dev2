@@ -1,0 +1,28 @@
+{
+  "display_name": "Git Control",
+  "kind": "ability",
+  "icon": "git-branch",
+  "color": "#9ece6a",
+  "description": "Version control only — status, diff, commit, push, branch, pull — without shell access. On by default.",
+  "note": null,
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "tools": [
+    "git_tool",
+    "resolve_conflict",
+    "commit_and_push"
+  ],
+  "config": {
+    "settings": [
+      {
+        "key": "notify_repo_changes",
+        "label": "Notify me about repo changes",
+        "type": "boolean",
+        "default": false,
+        "hint": "OFF (default) does nothing. ON quietly watches the project in the background and drops a passive heads-up into this agent's chat whenever the saved files stop matching the latest commit (uncommitted edits) or there are local commits that haven't been pushed yet. It only pings when something NEWLY diverges — not the same notice over and over — and the agent takes no action on its own; it's an FYI you can act on or ignore. The notice lands wherever you're chatting with this agent, so you'll see it when that chat is open."
+      }
+    ]
+  },
+  "order": 3
+}

@@ -1,0 +1,262 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environments
+.env
+provider.json
+
+# First-run setup bundle dropped next to a clone (holds an encrypted setup code
+# or a plaintext bundle → LLM key / DB / vault / admin). Per-machine, never
+# tracked. Ship bootstrap.example.json (blank) instead. The ".applied.json"
+# variant is the renamed file left after a successful boot provision.
+bootstrap.json
+bootstrap.applied.json
+data/bootstrap.json
+data/bootstrap.applied.json
+scheduler_config.json
+suggestions.json
+data/config/suggestions.json
+data/config/model_catalog.json
+data/config/cookie-allowlist.json
+data/config/update_sync.json
+# Runtime-written config — self-creates on first change (app/util/config_io.py);
+# kept out of the repo so an admin's live edits never collide with git pull.
+data/config/admin-panel-pages.json
+data/config/main-panel-pages.json
+data/config/agent-abilities.json
+data/config/debug-config.json
+data/config/optimizer.json
+data/config/deploy.json
+data/config/dns.json
+data/config/instance-annotations.json
+data/config/p2p/
+data/config/production-mirror.json
+data/config/git-repos.json
+data/config/local-instances.json
+data/local-instances/
+data/config/dashboard-layouts.json
+data/config/dashboard-default.json
+data/config/tenant_dbs.json
+app-settings.json
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Node dependencies — installed, never tracked (e.g. relay/node_modules: the
+# Cloudflare-relay build deps. Was accidentally committed once; keep it out.)
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+server_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Temp / scratch
+temp/
+.tmp/pytest-*/
+.server.pid
+.ast-index/
+# Ad-hoc prompt-slot dumps written to the project root (scratch; belong in temp/)
+/tmp_*.txt
+_envdump.txt
+
+# ── Runtime databases (now under data/db/) ──────────────────────────────────
+# All runtime DB *files* live in data/db/ (the app's stored state); the DB *code*
+# stays in app/db/. Covers app.db, logs.db, recordings.db, vault.db, tests.db,
+# and the optimizer/closer scratch DBs + their WAL/SHM/journal sidecars.
+data/db/
+data/cache/
+data/instance/
+
+# Company-wide Wiki: the wiki.db file itself IS tracked (committed to the repo),
+# but its transient SQLite sidecars are not — they only exist mid-write.
+data/wiki.db-journal
+data/wiki.db-wal
+data/wiki.db-shm
+
+# ── Browser profile (local-Chrome feature) ──────────────────────────────────
+# The entire on-disk Chrome profile is runtime state: cookies, trust tokens,
+# caches, and Chrome's own databases. Never commit it — it churns constantly,
+# bloats the repo, and contains session data.
+data/chrome-profile/
+
+# ── Stray / scratch databases & dumps (runtime, never tracked) ──────────────
+# Root-level stray DB, the TUI's runtime DB, and ad-hoc DB dumps.
+webagent.db
+TUI/webagent.db
+_dbdump.txt
+
+# Dedicated, always-local logs databases (server diagnostics + browser render
+# recorder) and the per-box instance id. Runtime artifacts — see app/db/logs_store.py.
+app/db/logs.db
+app/db/logs.db-journal
+app/db/logs.db-wal
+app/db/logs.db-shm
+app/db/recordings.db
+app/db/recordings.db-journal
+app/db/recordings.db-wal
+app/db/recordings.db-shm
+app/db/instance_id.txt
+
+# Dedicated credentials "vault" DB (auth_elements — integration OAuth tokens +
+# inline secret values), kept out of the user-data DB so a reset is non-destructive.
+app/db/vault.db
+app/db/vault.db-journal
+app/db/vault.db-wal
+app/db/vault.db-shm
+
+# Per-user runtime "closer" DBs (created by the running app)
+app/db/closer_*.db
+app/db/closer_*.db-journal
+app/db/closer_*.db-wal
+app/db/closer_*.db-shm
+
+# Optimizer runtime temp DBs (worker trials + planner sessions)
+app/db/test_*.db
+app/db/test_*.db-journal
+app/db/test_*.db-wal
+app/db/test_*.db-shm
+data/db/optimizer.db
+data/db/optimizer.db-journal
+data/db/optimizer.db-wal
+data/db/optimizer.db-shm
+
+# Per-machine runtime artifacts (Android/proot etc.)
+.proot.pid
+start_server_proot.sh
+
+# Runtime auth + config (per-machine, contains hashes/tokens)
+# JWT signing secret — generated on first run; committing it would let anyone
+# forge tokens (see app/auth/jwt.py). Per-machine, never tracked.
+data/config/jwt_secret.txt
+data/config/auth_revocation.sqlite*
+db_connection.json
+/db_mode.json
+app/auth/users.json
+app/auth/users.json.bak
+app/db_mode.json
+app/db_connection.json
+app/secrets_mode.json
+app/secrets_config.json
+app/secrets_token_fallback.json
+app/encryption_mode.json
+app/db_encryption.json
+app/db_hybrid.json
+app/pages_mode.json
+app/attachments_store_config.json
+# Remote Access (per-machine config + the signpost directory written at runtime)
+remote_access.json
+remote_access.json.bak
+remote_access_pointers.json
+# Tunnel Link (relay registration creds written at runtime)
+data/config/tunnel_link.json
+
+# FUSE / SSHFS temp leftovers
+app/db/.fuse_hidden*
+**/.fuse_hidden*
+
+# Visuals user-generated artifacts (moved under data/)
+data/visuals/users/
+
+# Runtime backup files created by write_source tool
+*.bak
+
+# Uploads + visuals (runtime artifacts now live under data/)
+data/uploads/*
+!data/uploads/.gitkeep
+data/visuals/
+
+# Per-user data home — agent outputs + screenshots saved per user at runtime
+# (data/user_data/<user_id>/{files,screenshots,...}). Tracked, except: the admin
+# SQLite DB, the admin credentials vault (OAuth tokens + inline secrets), and the
+# live Chrome profile (cookies/stored logins — never commit). SQLite
+# WAL/SHM/journal sidecars are transient (they vanish mid-write and break
+# `git add`) — never tracked.
+data/user_data/admin/admin.db
+data/user_data/admin/admin.vault.db
+data/user_data/admin/chrome-profile/
+data/user_data/**/*.db-wal
+data/user_data/**/*.db-shm
+data/user_data/**/*.db-journal
+# Agent-owned credential vaults are runtime secrets. The hyphenated names are
+# used by agent/member authority workspaces; include SQLite sidecars via `*`.
+data/agent_data/**/*.agent-secrets.db*
+data/agent_data/**/members/**/*.user-secrets.db*
+# Agent authority databases are intentionally versioned, but SQLite creates
+# transient companions while they are open.  They can disappear during
+# `git add -A`, so never let Git traverse/index them.
+data/agent_data/**/*.db-wal
+data/agent_data/**/*.db-shm
+data/agent_data/**/*.db-journal
+# Browser-tool screenshots — runtime output (legacy/fallback pile). The per-user
+# home above is the new destination; this dir stays only as a fallback. Never tracked.
+data/screenshots/
+
+# Scratch / backup / PID files — kept on disk, never tracked
+.source-backups/
+.update-backups/
+tmp/
+bg_pid.txt
+TUI/server.pid
+TUI/self-update/
+# TUI's local runtime config holds its own API key — keep it out of git.
+TUI/config.json
+
+# Launcher build output: the single portable webagent.exe now lands at the
+# PROJECT ROOT (built from launcher/ via launcher/scripts/build_exe.py).
+# Scratch build dirs stay under launcher/. None of these are committed.
+/webagent.exe
+launcher/*.exe
+launcher/*snapshot*.svg
+launcher/assets/webagent.ico
+launcher/assets/webagent_256.png
+launcher/dist/
+launcher/build/
+
+# launcher_android runtime bridge file (Browser button host↔proot)
+launcher_android/.browser-bridge
+.git-rewrite/
+  
+cookies.txt
+
+# Pre-admin-rename DB backup (kept on disk, never committed — contains 166MB+ DBs)
+data/db.bak-pre-admin-rename/
+
+# DB backup embeds (*.bak-embed) — can exceed GitHub's 100 MB file limit
+*.bak-embed
+
+# RECORDER-HOOK: diagnostic archive, scopes and worker state are runtime data.
+data/recorder/

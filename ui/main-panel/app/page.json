@@ -1,0 +1,47 @@
+{
+  "id": "app",
+  "required_backend_capability": "role:platform_admin",
+  "label": "App",
+  "icon": "boxes",
+  "order": 1,
+  "locked": true,
+  "html": "instances.html",
+  "mount": "#tab-app",
+  "entry": "ui/main-panel/app/instances.js?v=262",
+  "start": "startView",
+  "stop": "stopView",
+  "css": [
+    "instances.css",
+    "new-deployment/new-deployment.css",
+    "new-instance/new-instance.css",
+    "dashboard/dashboard.css",
+    "users/users.css",
+    "users/policies/policies.css",
+    "settings/settings.css",
+    "settings/entitlements/entitlements.css",
+    "../admin-tools/files.css"
+  ],
+  "partials": [
+    "settings/settings.html"
+  ],
+  "settings_partials": [
+    { "id": "app-access", "path": "settings/pages/app-access/page.html" },
+    { "id": "storage-routing", "path": "settings/pages/storage-routing/page.html" },
+    { "id": "main-panel-pages", "path": "settings/pages/main-panel-pages/page.html" },
+    { "id": "admin-panel-pages", "path": "settings/pages/admin-panel-pages/page.html" },
+    { "id": "app-functions", "path": "settings/pages/app-functions/page.html" },
+    { "id": "browser-session-management", "path": "settings/pages/browser-session-management/page.html" },
+    { "id": "design", "path": "settings/pages/design/page.html" },
+    { "id": "entitlements", "path": "settings/pages/entitlements/page.html" },
+    { "id": "models", "path": "settings/pages/models/page.html" },
+    { "id": "user-policies", "path": "settings/pages/user-policies/page.html" },
+    { "id": "agent-tools", "path": "settings/pages/agent-tools/page.html" },
+    { "id": "templates-prompts", "path": "settings/pages/templates-prompts/page.html" },
+    { "id": "automation-engine", "path": "settings/pages/automation-engine/page.html" },
+    { "id": "bonus-policies", "path": "settings/pages/bonus-policies/page.html" }
+  ],
+  "router": "server.py",
+  "routers": [
+    "dashboard/server.py"
+  ]
+}

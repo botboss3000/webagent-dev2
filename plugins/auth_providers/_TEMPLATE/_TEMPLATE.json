@@ -1,0 +1,23 @@
+{
+  "id": "myprovider",
+  "display_name": "My Provider",
+  "status": "experimental",
+  "brand_color": "#ffffff",
+  "text_color": "#1f1f1f",
+  "border": true,
+  "icon": "log-in",
+  "authorize_url": "https://provider.example/oauth/authorize",
+  "token_url": "https://provider.example/oauth/token",
+  "userinfo_url": "https://provider.example/oauth/userinfo",
+  "scopes": ["openid", "email", "profile"],
+  "scope_sep": " ",
+  "authorize_extra": {},
+  "profile_map": { "external_id": "sub", "email": "email", "name": "name", "avatar": "picture" },
+  "credential_fields": [
+    { "key": "client_id", "label": "Client ID", "secret": false, "tip": "Where to find this provider's Client ID (edit this hint in the provider's <id>.json credential_fields). It shows as a \"?\" tooltip beside the field." },
+    { "key": "client_secret", "label": "Client Secret", "secret": true, "tip": "Where to find this provider's Client Secret (edit this hint in the provider's <id>.json). Optional — omit the \"tip\" key for no tooltip." }
+  ],
+  "requires": ["OAuth 2.0 Client ID + Secret"],
+  "setup_url": "https://provider.example/developers",
+  "setup_hint": "Register an app and add the exact Redirect URI shown below to its allowed redirect list."
+}

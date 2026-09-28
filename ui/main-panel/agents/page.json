@@ -1,0 +1,14 @@
+{
+  "id": "agents",
+  "required_backend_capability": "page:agents",
+  "label": "Agents",
+  "icon": "bot",
+  "order": 1,
+  "html": "agents.html",
+  "mount": "#tab-agents",
+  "entry": "ui/main-panel/agents/js/agents.js",
+  "start": "startAgents",
+  "stop": "stopAgents",
+  "css": ["agents.css", "sessions/sessions.css", "automations/automations.css", "../admin-tools/files.css"],
+  "routers": ["automations/server.py"]
+}

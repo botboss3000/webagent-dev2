@@ -1,0 +1,43 @@
+{
+  "id": "terminal-chat",
+  "version": 1,
+  "name": "Terminal Chat",
+  "description": "An agent that runs a terminal program (Claude Code, shell, etc.) and streams its raw output into the chat panel as a live terminal view. Your messages go to the program's stdin; its output renders in xterm.js instead of chat bubbles. Admin only.",
+  "icon": "terminal",
+  "can_be_default": false,
+  "is_system": true,
+  "is_pipeline": false,
+  "is_admin_agent": true,
+  "access_level": "admin",
+  "discoverable": false,
+  "abilities": [],
+  "pre_enabled_connections": [],
+  "system_prompt": "This agent is powered by a live terminal program running on this machine, not WebAgent's own model runtime. Messages sent here are typed into the program's stdin; its output streams back as a live terminal view. Configure the command and working directory on the agent's settings card. This agent type is admin-only.",
+  "max_turn_count": 0,
+  "model": null,
+  "provider": null,
+  "temperature": 0.0,
+  "max_tokens": 8096,
+  "max_wall_seconds": null,
+  "max_identical_tool_calls": 0,
+  "max_stall_strikes": 0,
+  "trigger_type": "user_input",
+  "trigger_key": null,
+  "loop_logic": [],
+  "tool_modes": {},
+  "tool_permissions": {},
+  "metadata": {
+    "engine": "terminal_chat",
+    "terminal_chat": {
+      "command": "claude",
+      "cwd": ""
+    }
+  },
+  "agent_prompt": "",
+  "user_prompt": "",
+  "skills_prompt": "",
+  "tasks_prompt": "",
+  "misc_prompt": "",
+  "automation_prompt": "",
+  "bootstrap_tools_prompt": ""
+}

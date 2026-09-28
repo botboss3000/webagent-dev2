@@ -1,0 +1,43 @@
+{
+  "display_name": "Codebase Admin",
+  "kind": "ability",
+  "icon": "folder-cog",
+  "color": "#bb9af7",
+  "description": "Lets the agent read, write, edit, delete files, and run shell commands on the host. No credentials.",
+  "skill_summary": "How to find your way around the WebAgent repository and leave it better than you found it — read CLAUDE.md first, explore by comments, mirror the shared-design consistency markers, follow strict-mode JS discipline, and use the directory signpost map. Load before any task that reads, edits, or extends this repo's source.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "db_query",
+    "read_source",
+    "checkout_files",
+    "checkin_files",
+    "abandon_file_checkouts",
+    "file_checkout_status",
+    "write_source",
+    "edit_source",
+    "patch_source",
+    "delete_source",
+    "search_source",
+    "search_comments",
+    "read_directory",
+    "run_command",
+    "run_python",
+    "restart_server"
+  ],
+  "config": {
+    "bias": {
+      "key": "destructive_caution",
+      "label": "Caution on destructive actions",
+      "default": "balanced",
+      "levels": {
+        "cautious": "Before any file delete, overwrite, bulk edit, or non-read-only shell command, STOP and ask the user to confirm in plain language what will change — even if they gave a broad instruction. Prefer the smallest reversible step and never act on your own initiative without an explicit go-ahead. (Restarting the server after a change is exempt — use restart_server.)",
+        "balanced": "Carry out the user's explicit file/shell commands directly, but ask first whenever YOU decide on your own initiative to delete, overwrite, or run something irreversible, and when an action is ambiguous or far-reaching.",
+        "trusted": "Act decisively on the user's intent without pausing to re-confirm routine writes, edits, or shell commands; only stop for clearly irreversible or repo-wide destructive actions (mass delete, force-push)."
+      }
+    }
+  },
+  "order": 1
+}

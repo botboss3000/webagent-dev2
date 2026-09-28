@@ -1,0 +1,11 @@
+<!-- DeepSeek Costs — drop-in Admin Tools view.
+     Reporting-only: recomputes per-user cost from raw usage_events token splits
+     with an operator-tweakable cache/peak rate table. It never writes to the
+     usage ledger, the model catalog, or any wallet — the figures here appear
+     ONLY on this page. Discovered via page.json; driven by deepseek-costs.js.
+     REMOVE-WHEN: the DeepSeek Costs view is dropped from the admin catalog. -->
+<template data-slot="#admin-tools">
+  <main class="files-main" id="files-deepseek-costs-main" data-view="deepseek-costs" hidden>
+    <div id="dcost-root" style="padding:16px;max-width:1100px;"></div>
+  </main>
+</template>

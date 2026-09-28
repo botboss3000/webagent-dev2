@@ -1,0 +1,11 @@
+{
+  "id": "roster-admin",
+  "slug": "roster-admin",
+  "name": "Administrator platform models",
+  "description": "Operational model roster exposed by the administrator role overlay.",
+  "entries": [],
+  "default_entry_id": null,
+  "status": "published",
+  "revision": 1,
+  "source": "system-seed"
+}

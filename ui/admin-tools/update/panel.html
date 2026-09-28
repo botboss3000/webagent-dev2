@@ -1,0 +1,50 @@
+<!-- Update / Selective Sync — drop-in Admin Tools view partial.
+     Two <template data-slot> blocks injected at boot by the partial loader
+     (ui/shared/js/partial-loader.js): a sidebar panel into #files-sidebar and a
+     main pane into #admin-tools. Discovered via ui/admin-tools/update/page.json;
+     driven by update.js (startView/stopView); backed by server.py
+     (/api/v1/update/*). Related Git Control view: ui/main-panel/explorer/,
+     ui/admin-tools/diagnostics/.
+     REMOVE-WHEN: the Update view is dropped from the admin page catalog. -->
+<template data-slot="#files-sidebar">
+  <div class="files-sidebar-panel" id="files-panel-update" data-view="update" hidden>
+    <div class="files-sidebar-header">
+      <div class="files-sidebar-actions">
+        <button class="files-icon-btn" id="upd-fetch" title="Fetch upstream"><i data-lucide="refresh-cw" class="lucide-icon"></i></button>
+      </div>
+    </div>
+    <div class="upd-side">
+      <div class="upd-side-section">
+        <div class="upd-side-title">Upstream (public repo)</div>
+        <input type="text" id="upd-url" class="upd-input" placeholder="https://github.com/owner/repo.git" autocomplete="off" />
+        <div class="upd-row">
+          <input type="text" id="upd-branch" class="upd-input upd-input-branch" placeholder="main" autocomplete="off" />
+          <button id="upd-save-cfg" class="upd-btn">Save</button>
+        </div>
+        <div class="upd-hint" id="upd-mode-hint"></div>
+        <button id="upd-init" class="upd-btn upd-btn-wide" hidden>Initialize git + add upstream</button>
+      </div>
+      <div class="upd-side-section">
+        <div class="upd-side-title">Tracked folders</div>
+        <div class="upd-hint">Only ticked folders are updated. Auto-detected from what exists locally — adjust and save.</div>
+        <div class="upd-folders" id="upd-folders"><div class="upd-empty">Configure an upstream repo, then Fetch.</div></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template data-slot="#admin-tools">
+  <main class="files-main" id="files-update-main" data-view="update" hidden>
+    <div id="upd-container">
+      <div id="upd-toolbar">
+        <span class="upd-toolbar-label"><i data-lucide="cloud-download" style="width:13px;height:13px;"></i> Update</span>
+        <span id="upd-stats" class="upd-stats"></span>
+        <span class="upd-spacer"></span>
+        <button id="upd-apply" class="upd-btn upd-btn-primary" disabled>Apply selected</button>
+      </div>
+      <div id="upd-main-body">
+        <div class="upd-hint upd-main-hint">Open the Update view, configure the upstream repo, then Fetch to see what changed in your tracked folders.</div>
+      </div>
+    </div>
+  </main>
+</template>

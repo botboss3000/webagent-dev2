@@ -1,0 +1,42 @@
+{
+  "display_name": "Browser Control",
+  "entitlement_group": "browser_control",
+  "risk_class": "write",
+  "action_class": "external_action",
+  "kind": "ability",
+  "icon": "mouse-pointer-2",
+  "color": "#9ece6a",
+  "description": "Drive a browser, make HTTP requests, and act AS the user on sites you're logged into (using your live browser session's cookies). Can drive the in-app headless browser OR switch a session to the real browser on the user's device. Optional pasted-cookie fallback.",
+  "skill_summary": "How to drive a real, stateful browser tab (login flows, clicking, forms, JS-rendered content, screenshots) with the navigate→read→act loop — including the shared tab the user watches live — when to use http_request instead, and how the web_session_* cookie-replay tools act as the logged-in user on no-API sites (Facebook etc.). Load when a task needs a persistent, logged-in web page or to act as the user.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": false,
+  "placeholder": false,
+  "tools": [
+    "browser_action",
+    "browser_backend",
+    "http_request",
+    "web_session_status",
+    "web_session_fetch",
+    "web_session_graphql",
+    "vault_login",
+    "cookie_allowlist",
+    "browser_popup"
+  ],
+  "order": 1,
+  "credentials": {
+    "scope": "user",
+    "fields": [
+      {"key": "cookies", "label": "Cookies (optional fallback)", "type": "textarea", "secret": true,
+       "placeholder": "Leave blank to use your live in-app browser login. Or paste {\"c_user\":\"…\",\"xs\":\"…\"} / Netscape cookie-jar text to bring a login from an external browser."},
+      {"key": "login_email", "label": "Login email / phone", "type": "text", "secret": true,
+       "placeholder": "The email or phone the agent logs in WITH (e.g. your Facebook login). Stored encrypted; never shown to the agent."},
+      {"key": "login_password", "label": "Login password", "type": "password", "secret": true,
+       "placeholder": "Stored encrypted in the vault. The agent logs in with it server-side and never sees it."},
+      {"key": "login_zip", "label": "ZIP / postal code", "type": "text",
+       "placeholder": "Your area's ZIP, used to scope local searches (not secret — the agent may use it)."},
+      {"key": "user_agent", "label": "User-Agent", "type": "text",
+       "placeholder": "Mozilla/5.0 …  (blank = default Chrome UA)"}
+    ]
+  }
+}

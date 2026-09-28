@@ -1,0 +1,152 @@
+<!-- JOURNEY ENTRY: app.* — /app?tab=app&view=<catalog-page-id>; registry: docs/claude/ui-journeys.md. -->
+<!-- Instances — drop-in MAIN-PANEL page partial.
+     A grid of every WebAgent INSTANCE signed in to the shared database PLUS every
+     cloud VM in a connected cloud account, styled after the main Agents page
+     (ui/main-panel/agents/): each instance is a square tile; clicking one opens a
+     tabbed detail region below (Overview). THIS device is always present and
+     marked, and it paints INSTANTLY (from the browser + last-known cache); the
+     rest of the fleet + cloud VMs + connection health then load PARTIALLY — each
+     source paints the moment it lands, and cards whose source is still loading
+     wait as pending skeletons at the END of the grid until their data arrives
+     (fall back to being last). The grid's reading order IS the load order:
+     device/cloud tiles are drag-reorderable (top-left first, bottom-right
+     last), persisted per tile in the shared DB.
+     Before that first paint the tab is never blank either: the partial ships a
+     STATIC phantom skeleton inside #inst-root (toolbar, two squares, and an
+     Overview-detail echo) that shows from the moment the partial mounts until
+     instances.js renders; _render() wipes it and the per-section phantoms
+     (fleet square, cloud overview, New-Deployment bars) layer in as data arrives.
+
+     A "New instance" CREATE TILE is always first (top-left / left of the carousel,
+     mirroring the Agents page's "New Agent" tile). It opens a card with a "New
+     Deployment" tab — the install-a-new-copy flow (Repo · Deploy target · Connect a
+     domain), moved out of Data Settings → Deployment. That tab is its OWN drop-in
+     sub-feature (new-deployment/: its .html/.js/.css, kept separate so this page
+     stays lean); instances.js only mounts it. See new-deployment/new-deployment.js.
+
+     This one page absorbed two now-deleted admin pages plus the old Data Settings →
+     Deployment section: the "This device" connection config (database + secrets-vault
+     sign-in, silent-fallback warning) and the cloud-ACCOUNT manager now live in a
+     "Connections" section INSIDE the "This device" tile's Overview (open the tile to
+     reach them); cloud VMs appear as tiles with Start/Stop/Delete/Open/Ping + a live
+     log in each cloud tile's Overview (the action buttons sit in the open card's
+     header, not the Overview body). This app's restart + port editor live in a
+     "Server" section in the "This device" Overview, and any other local WebAgent
+     checkouts on this machine appear as their own "Local" tiles (Start/Stop/Delete/
+     Open + edit), created from the New instance tile. The backend for all of it is
+     this folder's own server.py (mounted via page.json `router`) plus the shared
+     /admin/deploy/instances/* + /admin/storage/server/* for the local/restart bits;
+     the DB + vault connect/test/activate controls call the shared /admin/storage/*.
+
+     MAIN-PANEL page (moved out of Admin Tools): this partial is injected by the
+     partial loader directly into the page's #tab-app mount (page.json
+     `mount`), replacing the old `<template data-slot="#admin-tools">` wrapper it
+     shipped as an admin view. The Settings partials listed in page.json
+     `partials` are still injected at boot by the partial loader — they target
+     #main-panel / #settings-page-slot-* and stay hidden until the Settings tab
+     of the "This device" tile mounts them (see instances.js _onSettingsTabRendered).
+
+     Discovered via ui/main-panel/app/page.json; driven by instances.js
+     (startView/stopView); backed by server.py. Styling: instances.css — fully
+     self-contained (the smb-/cvm- card/form primitives were folded in when the two
+     old pages were removed). #tab-app layout rules live at the top of
+     instances.css (mirrors #tab-agents in ui/main-panel/agents/agents.css).
+     REMOVE-WHEN: the Instances page is dropped from the main page catalog. -->
+<div id="inst-root" class="inst-root">
+  <!-- PHANTOM FIRST PAINT — static skeleton, shipped INSIDE the partial so the
+       tab is never blank between opening and instances.js's first _render()
+       (the entry module is a large dynamic import, and the fleet/cloud loads
+       are network waits on top of that). It mirrors the real first paint —
+       toolbar row, TWO squares (New tile + one instance), and the open
+       Overview detail below (sticky head, action buttons, tab bar, fact grid) —
+       with matching dimensions so the swap to live content has zero layout
+       shift. Purely decorative: aria-hidden, pointer-events:none, no data-*
+       attributes, no click wiring; _render()'s wholesale innerHTML rebuild
+       wipes it on first paint, then the page's per-section phantoms (fleet
+       square, cloud overview, New-Deployment bars) layer in as data arrives.
+       Styling: .inst-phantom-* in instances.css.
+       REMOVE-WHEN: the Instances page is dropped from the main page catalog. -->
+  <div class="inst-grid inst-phantom-shell" aria-hidden="true">
+    <div class="inst-toolbar">
+      <div class="inst-toolbar-titles">
+        <span class="inst-toolbar-title">
+          <span class="inst-phantom-tb-icon"></span>
+          <span class="inst-phantom-tb-title"></span>
+        </span>
+        <span class="inst-toolbar-sub"><span class="inst-phantom-tb-sub"></span></span>
+      </div>
+      <span class="inst-phantom-tb-btn"></span>
+    </div>
+    <div class="inst-squares">
+      <div class="inst-square inst-square-new inst-phantom-new">
+        <div class="inst-square-new-inner">
+          <span class="inst-square-new-plus"><span class="inst-phantom-new-plus"></span></span>
+          <span class="inst-square-new-label"><span class="inst-phantom-new-label"></span></span>
+        </div>
+      </div>
+      <div class="inst-phantom-square">
+        <div class="inst-phantom-top">
+          <span class="inst-phantom-icon"></span>
+          <span class="inst-phantom-dot"></span>
+        </div>
+        <div class="inst-phantom-body">
+          <span class="inst-phantom-line"></span>
+          <span class="inst-phantom-line short"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overview detail phantom — echoes the open "This device" card the page
+         paints by default: sticky head (icon · name/sub · close), head action
+         buttons, the tab bar, and the two-column fact grid. Reuses the real
+         .inst-detail/.inst-tabs/.inst-facts classes so spacing + borders match;
+         only the innards are inert skeleton blocks. -->
+    <div class="inst-detail">
+      <div class="inst-detail-sticky">
+        <div class="inst-detail-head">
+          <span class="inst-phantom-dt-icon"></span>
+          <div class="inst-detail-titles">
+            <span class="inst-detail-name"><span class="inst-phantom-dt-name"></span></span>
+            <span class="inst-detail-sub"><span class="inst-phantom-dt-sub"></span></span>
+          </div>
+          <span class="inst-phantom-dt-close"></span>
+        </div>
+        <div class="inst-detail-head-actions">
+          <span class="inst-phantom-act-btn"></span>
+          <span class="inst-phantom-act-btn"></span>
+        </div>
+        <div class="inst-tabs">
+          <span class="inst-phantom-tab active"></span>
+          <span class="inst-phantom-tab"></span>
+          <span class="inst-phantom-tab"></span>
+        </div>
+      </div>
+      <div class="inst-detail-body">
+        <div class="inst-facts">
+          <div class="inst-fact">
+            <span class="inst-phantom-fact-label"></span>
+            <span class="inst-phantom-fact-value"></span>
+          </div>
+          <div class="inst-fact">
+            <span class="inst-phantom-fact-label"></span>
+            <span class="inst-phantom-fact-value"></span>
+          </div>
+          <div class="inst-fact">
+            <span class="inst-phantom-fact-label"></span>
+            <span class="inst-phantom-fact-value"></span>
+          </div>
+          <div class="inst-fact">
+            <span class="inst-phantom-fact-label"></span>
+            <span class="inst-phantom-fact-value"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Dashboard-only page dock. It is a sibling of the Instances scroll grid, matching
+     the Agents Sessions dock, so the controls remain visible while the grid makes
+     its carousel-to-detail scroll transition. Dashboard code fills this only when
+     the Dashboard tab is active. -->
+<footer id="inst-dashboard-footer-dock" class="dash-footer" aria-label="Dashboard controls"></footer>

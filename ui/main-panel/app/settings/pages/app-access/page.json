@@ -1,0 +1,25 @@
+{
+  "id": "app-access",
+  "label": "App Access",
+  "icon": "key-round",
+  "description": "Social sign-in options \u2014 how people get into this instance.",
+  "keywords": [
+    "signin",
+    "login",
+    "auth",
+    "authentication",
+    "oauth",
+    "google",
+    "github",
+    "microsoft",
+    "apple",
+    "providers",
+    "keys"
+  ],
+  "group": "data",
+  "runtime": "settings",
+  "page": "app-access",
+  "anchor": "",
+  "paPage": "data_settings",
+  "html": "page.html"
+}

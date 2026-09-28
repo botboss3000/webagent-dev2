@@ -1,0 +1,152 @@
+{
+  "display_name": "Context Control",
+  "kind": "ability",
+  "icon": "gauge",
+  "color": "#bb9af7",
+  "description": "Per-agent context controls: choose the token target where compaction activates and the exact recent amount kept verbatim. Unchanged prompt blocks are reused from bounded RAM/disk caches and provider prefix caches, while the app-wide 1.05M-token maximum remains a hard safety ceiling.",
+  "note": null,
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "locked_on": true,
+  "protected": true,
+  "context_strategy": true,
+  "app_function": true,
+  "agent_configurable": true,
+  "_tools_note": "The three agent-facing tools are displayed under Core ▸ Base and remain always-on. This dual-surface descriptor exposes per-agent target/verbatim preferences under Knowledge while App Functions owns the global safety ceiling and advanced defaults. Do NOT re-add update_task_checkpoint / get_task_checkpoint here: those plan/task tools were relocated to the always-on core (app/tools/core_tools.py, wired by app/tools/loader.py under Core ▸ Base and locked on in TIER_1_ALWAYS_ON).",
+  "tools": [],
+  "skill_mode": "selectable",
+  "skill_summary": "Your own context window: the fill gauge, one automatic rolling checkpoint for older conversation, a newest verbatim tail, and three tools — compact_context to deliberately checkpoint now, recall_compacted to read the ORIGINAL turns behind the checkpoint, and search_this_session to keyword-find details across the full conversation. Load this whenever the user asks about context or memory, before a long multi-phase task, or whenever a needed detail may have been compacted. NOTE: you CAN compact on demand; do not tell the user compaction is automatic-only.",
+  "config": {
+    "bias": {
+      "key": "self_compaction_posture",
+      "default": "balanced",
+      "levels": {
+        "off": "Do NOT call compact_context yourself — leave all compaction to the automatic background threshold.",
+        "balanced": "Reserve compact_context for a rare, deliberate fold only at a clean checkpoint of a long multi-step project, when early settled turns are taking room you need next.",
+        "eager": "On big multi-step work, proactively call compact_context at each phase boundary to reclaim room before the next phase (still never mid-phase)."
+      }
+    },
+    "settings": [
+      {
+        "key": "self_compaction_posture",
+        "label": "Self-Compaction Posture",
+        "type": "select",
+        "default": "balanced",
+        "options": [
+          {"value": "off", "label": "Off — never self-compact"},
+          {"value": "balanced", "label": "Balanced — only at clean phase checkpoints"},
+          {"value": "eager", "label": "Eager — free room proactively between phases"}
+        ],
+        "hint": "How willing the agent is to run compact_context ITSELF (separate from automatic compaction).",
+        "scope": "agent"
+      },
+      {
+        "key": "tool_evidence_policy",
+        "label": "Historical Tool Evidence",
+        "type": "select",
+        "default": "current_task",
+        "options": [
+          {"value": "current_task", "label": "Quality — full current task"},
+          {"value": "recent_runs", "label": "Run window — newest runs"},
+          {"value": "token_budget", "label": "Token budget — newest that fit"},
+          {"value": "hybrid", "label": "Economy — run and token limits"},
+          {"value": "all", "label": "Archive — keep all tool evidence"}
+        ],
+        "hint": "Controls when historical tool inputs and outputs become compact retrieval receipts. User and assistant messages remain; the current run is always full. Quality compacts completed tasks, while Economy also bounds long tasks.",
+        "scope": "agent"
+      },
+      {
+        "key": "full_evidence_runs",
+        "label": "Full-Evidence Runs",
+        "type": "number",
+        "default": 2,
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "hint": "Total newest user-triggered runs kept with complete tool evidence, including the current run. Internal manager, scout, closer, and resume iterations do not create runs.",
+        "scope": "agent"
+      },
+      {
+        "key": "full_evidence_token_budget",
+        "label": "Full Tool-Evidence Token Budget",
+        "type": "number",
+        "default": 40000,
+        "min": 1000,
+        "max": 1050000,
+        "step": 5000,
+        "display": "tokens",
+        "hint": "Approximate budget for complete tool arguments and results in the active task. Whole newest runs are retained until the budget is reached; the current run is never reduced.",
+        "scope": "agent"
+      },
+      {
+        "key": "auto_context_limit",
+        "label": "Auto-Detect Window From Model",
+        "type": "boolean",
+        "default": true,
+        "hint": "Use the active model's published context window, capped by the app-wide maximum below.",
+        "scope": "app"
+      },
+      {
+        "key": "token_limit",
+        "label": "Maximum Context Tokens",
+        "type": "number",
+        "default": 1050000,
+        "min": 1000,
+        "max": 1050000,
+        "step": 10000,
+        "hint": "App-wide hard ceiling for every agent. Auto-detected model windows and per-agent compaction targets can be smaller, never larger.",
+        "ceiling": "max",
+        "scope": "app"
+      },
+      {
+        "key": "compact_target_tokens",
+        "label": "Compaction Target Tokens",
+        "type": "range",
+        "default": 100000,
+        "min": 10000,
+        "max": 1050000,
+        "step": 10000,
+        "display": "tokens",
+        "ceiling": "max",
+        "ceiling_key": "token_limit",
+        "hint": "Absolute assembled-context size where compaction activates. For example, 100K starts folding old turns once the live context reaches about 100,000 tokens.",
+        "scope": "both"
+      },
+      {
+        "key": "verbatim_tail_tokens",
+        "label": "Keep Verbatim Tokens",
+        "type": "range",
+        "default": 30000,
+        "min": 5000,
+        "max": 1050000,
+        "step": 5000,
+        "display": "tokens",
+        "ceiling": "max",
+        "ceiling_key": "token_limit",
+        "hint": "Absolute number of newest tokens kept word-for-word after compaction. This is clamped below the effective target at runtime.",
+        "scope": "both"
+      },
+      {
+        "key": "segment_target_fraction",
+        "label": "Rolling Checkpoint Size (fraction of target)",
+        "type": "number",
+        "default": 0.05,
+        "min": 0.01,
+        "max": 0.5,
+        "step": 0.01,
+        "hint": "Maximum output size for the one rolling checkpoint, as a fraction of the compaction target.",
+        "scope": "app"
+      },
+      {
+        "key": "summary_model",
+        "label": "Summary Model (optional)",
+        "type": "text",
+        "default": "",
+        "hint": "Optional model id used only to write compacted summaries. Leave blank to reuse the configured chat model.",
+        "scope": "app"
+      }
+    ]
+  },
+  "order": 0
+}

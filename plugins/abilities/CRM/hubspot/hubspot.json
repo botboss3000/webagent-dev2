@@ -1,0 +1,12 @@
+{
+  "display_name": "HubSpot",
+  "kind": "placeholder",
+  "icon": "contact",
+  "color": "#bb9af7",
+  "description": "Contacts, deals, and email.",
+  "note": "Free OAuth app — HubSpot has free and paid tiers.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 1
+}

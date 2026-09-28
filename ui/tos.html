@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Terms of Service</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: var(--bg-0); color: var(--fg-1); }
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 32px 20px 80px;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.brand:hover { color: var(--accent-hover); }
+.theme-btn {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--fg-2);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.theme-btn:hover {
+  background: var(--bg-tint);
+  color: var(--fg-1);
+  border-color: var(--border-strong);
+}
+.page {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 36px 36px 40px;
+  box-shadow: var(--shadow-rest);
+}
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--fg-1);
+  margin-bottom: 6px;
+}
+.eff {
+  font-size: 13px;
+  color: var(--fg-3);
+  margin-bottom: 24px;
+}
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 28px;
+  margin-bottom: 10px;
+}
+p, li {
+  font-size: 14.5px;
+  color: var(--fg-2);
+  margin-bottom: 10px;
+}
+ul, ol {
+  margin: 8px 0 12px 22px;
+}
+li { margin-bottom: 6px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+strong { color: var(--fg-1); }
+.footer-links {
+  margin-top: 32px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 13px;
+  color: var(--fg-3);
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  body { padding: 20px 12px 60px; }
+  .page { padding: 24px 20px 28px; border-radius: var(--r-lg); }
+  h1 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('webagent_theme') || 'dark';
+      var light = t === 'light' || (t === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+      if (light) document.body.classList.add('light-mode');
+    } catch (_) {}
+  })();
+</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <a href="/" class="brand">← WebAgent</a>
+    <button class="theme-btn" id="theme-toggle" type="button">Toggle theme</button>
+  </div>
+
+  <div class="page">
+    <h1>Terms of Service</h1>
+    <p class="eff">Effective date: 2026-05-23</p>
+
+    <p>
+      These Terms of Service (“Terms”) govern your access to and use of WebAgent (“we”, “our”, or “the service”),
+      including the application at <a href="https://webagent.live">webagent.live</a> and related interfaces.
+      By accessing or using the service you agree to be bound by these Terms. If you do not agree, do not use the service.
+    </p>
+
+    <h2>1. The service</h2>
+    <p>
+      WebAgent is an AI agent harness that lets users build, configure, and run conversational agents that can call tools, integrate with third-party services, and produce text, code, and other outputs. The service is provided on an evolving basis and features may change without notice.
+    </p>
+
+    <h2>2. Eligibility and accounts</h2>
+    <ul>
+      <li>You must be at least 13 years old, or the minimum age required in your jurisdiction, to use the service.</li>
+      <li>You are responsible for maintaining the confidentiality of your account credentials and for all activity under your account.</li>
+      <li>You agree to provide accurate information and to keep it up to date.</li>
+    </ul>
+
+    <h2>3. Acceptable use</h2>
+    <p>You agree not to use the service to:</p>
+    <ul>
+      <li>Violate any law or regulation, or infringe the rights of others.</li>
+      <li>Generate or distribute content that is illegal, harmful, harassing, defamatory, hateful, or sexually exploitative of minors.</li>
+      <li>Attempt to gain unauthorized access to the service, other users’ accounts, or our infrastructure.</li>
+      <li>Probe, scan, or test the vulnerability of the service except as expressly authorized.</li>
+      <li>Interfere with or disrupt the service, including via denial-of-service techniques or excessive automated requests.</li>
+      <li>Use the service to develop a competing product by copying its non-public design or implementation.</li>
+      <li>Misuse integrations to send spam, perform fraud, or otherwise act in bad faith.</li>
+    </ul>
+
+    <h2>4. Your content</h2>
+    <p>
+      You retain ownership of the messages, prompts, files, and configuration data you submit to the service (“your content”). You grant us a limited license to host, process, transmit, and display your content solely as necessary to operate and improve the service.
+    </p>
+    <p>
+      You are responsible for the legality of your content and for ensuring you have the rights necessary to submit it.
+    </p>
+
+    <h2>5. AI output</h2>
+    <ul>
+      <li>Outputs from agents are generated by large language models and may be inaccurate, incomplete, or unsuitable for a particular purpose.</li>
+      <li>You are responsible for reviewing outputs before relying on them, especially for legal, medical, financial, or safety-critical decisions.</li>
+      <li>Because similar prompts can produce similar outputs across users, we make no claim that any given output is unique or exclusive to you.</li>
+    </ul>
+
+    <h2>6. Third-party services</h2>
+    <p>
+      The service interoperates with third-party platforms such as LLM providers, OAuth identity providers, messaging platforms, and hosting infrastructure. Your use of those services is governed by their own terms. We are not responsible for the availability, accuracy, or conduct of any third party.
+    </p>
+
+    <h2>7. Fees</h2>
+    <p>
+      Portions of the service may be offered for free, while others may require payment. Fees and billing terms, if any, will be presented to you before you incur them. Where you supply your own API keys or accounts to third-party providers, you are responsible for those providers’ charges.
+    </p>
+
+    <h2>8. Intellectual property</h2>
+    <p>
+      The service, including its software, design, and trademarks, is owned by us or our licensors and is protected by intellectual-property laws. Except for the limited rights expressly granted in these Terms, no rights are transferred to you.
+    </p>
+
+    <h2>9. Disclaimer of warranties</h2>
+    <p>
+      The service is provided <strong>“as is” and “as available”</strong>, without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, non-infringement, and any warranties arising from course of dealing or usage of trade. We do not warrant that the service will be uninterrupted, secure, or error-free.
+    </p>
+
+    <h2>10. Limitation of liability</h2>
+    <p>
+      To the maximum extent permitted by law, we and our affiliates, officers, employees, and agents will not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, or for any loss of profits, revenue, data, or goodwill, arising out of or related to your use of the service. Our aggregate liability for any claim arising out of or related to these Terms or the service will not exceed the greater of (a) the amount you paid us in the 12 months preceding the event giving rise to the claim, or (b) one hundred US dollars (USD $100).
+    </p>
+
+    <h2>11. Indemnification</h2>
+    <p>
+      You agree to defend, indemnify, and hold harmless the service and its operators from any claim, demand, loss, or expense (including reasonable attorneys’ fees) arising out of your content, your use of the service, or your violation of these Terms.
+    </p>
+
+    <h2>12. Suspension and termination</h2>
+    <p>
+      We may suspend or terminate your access to the service at any time, with or without notice, if we believe you have violated these Terms or pose a risk to other users or the service. You may stop using the service and close your account at any time. Sections that by their nature should survive termination (including ownership, disclaimers, limitations of liability, and dispute terms) will survive.
+    </p>
+
+    <h2>13. Changes to the service or these Terms</h2>
+    <p>
+      We may modify the service or these Terms from time to time. Material changes to these Terms will be announced in-product or by updating the effective date above. Your continued use of the service after a change constitutes acceptance of the revised Terms.
+    </p>
+
+    <h2>14. Governing law</h2>
+    <p>
+      These Terms are governed by the laws of the jurisdiction in which the service operator is established, without regard to its conflict-of-laws principles. To the extent permitted by law, the courts of that jurisdiction will have exclusive jurisdiction over any dispute arising out of or related to these Terms or the service.
+    </p>
+
+    <h2>15. Contact</h2>
+    <p>
+      Questions about these Terms can be sent to the contact email listed in the application or to the operator of the service.
+    </p>
+
+    <div class="footer-links">
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/">Return to app</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var isLight = document.body.classList.toggle('light-mode');
+      try { localStorage.setItem('webagent_theme', isLight ? 'light' : 'dark'); } catch (_) {}
+    });
+  })();
+</script>
+</body>
+</html>

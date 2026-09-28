@@ -1,0 +1,25 @@
+{
+  "id": "app-functions",
+  "label": "App Functions",
+  "icon": "cog",
+  "description": "Background services the app runs on its own \u2014 session namer, context control, stream buffer and more.",
+  "keywords": [
+    "services",
+    "background",
+    "session",
+    "namer",
+    "context",
+    "compaction",
+    "stream",
+    "buffer",
+    "quick",
+    "message",
+    "app control"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "app-functions",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

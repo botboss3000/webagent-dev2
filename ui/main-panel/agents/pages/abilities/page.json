@@ -1,0 +1,8 @@
+{
+  "id": "abilities",
+  "order": 50,
+  "iconName": "plug",
+  "title": "Abilities",
+  "description": "Enable abilities and connections for the agent.",
+  "entry": "./page.js"
+}

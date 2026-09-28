@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+dev_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+production_root=${WEBAGENT_PRODUCTION_ROOT:-/home/ar/webagent}
+image=${WEBAGENT_SYNC_IMAGE:-webagent:dev-codex}
+
+if [ ! -d "$dev_root/.git" ]; then
+    echo "error: development repo not found at $dev_root" >&2
+    exit 2
+fi
+if [ ! -d "$production_root/.git" ]; then
+    echo "error: production repo not found at $production_root" >&2
+    exit 2
+fi
+
+production_mount=/production:ro
+for argument in "$@"; do
+    if [ "$argument" = "--apply" ]; then
+        production_mount=/production
+        break
+    fi
+done
+
+exec docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    --volume "$dev_root:/development:ro" \
+    --volume "$production_root:$production_mount" \
+    --workdir /development \
+    --entrypoint python \
+    "$image" \
+    -m scripts.sync_production \
+    --production /production \
+    "$@"

@@ -1,0 +1,161 @@
+<!-- New Instance — the "New Instance" tab body of the Instances page's
+     "New instance" tile (ui/main-panel/app/new-instance/).
+
+     A fresh make-your-own-copy flow, deliberately kept INDEPENDENT of the New
+     Deployment tab next to it (which installs the stock app). It is a three-step
+     wizard:
+       1. Deployment Type      — fork and/or clone WebAgent
+       2. Configuration        — locked until a deployment type is chosen
+       3. Deployment Target    — placeholder; built after step 2
+
+     Step 1 starts OPEN; steps 2 + 3 sit greyed out below it. Ticking "Clone a
+     copy and deploy it now" ungreys + expands step 2 (unticking re-locks it).
+     Steps 2 and 3 bodies are placeholders on purpose — the flow past Deployment
+     Type comes next.
+
+     Loaded (fetched + mounted once, then re-parented across re-renders so its
+     typed state survives) by the sibling new-instance.js `mountNewInstance`.
+     Styling lives in this folder's new-instance.css; the `ac-` component classes
+     come from ui/shared/css/app3.css. -->
+<div class="ni">
+  <div class="ni-list">
+
+    <!-- ── Step 1 · Deployment Type ── -->
+    <div class="ni-step ni-step--open" id="ni-step-1" data-ni-step="1">
+      <div class="ni-step-head" data-ni-toggle>
+        <span class="ni-step-num">1</span>
+        <div class="ni-step-titles">
+          <div class="ni-step-name">Deployment Type</div>
+          <div class="ni-step-desc">How do you want to get your own copy of WebAgent?</div>
+        </div>
+        <i data-lucide="chevron-down" class="ni-step-chev"></i>
+      </div>
+      <div class="ni-step-body">
+
+        <a class="ni-repo-link" href="https://github.com/botboss3000/webagent" target="_blank" rel="noopener noreferrer">https://github.com/botboss3000/webagent</a>
+
+        <label class="ni-opt" for="ni-opt-fork">
+          <input type="checkbox" id="ni-opt-fork" class="ni-opt-input" data-ni-opt="fork">
+          <span class="ni-opt-check" aria-hidden="true"></span>
+          <span class="ni-opt-text">
+            <span class="ni-opt-title">Fork a copy to your GitHub account</span>
+            <span class="ni-opt-sub">Create your own repository copy to modify independently.</span>
+          </span>
+        </label>
+
+        <!-- Clone option: pulls the code down + deploys immediately. Ticking it
+             is what unlocks step 2 (Configuration). -->
+        <label class="ni-opt" for="ni-opt-clone">
+          <input type="checkbox" id="ni-opt-clone" class="ni-opt-input" data-ni-opt="clone">
+          <span class="ni-opt-check" aria-hidden="true"></span>
+          <span class="ni-opt-text">
+            <span class="ni-opt-title">Clone a copy and deploy it now</span>
+            <span class="ni-opt-sub">Clone the official public repository, install it bare, then synchronize the selected local data over P2P.</span>
+          </span>
+        </label>
+
+      </div>
+    </div>
+
+    <!-- ── Step 2 · Configuration ── greyed out until the Clone option is ticked
+         (new-instance.js un-locks + expands this step, and re-locks on untick).
+         Body is a placeholder; the real fields land in the next iteration. -->
+    <div class="ni-step ni-step--locked" id="ni-step-2" data-ni-step="2">
+      <div class="ni-step-head" data-ni-toggle>
+        <span class="ni-step-num">2</span>
+        <div class="ni-step-titles">
+          <div class="ni-step-name">Configuration</div>
+          <div class="ni-step-desc">Choose the databases and configuration carried into the new instance.</div>
+        </div>
+        <i data-lucide="lock" class="ni-step-lock"></i>
+        <i data-lucide="chevron-down" class="ni-step-chev"></i>
+      </div>
+      <div class="ni-step-body">
+        <div class="ni-section">
+          <div class="ni-section-title">Databases to synchronize</div>
+          <div class="ni-section-note">The new installation creates its own identity and runtime state. Portable rows are seeded after pairing and continue to replicate from this instance over native P2P.</div>
+
+          <label class="ni-sync-opt" for="ni-sync-app-db">
+            <input type="checkbox" id="ni-sync-app-db" checked>
+            <span><strong>app.db — portable app data</strong><small>Admin login, profiles, templates, tools and channel identities. Device jobs, presence, leader leases and instance identity are excluded.</small></span>
+          </label>
+          <label class="ni-sync-opt" for="ni-sync-app-secrets">
+            <input type="checkbox" id="ni-sync-app-secrets" checked>
+            <span><strong>app_secrets.db — portable app secrets</strong><small>Copies sync-safe credentials and re-encrypts them with each instance's own keys. Machine keys and deployment Git credentials stay local.</small></span>
+          </label>
+        </div>
+
+        <div class="ni-section">
+          <div class="ni-section-title">Configuration files</div>
+          <label class="ni-sync-opt" for="ni-sync-configs">
+            <input type="checkbox" id="ni-sync-configs" checked>
+            <span><strong>Portable app configuration</strong><small>Sync-safe JSON settings from data/config/. Database, P2P identity, tunnel and encryption-machine settings stay local.</small></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Step 3 · Deployment Target ── -->
+    <div class="ni-step ni-step--locked" id="ni-step-3" data-ni-step="3">
+      <div class="ni-step-head" data-ni-toggle>
+        <span class="ni-step-num">3</span>
+        <div class="ni-step-titles">
+          <div class="ni-step-name">Deployment Target</div>
+          <div class="ni-step-desc">Where your copy runs — this device, a cloud server, or a VPS.</div>
+        </div>
+        <i data-lucide="lock" class="ni-step-lock"></i>
+        <i data-lucide="chevron-down" class="ni-step-chev"></i>
+      </div>
+      <div class="ni-step-body">
+        <label class="ac-label" for="ni-target">Where to install</label>
+        <select id="ni-target" class="ac-input">
+          <option value="">Choose a target…</option>
+          <option value="cloud">Cloud Server</option>
+          <option value="local">This device</option>
+          <option value="termux">Linux / Termux</option>
+          <option value="windows">Windows</option>
+          <option value="macos">Mac</option>
+        </select>
+
+        <div id="ni-cloud-panel" class="ni-target-panel" hidden>
+          <div>
+            <label class="ac-label" for="ni-cloud-provider">Cloud provider</label>
+            <select id="ni-cloud-provider" class="ac-input"></select>
+          </div>
+          <div class="ni-credential-panel">
+            <button type="button" id="ni-use-saved-credential" class="ac-btn ac-btn-primary">
+              <i data-lucide="key-round" class="ni-btn-ico"></i><span id="ni-credential-btn-label">Use a saved credential</span>
+            </button>
+            <div id="ni-json-credential-field">
+              <label class="ac-label" for="ni-service-account-json">Service-account key (JSON)</label>
+              <textarea id="ni-service-account-json" class="ac-input ni-credential-json" rows="7"
+                placeholder="Paste the whole service-account JSON key here" spellcheck="false"></textarea>
+            </div>
+            <div class="ni-credential-actions">
+              <span id="ni-credential-status" class="ni-status"></span>
+              <button type="button" id="ni-save-connect" class="ac-btn ac-btn-primary">Save &amp; connect</button>
+            </div>
+          </div>
+          <div id="ni-cloud-details" hidden>
+            <div id="ni-cloud-account-status" class="ni-status"></div>
+            <div id="ni-cloud-project" class="ni-cloud-project"></div>
+            <div id="ni-cloud-config" class="ni-provider-config"></div>
+
+            <div class="ni-deploy-actions">
+              <button type="button" id="ni-deploy" class="ac-btn ac-btn-primary">
+                <i data-lucide="rocket" class="ni-btn-ico"></i>Deploy bare instance &amp; sync
+              </button>
+              <span id="ni-deploy-status" class="ni-status"></span>
+            </div>
+            <pre id="ni-deploy-log" class="ni-log" hidden></pre>
+          </div>
+        </div>
+
+        <div id="ni-manual-note" class="ni-target-note" hidden>
+          This target is shown for parity with the existing installer. Automatic post-install P2P enrollment is currently available for reachable cloud targets; manual command enrollment will follow without changing the legacy tab.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>

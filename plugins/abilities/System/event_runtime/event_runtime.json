@@ -1,0 +1,14 @@
+{
+  "display_name": "Event Runtime",
+  "kind": "ability",
+  "icon": "radio",
+  "color": "#7dcfff",
+  "description": "Watches configured event sources (webhooks, pollers, inboxes) and triggers agents when they fire. Turn off to stop all event-driven triggers. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 11,
+  "tools": [],
+  "_note": "Wired-in core singleton (app/events). main.py gates the leader 'event-runtime' registration on ability_app_enabled('event_runtime'). Descriptor-only by design."
+}

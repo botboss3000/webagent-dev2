@@ -1,0 +1,8 @@
+{
+  "id": "file-manager",
+  "label": "File Manager",
+  "icon": "folder-open",
+  "description": "Browse and manage this checkout.",
+  "group": "app-pages",
+  "runtime": "files"
+}

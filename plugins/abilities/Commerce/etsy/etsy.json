@@ -1,0 +1,17 @@
+{
+  "display_name": "Etsy",
+  "kind": "oauth",
+  "icon": "heart",
+  "color": "#e0af68",
+  "description": "Etsy shop, listing, inventory, and receipt management.",
+  "note": "Free API — an Etsy app, reviewed before production use.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [
+    "etsy_me",
+    "etsy_search_listings",
+    "etsy_list_my_shop_listings",
+    "etsy_create_draft_listing"
+  ],
+  "order": 6
+}

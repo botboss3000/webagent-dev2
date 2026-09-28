@@ -1,0 +1,529 @@
+<!-- New Deployment — the "New Deployment" tab body of the Instances page's
+     "New instance" tile (ui/main-panel/app/new-deployment/).
+
+     This is the install-a-new-copy machinery that used to live inside Data
+     Settings → Deployment → "+ New deployment" group. It was lifted OUT of that
+     page (which now keeps only the *current* deployment bits: the local
+     deployments list + the Export/Import setup codes) so the whole "spin up a new
+     WebAgent" flow lives on the Instances page instead, where the new copies show
+     up as tiles. The "+ New deployment" wrapper bar was discarded — the New
+     instance tile IS its dedicated home now.
+
+     Four expandable bars, unchanged from their old home so their existing wiring
+     keeps working (ids owned by deploy.js / dns.js):
+       1. Repo to deploy  (#ac-deploy-repo-row)    — the shared repo choice (WHAT
+          to install: URL / branch / access).
+       2. Configuration   (#ac-deploy-config-row)  — the settings carried into
+          every target (HOW it's set up: admin password + what config to embed).
+          Split out of the Repo bar so that bar stays focused on the repo itself.
+       3. Deploy target   (#ac-deploy-target-row)  — cloud / this device / Linux /
+          Windows / Mac, each revealing its own panel + live command.
+       4. Connect a domain(#ac-dns-main-row)       — point a domain at a server.
+
+     Loaded (fetched + mounted once, then re-parented across re-renders so its
+     typed state survives) by the sibling new-deployment.js `mountNewDeployment`.
+     Each bar's heavy contents are LAZY-loaded on first touch, not at mount: a touch
+     of the Repo or Deploy-target bar warms deploy.js (`initDeploy` + the /catalog
+     load); a touch of this domain bar warms dns.js (`initDns`). So the three bars
+     paint instantly and only the opened one fetches. Styling: the `ac-` component
+     classes come from the app-wide ui/shared/css/app3.css; the tile + tab chrome
+     from this folder's new-deployment.css.
+     REMOVE-WHEN: the New instance tile drops its New Deployment tab. -->
+<div class="ac-list inst-nd-list">
+        <!-- ── Repo details (shared) ── the repo choice entered ONCE and carried
+             into EVERY target below (deploy.js _readSharedRepo is the single source
+             of truth). The token + admin password are never stored. The `data-tip`
+             labels become circled "?" badges via deploy.js _wireManualTips, which
+             now also scans this row. Expand wired by _wireBootRow('ac-deploy-repo-row'). -->
+        <div class="ac-row" id="ac-deploy-repo-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="git-branch" class="lucide-icon ac-deploy-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Repo to deploy<span id="ac-deploy-repo-head" class="ac-deploy-fg-muted-fw400"></span></div>
+              <div class="ac-ability-desc">The WebAgent code to install — repository, branch and access.</div>
+            </div>
+            <!-- Clone-current-repo: a TOGGLE in the HEADER. One click fills these fields
+                 from the repo the Git Control page is on (its URL, branch and — if
+                 private — token) and ticks this app's config to carry along; clicking
+                 again reverts to the default production repo (bare). Reachable without
+                 expanding; the row's header-toggle ignores <button> clicks so it never
+                 opens the row. Wired in new-deployment.js (single-click, warms deploy.js
+                 then calls window.__deployToggleClone). -->
+            <button id="ac-deploy-repo-clone" class="ac-ra-icon-btn" type="button" title="Clone current repo — fill these fields from the Git Control page’s repo (click again to revert to the production repo)"><i data-lucide="git-fork"></i></button>
+          </div>
+          <div class="ac-ability-body">
+            <label class="ac-label" data-tip="The address of the WebAgent code on GitHub. Leave blank to install the standard WebAgent app; enter your own fork's address only if you maintain a custom copy.">Code to install (GitHub repository)</label>
+            <input id="ac-deploy-repo-url" class="ac-input" type="text" placeholder="https://github.com/botboss3000/webagent" autocomplete="off" spellcheck="false">
+
+            <!-- Repository access is AUTO-DETECTED from the URL above — no manual
+                 Public/Private picker. deploy.js (_probeRepo → /admin/deploy/probe-repo)
+                 quietly asks GitHub: a confirmed-public repo shows a green shield and
+                 needs no token; anything else shows an amber note and reveals the
+                 access-token field directly below, which then runs its own connection
+                 check. Both the status line and the token field sit right under the
+                 URL. "Clone current repo" pre-fills the token with the stored key and
+                 this status updates from it automatically. -->
+            <div id="ac-deploy-repo-status" class="ac-hint ac-hint ac-deploy-status-hidden"></div>
+
+            <!-- Reusable GitHub key (stored ENCRYPTED in the vault, like the cloud
+                 keys) — shown whenever one is on file so it can be Removed anytime.
+                 deploy.js _renderSavedKeyControls drives it; the access check, the
+                 manual commands and the cloud deploy all fall back to this key when
+                 the token field below is left blank. -->
+            <div id="ac-deploy-repo-saved-key" class="ac-hint ac-hint ac-deploy-status-hidden-mt6">
+              <i data-lucide="shield-check" class="lucide-icon ac-deploy-ico-14-success"></i>
+              <span id="ac-deploy-repo-saved-key-text">Saved GitHub key on file</span>
+              <a href="#" id="ac-deploy-repo-token-remove" class="ac-deploy-danger-link">Remove</a>
+            </div>
+
+            <div id="ac-deploy-repo-token-wrap" class="ac-deploy-hidden-mt10">
+              <label class="ac-label" data-tip="A GitHub personal access token, used so the target can download a private repository. By default it is not saved — for a manual install it is embedded in the command you copy or scan; for a cloud deploy it is sent to the new server to clone with, then discarded. Choose ‘Save key for reuse’ to keep it encrypted in the vault so future private clones use it automatically without re-pasting.">Access token</label>
+              <input id="ac-deploy-repo-token" class="ac-input" type="password" placeholder="GitHub personal access token" autocomplete="off" spellcheck="false">
+              <div id="ac-deploy-repo-token-status" class="ac-hint ac-hint ac-deploy-token-status"></div>
+              <!-- Save the just-verified key for reuse (encrypted in the vault). deploy.js
+                   only reveals this once a freshly-typed key has proved it works. -->
+              <div id="ac-deploy-repo-token-actions" class="ac-deploy-hidden-mt6">
+                <button id="ac-deploy-repo-token-save" class="ac-btn" type="button" class="ac-deploy-fs12-p4-10">Save key for reuse</button>
+              </div>
+              <div class="ac-hint ac-deploy-fs11-mt6">Used to fetch a private repository. By default it is <strong>not saved</strong> — it rides the built command / one-shot deploy, then is forgotten. Choose <strong>Save key for reuse</strong> to keep it <strong>encrypted in the vault</strong> so future private clones use it automatically.</div>
+            </div>
+
+            <label class="ac-label ac-deploy-mt10" data-tip="Which line of the code to install. 'main' is the stable release — leave it unless you specifically need a different branch. Used by every target (the cloud deploy and the Linux/Windows/Mac commands alike).">Version (git branch)</label>
+            <input id="ac-deploy-repo-branch" class="ac-input" type="text" placeholder="main" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <!-- ── Configuration ── the settings that ride along with EVERY deploy
+             target, lifted OUT of the Repo bar above so that bar stays about WHAT
+             to install and this one holds HOW it's set up: the optional admin
+             password + what config to carry onto the new install (AI key / vault /
+             database). All field ids are UNCHANGED from their old home, so deploy.js
+             keeps finding them (_readSharedRepo gathers them by id; the live
+             "Bare config / Includes this app's config" line #ac-deploy-repo-mode
+             now lives in THIS row's header, still driven by _updateRepoModeLine).
+             The data-tip labels become circled "?" badges via _wireManualTips, whose
+             selector now also scans this row. Expand + first-touch warm wired by
+             new-deployment.js _wireRows/_ensureDeploy for 'ac-deploy-config-row'. -->
+        <div class="ac-row" id="ac-deploy-config-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="sliders-horizontal" class="lucide-icon ac-deploy-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Configuration</div>
+              <!-- Live config-mode indicator: "Bare config" (fresh install) vs
+                   "Includes this app's config" (any config box below is ticked; the
+                   clone button ticks them). Driven by deploy.js _updateRepoModeLine. -->
+              <div class="ac-ability-desc" id="ac-deploy-repo-mode">Bare config</div>
+            </div>
+          </div>
+          <div class="ac-ability-body">
+            <!-- ── What to carry onto the new install ── each ticked box copies THIS
+                 install's config (database / vault / AI key) onto the new one so it
+                 comes up already set up instead of showing the setup page; leaving all
+                 unticked = a bare install the first visitor configures. The clone
+                 button in the Repo header ticks the config boxes. Reuses the keyless
+                 gather-and-encrypt engine (app/admin/bootstrap_bundle via
+                 app/deploy/config_embed) — no admin password needed for the config.
+                 deploy.js reads these in _readSharedRepo (embed_config = any ticked;
+                 embed_sections = the ticked ids) and injects the bundle into the cloud
+                 deploy / manual command. The old bare/include dropdown is gone — the
+                 boxes alone drive the mode. -->
+            <div class="ac-hint ac-deploy-fs11-lh15-mb10">Pick what to carry onto the new install. Anything ticked is packaged <strong>into the install command itself</strong> — no admin password needed — and applied on first open, then discarded. Leave all unticked for a bare install the first visitor sets up.</div>
+
+            <!-- Database (shared) — first, because ticking BOTH it and the vault carries
+                 the admin login + AI key automatically, which greys out the two boxes
+                 below (see deploy.js _syncSharedDbLocks). -->
+            <label class="ac-boot-check ac-boot-check ac-deploy-flex-check"><input type="checkbox" data-embed-sec="database" class="ac-deploy-mt2"><span><strong>Database (shared)</strong> — <span class="ac-deploy-fg3">point the new install at <em>this</em> app’s database, so it sees the same agents, chats and users. Untick to give it its own fresh database.</span></span></label>
+
+            <!-- Secrets vault -->
+            <label class="ac-boot-check ac-boot-check ac-deploy-flex-check"><input type="checkbox" data-embed-sec="vault" class="ac-deploy-mt2"><span><strong>Secrets vault</strong> — <span class="ac-deploy-fg3">which vault backend and its connection</span></span></label>
+
+            <!-- AI model & key — disabled (and force-ticked) once the database AND the
+                 vault are both carried: the key is then already reachable, so the
+                 backend ships whatever the new box can't resolve on its own. -->
+            <label class="ac-boot-check ac-boot-check ac-deploy-flex-check"><input type="checkbox" data-embed-sec="llm" class="ac-deploy-mt2"><span><strong>AI model &amp; key</strong> — <span class="ac-deploy-fg3">provider, preset model, the saved-model table + API key</span><span id="ac-deploy-llm-lock-note" class="ac-deploy-hidden-success"> · included automatically with the shared database + vault</span></span></label>
+
+            <!-- Admin password — a checkbox that reveals the password field. Disabled
+                 (and unticked) once the database AND vault are both carried: logins then
+                 live in the shared database's user_accounts table, so the new install
+                 reuses this admin and skips setup with nothing to pre-set. -->
+            <label class="ac-boot-check ac-boot-check ac-deploy-flex-check"><input type="checkbox" id="ac-deploy-pw-check" class="ac-deploy-mt2"><span><strong>Set an admin password</strong> — <span class="ac-deploy-fg3">pre-set the first admin login (6+ characters) instead of letting the first visitor pick it on the setup page</span></span></label>
+            <!-- Shown when Database (shared) + vault are both ticked: the admin login is
+                 carried, so there is nothing to set here. Toggled by _syncSharedDbLocks. -->
+            <div id="ac-deploy-admin-pw-note" class="ac-hint ac-hint ac-deploy-pw-note">
+              <i data-lucide="shield-check" class="lucide-icon ac-deploy-ico-13-success"></i>
+              <span>The shared database already holds the admin login, so the new install reuses it and skips the setup page — nothing to set here.</span>
+            </div>
+            <!-- Revealed only while the checkbox above is ticked (deploy.js _syncPwField). -->
+            <div id="ac-deploy-pw-wrap" hidden class="ac-deploy-m4-0-0-26">
+              <input id="ac-deploy-repo-admin-pw" class="ac-input" type="password" placeholder="admin password — 6+ characters" autocomplete="new-password" spellcheck="false">
+            </div>
+
+            <div id="ac-deploy-embed-note" class="ac-hint ac-deploy-fs11-lh15-mt8"></div>
+          </div>
+        </div>
+
+        <!-- ── Deploy target ── the "Deploy target" title is clickable: the header
+             toggle (new-deployment.js _wireRows) opens the row, revealing the target
+             picker at the top of the body. Choosing a target reveals its matching
+             `.ac-deploy-target-panel` below (deploy.js _syncTargetPanel switches the
+             panels; the header-toggle owns the open/close, so _syncTargetPanel no
+             longer touches the row's `expanded` class). -->
+        <div class="ac-row" id="ac-deploy-target-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="rocket" class="lucide-icon ac-deploy-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Deploy target</div>
+              <div class="ac-ability-desc">Where to install — cloud, this device, Linux, Windows or Mac.</div>
+            </div>
+          </div>
+          <div class="ac-ability-body">
+
+            <!-- The target picker, moved out of the row header into the body so the
+                 selection panel only shows once the bar is opened. Drives
+                 _syncTargetPanel exactly as before. -->
+            <label class="ac-label" for="ac-deploy-target">Where to install</label>
+            <select id="ac-deploy-target" class="ac-input" aria-label="Deploy target">
+              <option value="" selected>Select an option</option>
+              <option value="cloud">Cloud Server</option>
+              <option value="local">This device</option>
+              <option value="termux">Linux or Android (Termux)</option>
+              <option value="windows">Windows</option>
+              <option value="macos">Mac</option>
+            </select>
+
+            <!-- ── Cloud panel ── the provider sub-picker + settings + cloud key +
+                 saved servers + actions + live NDJSON log. The shared repo (URL/
+                 visibility/token) + admin password are injected into the deploy by
+                 deploy.js, so no repo/branch/admin fields render here. -->
+            <div class="ac-deploy-target-panel" id="ac-deploy-cloud-panel" data-target="cloud" class="ac-deploy-mt12">
+            <label class="ac-label">Where to deploy</label>
+            <select id="ac-deploy-provider" class="ac-input"></select>
+
+            <!-- ── Saved servers ── shown only for a profile-aware target (the SSH
+                 one, p.saved_servers). Pick a saved server to fill the form, name +
+                 Save the current one to add it to the list, or Delete one. Every
+                 Google VM you create is auto-added here too. Populated + wired by
+                 deploy.js (_renderServers / _onServerSelect / _onServerSave). -->
+            <div id="ac-deploy-servers-wrap" class="ac-deploy-hidden-mt10">
+              <label class="ac-label">Saved servers</label>
+              <select id="ac-deploy-servers" class="ac-input"></select>
+              <div class="ac-ra-actions ac-deploy-mt8">
+                <input id="ac-deploy-server-label" class="ac-input" type="text"
+                       placeholder="Name this server (e.g. Hetzner box)" autocomplete="off"
+                       spellcheck="false" class="ac-deploy-flex-auto">
+                <button id="ac-deploy-server-save" class="ac-btn" type="button">Save server</button>
+                <!-- Press-and-HOLD to delete (no confirm dialog): a danger fill sweeps
+                     the button; the deliberate hold IS the confirmation. Shared .ac-dz-hold
+                     styling; hold logic + --dz-hold duration in deploy.js (_beginDeleteHold). -->
+                <button id="ac-deploy-server-delete" class="ac-btn ac-deploy-danger-btn ac-dz-hold" type="button">
+                  <span class="ac-dz-fill"></span>
+                  <span class="ac-dz-hold-label">Hold to delete</span>
+                </button>
+              </div>
+              <div class="ac-hint ac-deploy-fs11-mt4-lh15">
+                Pick a saved server to fill the form, or “＋ New server…” to add one. Saving keeps its
+                address and login (stored encrypted) so you can reconnect with one click next time.
+              </div>
+            </div>
+
+            <!-- Settings + Cloud-key + rest + actions. A `progressive` target (the
+                 Google VM) reveals these in STAGES so the form isn't overwhelming:
+                 deploy.js puts ONLY the project field in #ac-deploy-config, the key
+                 in #ac-deploy-creds, and every OTHER setting in #ac-deploy-config-rest
+                 (which sits AFTER the key), then gates each stage on the one before
+                 (_applyCloudStages). The two section labels are hidden for a staged
+                 target — each field carries its own label. Non-staged targets (SSH)
+                 render every setting into #ac-deploy-config and show it all at once. -->
+            <label id="ac-deploy-settings-label" class="ac-label ac-deploy-mt10">Settings</label>
+            <div id="ac-deploy-config" class="ac-ra-fields"></div>
+
+            <label id="ac-deploy-key-label" class="ac-label ac-deploy-mt10">Cloud key</label>
+            <div id="ac-deploy-creds" class="ac-ra-fields"></div>
+
+            <!-- Progressive-only "rest of the settings" host — the non-gate config
+                 fields render here (after the key) so a staged form reveals in the
+                 order project → key → rest. Empty + unused for non-staged targets. -->
+            <div id="ac-deploy-config-rest" class="ac-ra-fields"></div>
+
+            <!-- Primary action = Activate (deploy); the advanced actions (test /
+                 save / tear-down) live behind "More" so they don't clutter the
+                 completion step. Button ids unchanged so their wiring is untouched. -->
+            <div id="ac-deploy-actions" class="ac-ra-actions ac-deploy-mt10">
+              <button id="ac-deploy-go" class="ac-btn ac-deploy-go-btn" type="button">Activate</button>
+              <button id="ac-deploy-reset" class="ac-btn" type="button" title="Reset the form (keeps project ID and JSON key)">Reset</button>
+              <button id="ac-deploy-more-btn" class="ac-btn" type="button" aria-expanded="false" aria-controls="ac-deploy-more-panel">More ▾</button>
+              <span id="ac-deploy-status" class="ac-hint ac-deploy-ml6"></span>
+            </div>
+            <div id="ac-deploy-more-panel" class="ac-deploy-more-panel" hidden>
+              <button id="ac-deploy-test" class="ac-btn" type="button">Test connection</button>
+              <button id="ac-deploy-save" class="ac-btn" type="button">Save settings</button>
+              <button id="ac-deploy-destroy" class="ac-btn" type="button">Tear down</button>
+            </div>
+
+            <!-- After a successful Activate, the live address of the deployment,
+                 shown below the status line as a new-tab link. Populated by
+                 deploy.js (_renderDeployResult) from the deploy result and rebuilt
+                 from the saved deployment record on reload, so it persists. -->
+            <div id="ac-deploy-result" class="ac-hint ac-deploy-mt8" hidden></div>
+
+            <pre id="ac-deploy-log" class="ac-deploy-log" hidden></pre>
+            </div><!-- /#ac-deploy-cloud-panel -->
+
+            <!-- ── Local-checkout panel ── point at another WebAgent repo folder on
+                 this machine + a free port, run alongside this one. Repo details don't
+                 apply here (it's an existing checkout on disk). Body ids owned by
+                 deploy.js (_initInstances / _registerAdd). -->
+            <div class="ac-deploy-target-panel" id="ac-deploy-local-panel" data-target="local" hidden class="ac-deploy-mt12">
+            <div class="ac-hint ac-deploy-fs11-mb10-lh15-muted">Repo details above aren’t used here — a local checkout runs a WebAgent folder already on this machine.</div>
+            <label class="ac-label">Repo folder *</label>
+            <input id="ac-inst-folder" class="ac-input" type="text" placeholder="C:\path\to\another-webagent" autocomplete="off" spellcheck="false">
+            <div class="ac-hint" id="ac-inst-folder-tip" class="ac-deploy-fs11-mt3">The folder of another WebAgent checkout (needs run.py + app/main.py).</div>
+
+            <label class="ac-label ac-deploy-mt10">Name</label>
+            <input id="ac-inst-label" class="ac-input" type="text" placeholder="Defaults to the folder name" autocomplete="off">
+
+            <label class="ac-label ac-deploy-mt10">Port *</label>
+            <input id="ac-inst-port" class="ac-input" type="number" min="1024" max="65535" placeholder="8081">
+            <div class="ac-hint" id="ac-inst-port-tip" class="ac-deploy-fs11-mt3">A free port, different from this app’s.</div>
+
+            <div class="ac-ra-actions ac-deploy-mt10">
+              <button id="ac-inst-add" class="ac-btn ac-deploy-go-btn" type="button">Add</button>
+              <span id="ac-inst-add-status" class="ac-hint ac-deploy-ml6"></span>
+            </div>
+            </div><!-- /#ac-deploy-local-panel -->
+
+            <!-- ── Linux/Android panel ── install-location + the LIVE command (+ QR)
+                 + a run-only command + steps, all built in the browser by deploy.js
+                 from the shared repo details (MANUAL_ROWS[termux]). The `data-tip`
+                 install-location label becomes a "?" badge via _wireManualTips. -->
+            <div class="ac-deploy-target-panel" id="ac-deploy-linux-panel" data-target="termux" hidden class="ac-deploy-mt12">
+            <!-- Install location (optional). Blank = the default shown as the
+                 placeholder (deploy.js fills it from MANUAL_ROWS.defaultDir). If
+                 WebAgent is already in this folder the command updates it to the
+                 repository above instead of re-installing. -->
+            <label class="ac-label" data-tip="The folder on the device to install WebAgent into. Leave blank for the default ($HOME/webagent). If WebAgent is already installed there, the command gracefully updates it to the repository above instead of starting over.">Install location (folder)</label>
+            <input id="ac-tx-dir" class="ac-input" type="text" autocomplete="off" spellcheck="false">
+
+            <!-- The command is shown LIVE (built + QR generated by deploy.js as
+                 the fields change) — there is no "generate" button. Copy grabs it;
+                 the QR button toggles a popover with the same command as a scannable
+                 code (mirrors Remote Access → Same network). -->
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Paste this into a Linux terminal, or Termux on a phone</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-tx-cmd"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-tx-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                  <button id="ac-tx-qr-btn" class="ac-btn ac-ra-icon-btn" type="button" title="Show QR code" aria-label="Show QR code"><i data-lucide="qr-code"></i></button>
+                </div>
+              </div>
+              <div id="ac-tx-status" class="ac-hint ac-deploy-mt6-fs115"></div>
+            </div>
+
+            <!-- Run-only command: start the server when WebAgent is ALREADY
+                 installed on this device (no clone, no rebuild). Static per
+                 platform — deploy.js fills the code + wires Copy (_manualRender /
+                 _initManualRows, RUN_* constants; the run field on MANUAL_ROWS). -->
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Already installed? Just start the server</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-tx-run"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-tx-run-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <ol class="ac-tx-steps" id="ac-tx-steps"></ol>
+            <div class="ac-deploy-cmd-note" id="ac-tx-note" hidden></div>
+            </div><!-- /#ac-deploy-linux-panel -->
+
+            <!-- ── Windows panel ── install-location + the LIVE PowerShell command
+                 (+ QR) + a run-only command + steps, built from the shared repo
+                 details (MANUAL_ROWS[windows]). -->
+            <div class="ac-deploy-target-panel" id="ac-deploy-win-panel" data-target="windows" hidden class="ac-deploy-mt12">
+            <!-- Install location (optional). Blank = the default ($env:USERPROFILE\webagent),
+                 filled in as the placeholder by deploy.js. An existing install here is
+                 updated to the repository above rather than re-installed. -->
+            <label class="ac-label" data-tip="The folder on the PC to install WebAgent into. Leave blank for the default (your user profile folder). If WebAgent is already installed there, the command gracefully updates it to the repository above instead of starting over.">Install location (folder)</label>
+            <input id="ac-win-dir" class="ac-input" type="text" autocomplete="off" spellcheck="false">
+
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Paste this into Windows PowerShell</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-win-cmd"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-win-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                  <button id="ac-win-qr-btn" class="ac-btn ac-ra-icon-btn" type="button" title="Show QR code" aria-label="Show QR code"><i data-lucide="qr-code"></i></button>
+                </div>
+              </div>
+              <div id="ac-win-status" class="ac-hint ac-deploy-mt6-fs115"></div>
+            </div>
+
+            <!-- Run-only command: start the server when it's ALREADY installed. -->
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Already installed? Just start the server</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-win-run"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-win-run-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <ol class="ac-tx-steps" id="ac-win-steps"></ol>
+            <div class="ac-deploy-cmd-note" id="ac-win-note" hidden></div>
+            </div><!-- /#ac-deploy-win-panel -->
+
+            <!-- ── Mac panel ── install-location + the LIVE Terminal command (+ QR)
+                 + a run-only command + steps, built from the shared repo details
+                 (MANUAL_ROWS[macos]). -->
+            <div class="ac-deploy-target-panel" id="ac-deploy-mac-panel" data-target="macos" hidden class="ac-deploy-mt12">
+            <!-- Install location (optional). Blank = the default ($HOME/webagent),
+                 filled in as the placeholder by deploy.js. An existing install here is
+                 updated to the repository above rather than re-installed. -->
+            <label class="ac-label" data-tip="The folder on the Mac to install WebAgent into. Leave blank for the default ($HOME/webagent). If WebAgent is already installed there, the command gracefully updates it to the repository above instead of starting over.">Install location (folder)</label>
+            <input id="ac-mac-dir" class="ac-input" type="text" autocomplete="off" spellcheck="false">
+
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Paste this into Terminal on your Mac</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-mac-cmd"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-mac-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                  <button id="ac-mac-qr-btn" class="ac-btn ac-ra-icon-btn" type="button" title="Show QR code" aria-label="Show QR code"><i data-lucide="qr-code"></i></button>
+                </div>
+              </div>
+              <div id="ac-mac-status" class="ac-hint ac-deploy-mt6-fs115"></div>
+            </div>
+
+            <!-- Run-only command: start the server when it's ALREADY installed. -->
+            <div class="ac-deploy-cmd-wrap ac-deploy-mt14">
+              <div class="ac-deploy-cmd-head">Already installed? Just start the server</div>
+              <div class="ac-deploy-cmd-row">
+                <code class="ac-deploy-cmd" id="ac-mac-run"></code>
+                <div class="ac-tx-cmd-btns">
+                  <button id="ac-mac-run-copy" class="ac-btn ac-ra-icon-btn" type="button" title="Copy command" aria-label="Copy command"><i data-lucide="copy"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <ol class="ac-tx-steps" id="ac-mac-steps"></ol>
+            <div class="ac-deploy-cmd-note" id="ac-mac-note" hidden></div>
+            </div><!-- /#ac-deploy-mac-panel -->
+
+          </div><!-- /.ac-ability-body (deploy target) -->
+        </div><!-- /#ac-deploy-target-row -->
+
+        <!-- ── Connect a domain ── moved here from the old standalone Domains
+             card so pointing a domain sits directly BELOW the deploy target,
+             inside the New-deployment group. Where the rows above CREATE a
+             server, this POINTS a domain you own at one — via the admin's DNS
+             provider (Cloudflare, Namecheap, Porkbun, DigitalOcean, Route 53,
+             Google Cloud DNS) or, keylessly, the exact record to set by hand.
+             The #ac-dns-* markup + the sibling dns.js (initDns) are unchanged by
+             the move (dns.js now scopes its field-gather to #ac-dns-main-row and
+             guards init on that id, since the #ac-dns-card wrapper is gone); DNS
+             providers stay drop-ins under app/dns/providers/. Backed by
+             /admin/dns/*; expand wired by _wireBootRow('ac-dns-main-row'). -->
+        <div class="ac-row ac-group" id="ac-dns-main-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="link" class="lucide-icon ac-deploy-ico-18-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Connect a domain to your server</div>
+              <div class="ac-ability-desc">Point a domain you own at a server you deployed — the app sets the DNS record, then HTTPS issues itself.</div>
+            </div>
+          </div>
+          <div class="ac-group-body">
+
+            <!-- STEP 1 — pick + connect the DNS provider. dns.js fills the <select>
+                 from /catalog and paints the provider's fields into #ac-dns-config
+                 (non-secret) + #ac-dns-creds (keys). The connect block hides for the
+                 keyless "Other / manual" provider. -->
+            <label class="ac-label" for="ac-dns-provider">Domain provider</label>
+            <select id="ac-dns-provider" class="ac-input" aria-label="Domain provider"></select>
+            <div id="ac-dns-summary" class="ac-hint ac-deploy-mt8"></div>
+            <ul id="ac-dns-requires" class="ac-hint ac-deploy-m6-0-0-pl18"></ul>
+            <!-- Lead-in shown only while the provider is NOT yet connected: tells the
+                 admin to follow the per-field steps to get their API details, and
+                 points anyone who can't get an API at the keyless "Other / manual"
+                 provider. dns.js toggles it. -->
+            <div id="ac-dns-guide-note" class="ac-hint ac-deploy-mt8" hidden></div>
+
+            <div id="ac-dns-connect-block">
+              <label class="ac-label ac-deploy-mt12">Connect your account</label>
+              <div id="ac-dns-config" class="ac-ra-fields"></div>
+              <div id="ac-dns-creds" class="ac-ra-fields"></div>
+              <div class="ac-ra-actions ac-deploy-mt10">
+                <button id="ac-dns-connect" class="ac-btn ac-deploy-go-btn" type="button">Connect</button>
+                <button id="ac-dns-test" class="ac-btn" type="button">Test</button>
+                <button id="ac-dns-disconnect" class="ac-btn" type="button" hidden>Disconnect</button>
+                <span id="ac-dns-connect-status" class="ac-hint ac-deploy-ml6"></span>
+              </div>
+            </div>
+
+            <!-- Placeholder shown INSTEAD of STEP 2 while an API provider isn't
+                 connected yet: the whole point-a-domain form below stays hidden
+                 until credentials are saved, so the card reads as one step at a
+                 time. dns.js toggles this against #ac-dns-point-block. -->
+            <div id="ac-dns-locked-hint" class="ac-hint ac-deploy-section-divider-flex" hidden>
+              <i data-lucide="lock" class="lucide-icon ac-deploy-ico-14-muted"></i>
+              <span>Connect your account above to choose a domain and point it at your server.</span>
+            </div>
+
+            <!-- STEP 2 — choose the domain + the server, then point it. Hidden by
+                 dns.js until the provider is connected (or for the keyless manual
+                 provider, which needs no credentials). -->
+            <div id="ac-dns-point-block" class="ac-deploy-section-divider-pt14">
+              <label class="ac-label" for="ac-dns-zone">Domain</label>
+              <!-- API providers: a picker of the domains the account controls
+                   (dns.js fills it after Connect). Manual provider: a plain text box
+                   for the domain. Only one shows at a time. -->
+              <div id="ac-dns-zone-wrap" class="ac-deploy-flex-gap8">
+                <select id="ac-dns-zone" class="ac-input ac-deploy-flex1"></select>
+                <button id="ac-dns-zone-refresh" class="ac-btn" type="button" title="Reload your domains">Reload</button>
+              </div>
+              <input id="ac-dns-domain" class="ac-input" type="text" placeholder="example.com"
+                     autocomplete="off" spellcheck="false" hidden>
+
+              <label class="ac-label" for="ac-dns-host" class="ac-deploy-mt10">Subdomain <span class="ac-deploy-fg-muted-fw400">— leave blank for the bare domain</span></label>
+              <input id="ac-dns-host" class="ac-input" type="text" placeholder="e.g. app  (or blank for example.com itself)"
+                     autocomplete="off" spellcheck="false">
+
+              <label class="ac-label ac-deploy-mt10">Point at server</label>
+              <!-- dns.js fills this with the servers the app knows about (last
+                   deployments + saved SSH boxes) plus a "Type an IP…" entry that
+                   reveals the box below. -->
+              <select id="ac-dns-target" class="ac-input"></select>
+              <input id="ac-dns-ip" class="ac-input" type="text" placeholder="203.0.113.10"
+                     autocomplete="off" spellcheck="false" class="ac-deploy-mt6" hidden>
+
+              <div id="ac-dns-options" class="ac-deploy-mt10-flex-wrap">
+                <label class="ac-deploy-flex-gap6">
+                  <span class="ac-label ac-deploy-m0">TTL</span>
+                  <input id="ac-dns-ttl" class="ac-input" type="number" value="300" min="60" class="ac-deploy-w90">
+                </label>
+                <label id="ac-dns-www-wrap" class="ac-deploy-flex-gap6">
+                  <input id="ac-dns-www" type="checkbox"> <span class="ac-label ac-deploy-m0">Also point www</span>
+                </label>
+                <label id="ac-dns-proxied-wrap" class="ac-deploy-hidden-flex">
+                  <input id="ac-dns-proxied" type="checkbox"> <span class="ac-label ac-deploy-m0">Cloudflare proxy (orange cloud)</span>
+                </label>
+              </div>
+
+              <div class="ac-ra-actions ac-deploy-mt12">
+                <button id="ac-dns-point" class="ac-btn ac-deploy-go-btn" type="button">Point domain</button>
+                <button id="ac-dns-verify" class="ac-btn" type="button">Verify</button>
+                <span id="ac-dns-status" class="ac-hint ac-deploy-ml6"></span>
+              </div>
+              <div id="ac-dns-result" class="ac-hint ac-deploy-mt8" hidden></div>
+              <pre id="ac-dns-log" class="ac-deploy-log" hidden></pre>
+            </div>
+
+          </div><!-- /.ac-group-body -->
+        </div><!-- /#ac-dns-main-row -->
+        </div><!-- /.ac-list -->

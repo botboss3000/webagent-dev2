@@ -1,0 +1,593 @@
+<template data-slot="#settings-page-slot-app-functions">
+<div class="settings-page" id="settings-page-app-functions" data-pa-page="app_settings" hidden>
+<div class="ac-category-group" id="ac-app-functions-card" data-pa-area="app_functions">
+    <div class="ac-category-summary" class="ac-cursor-default">
+      <i data-lucide="cog" class="lucide-icon" class="ac-ico-16 ac-fg-accent"></i>
+      <span class="ac-category-title">App Functions</span>
+    </div>
+    <div class="ac-category-body">
+      <div class="ac-hint" class="ac-mb8">
+        Background services the app runs on its own — not tools an agent chooses to use. Turn one off to stop that automatic behaviour app-wide.
+      </div>
+      <div id="ac-app-functions-list" class="ac-list"></div>
+
+      <!-- Static app-function rows (not ability-catalog entries). A separate
+           `.ac-list` below the catalog-driven list above (which app-functions.js
+           clears + repopulates, so static rows can't live inside it). -->
+      <div class="ac-list" class="ac-mt8">
+
+        <!-- ── Row · Safety Switch (simple on/off) ──
+             Master switch for the restart safety lock. When ON, every server
+             restart shows a confirmation splash before background services
+             start. OFF = normal boot, no splash. Wired in app-settings.js
+             (_initSafetySwitch). Default OFF. -->
+        <div class="ac-ability-row" id="ac-safety-switch-row">
+          <span class="ac-ability-icon"><i data-lucide="shield-alert" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Safety Switch</div>
+            <div class="ac-ability-desc">When on, every server restart shows a confirmation splash that pauses background services until an admin approves. Off = normal boot with no splash.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-safety-switch" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+
+        <div class="ac-row" id="ac-transcript-order-recovery-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="arrow-down-up" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Transcript order recovery</div>
+              <div class="ac-ability-desc">Sequence is source-of-truth; fallback to timestamp when drift is detected; keep threshold if minor network timing jitter causes wrong ordering.</div>
+            </div>
+            <span class="ac-config-control">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-transcript-order-recovery-enabled" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+            </span>
+          </div>
+          <div class="ac-ability-body">
+            <label class="ac-label" for="ac-transcript-order-recovery-threshold-seconds">Timestamp drift threshold</label>
+            <div class="ac-flex-gap8 ac-mt6">
+              <input type="number" id="ac-transcript-order-recovery-threshold-seconds" class="ac-input ac-w80" min="0" step="1" value="60">
+              <span class="ac-hint">seconds</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Session completion notifications (simple on/off) ──
+             The sliding notification panel that appears when a background
+             session finishes (running → done / interrupted / error). App-wide
+             switch saved server-side (session_completion_notifications in
+             app-settings.json); OFF hides the panel app-wide — completed
+             sessions still show in the session list. Wired in app-settings.js
+             (_initSessionNotifications). -->
+        <div class="ac-ability-row" id="ac-session-notifications-row">
+          <span class="ac-ability-icon"><i data-lucide="bell" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Session completion notifications</div>
+            <div class="ac-ability-desc">Shows a sliding notification panel when a background session finishes, with one-click return to that session. Off hides the panel app-wide — completed sessions still appear in the session list.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-session-notifications" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+
+        <!-- ── Row · Always-on display (simple on/off) ──
+             Keeps the device screen on while the app tab is visible, using the
+             Screen Wake Lock API (ui/shared/js/screen-wake.js).
+             Saved server-side (always_on_display in app-settings.json); served
+             via /api/v1/auth/ui-config and applied at boot by
+             ui/shared/js/main.js so every visitor's browser honours it. Wired in
+             app-settings.js (_initAlwaysOnDisplay); state loaded in
+             _loadAppSettings. Default OFF (screen sleeps normally). -->
+        <div class="ac-ability-row" id="ac-always-on-display-row">
+          <span class="ac-ability-icon"><i data-lucide="sun-moon" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Always-on display</div>
+            <div class="ac-ability-desc">Keeps the device screen on while the app is open in the browser. Off lets the screen sleep normally.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-always-on-display" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+
+        <!-- ── Row · Voice dictation (expandable policy) ──
+             The toggle allows recorded audio to leave the browser for
+             transcription by the configured LLM provider. Expand to choose
+             browser-native-first with LLM fallback, or LLM for every dictation.
+             OFF is browser-native only. -->
+        <div class="ac-row" id="ac-voice-dictation-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="mic" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">LLM voice dictation</div>
+              <div class="ac-ability-desc">Allow recorded speech to be transcribed by the configured AI provider. Off permits browser-native dictation only.</div>
+            </div>
+            <span class="ac-config-control">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-voice-dictation-llm" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+            </span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Choose when WebAgent records audio and sends it to the configured transcription provider. Browser-native dictation does not use your configured LLM.
+            </div>
+            <label class="ac-label" for="ac-voice-dictation-mode" class="ac-mt10">Dictation engine</label>
+            <span class="ac-config-control" class="ac-inline-flex-mt6">
+              <select id="ac-voice-dictation-mode" class="ac-input ac-config-sel">
+                <option value="browser_then_llm">Browser if available, LLM otherwise</option>
+                <option value="llm_only">Always use LLM transcription</option>
+              </select>
+            </span>
+          </div>
+        </div>
+
+        <!-- ── Row · Widget launcher button (expandable config) ──
+             The floating bot button (bottom-right) that opens the chat widget panel.
+             Master toggle. Expand to configure: corner buttons, agent, prompt,
+             and detection modes (12-o'clock pickup, surroundings).
+             Saved server-side (widget_launcher_visible + chat_widget in
+             app-settings.json); served via /api/v1/auth/ui-config and read by
+             ui/chat-widget/js/webagent-launcher.js. Default HIDDEN. -->
+        <div class="ac-row" id="ac-widget-launcher-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="bot" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Widget launcher button</div>
+              <div class="ac-ability-desc">The floating bot icon in the bottom-right corner that opens the chat widget panel. On when an admin wants users to see and use the widget; off hides it app-wide. Expand to configure corners, agent, prompt and detection.</div>
+            </div>
+            <span class="ac-config-control">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-widget-launcher" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+            </span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Configure what the widget shows, which agent it routes to, and how it detects elements around it. Every setting applies app-wide.
+            </div>
+
+            <!-- ── Corner Buttons ── -->
+            <div class="ac-mt10 ac-mb4">
+              <span class="ac-ability-name">Corner buttons</span>
+              <span class="ac-ability-desc">Hover-activated action buttons that appear around the launcher icon.</span>
+            </div>
+            <div class="ac-flex-gap8 ac-mt6">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-corners-enabled" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <label for="ac-chatwidget-corners-enabled" class="ac-label">Enable corner buttons</label>
+            </div>
+            <div class="ac-flex-gap8 ac-mt6 ac-mb6">
+              <label class="ac-label ac-mr4">Hover delay</label>
+              <input type="number" id="ac-chatwidget-corners-delay" class="ac-input ac-w80" min="0" max="2000" step="50" value="200">
+              <span class="ac-hint">ms</span>
+            </div>
+            <!-- Top-left corner -->
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-corner-tl" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label ac-w60">Top left</span>
+              <select id="ac-chatwidget-corner-tl-type" class="ac-input ac-config-sel ac-w140">
+                <option value="sessions">Sessions</option>
+                <option value="new_session">New session</option>
+                <option value="open_all">Open all</option>
+                <option value="close_all">Close all</option>
+                <option value="element_pickup">Element pickup</option>
+              </select>
+              <input type="text" id="ac-chatwidget-corner-tl-icon" class="ac-input ac-w80" placeholder="icon" value="list">
+              <input type="text" id="ac-chatwidget-corner-tl-tooltip" class="ac-input ac-w120" placeholder="tooltip" value="Show sessions">
+            </div>
+            <!-- Top-right corner -->
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-corner-tr" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label ac-w60">Top right</span>
+              <select id="ac-chatwidget-corner-tr-type" class="ac-input ac-config-sel ac-w140">
+                <option value="sessions">Sessions</option>
+                <option value="new_session" selected>New session</option>
+                <option value="open_all">Open all</option>
+                <option value="close_all">Close all</option>
+                <option value="element_pickup">Element pickup</option>
+              </select>
+              <input type="text" id="ac-chatwidget-corner-tr-icon" class="ac-input ac-w80" placeholder="icon" value="plus">
+              <input type="text" id="ac-chatwidget-corner-tr-tooltip" class="ac-input ac-w120" placeholder="tooltip" value="New session">
+            </div>
+            <!-- Bottom-left corner -->
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-corner-bl" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label ac-w60">Bottom left</span>
+              <select id="ac-chatwidget-corner-bl-type" class="ac-input ac-config-sel ac-w140">
+                <option value="sessions">Sessions</option>
+                <option value="new_session">New session</option>
+                <option value="open_all">Open all</option>
+                <option value="close_all">Close all</option>
+                <option value="element_pickup" selected>Element pickup</option>
+              </select>
+              <input type="text" id="ac-chatwidget-corner-bl-icon" class="ac-input ac-w80" placeholder="icon" value="crosshair">
+              <input type="text" id="ac-chatwidget-corner-bl-tooltip" class="ac-input ac-w120" placeholder="tooltip" value="Toggle element pickup">
+            </div>
+            <!-- Bottom-right corner -->
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-corner-br" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label ac-w60">Bottom right</span>
+              <select id="ac-chatwidget-corner-br-type" class="ac-input ac-config-sel ac-w140">
+                <option value="sessions">Sessions</option>
+                <option value="new_session">New session</option>
+                <option value="open_all" selected>Open all</option>
+                <option value="close_all">Close all</option>
+                <option value="element_pickup">Element pickup</option>
+              </select>
+              <input type="text" id="ac-chatwidget-corner-br-icon" class="ac-input ac-w80" placeholder="icon" value="maximize-2">
+              <input type="text" id="ac-chatwidget-corner-br-tooltip" class="ac-input ac-w120" placeholder="tooltip" value="Open all minimized">
+            </div>
+
+            <!-- ── Agent ── -->
+            <div class="ac-mt14 ac-mb4">
+              <span class="ac-ability-name">Agent</span>
+              <span class="ac-ability-desc">Which agent the widget routes messages to. Leave blank for the default WebAgent.</span>
+            </div>
+            <div class="ac-flex-gap8 ac-mt4">
+              <input type="text" id="ac-chatwidget-agent-id" class="ac-input ac-w200" placeholder="Agent ID (blank = default WebAgent)">
+            </div>
+
+            <!-- ── Prompt ── -->
+            <div class="ac-mt14 ac-mb4">
+              <span class="ac-ability-name">Prompt</span>
+              <span class="ac-ability-desc">Injected at the top of every message sent from the widget. Leave blank for no injection.</span>
+            </div>
+            <div class="ac-mt4">
+              <textarea id="ac-chatwidget-prompt" class="ac-input ac-w100p" rows="3" placeholder="Instructions prepended to every widget message…"></textarea>
+            </div>
+
+            <!-- ── Detection ── -->
+            <div class="ac-mt14 ac-mb4">
+              <span class="ac-ability-name">Element detection</span>
+              <span class="ac-ability-desc">What the widget can detect around it on the page and report to the agent.</span>
+            </div>
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-pickup-12" class="conn-toggle" checked>
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label">12-o'clock pickup — detects the element directly above the widget centre</span>
+            </div>
+            <div class="ac-flex-gap8 ac-mt4">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-chatwidget-pickup-surroundings" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+              <span class="ac-label">Detect surroundings — samples N/E/S/W around the widget (~60px radius)</span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── Row · Hide header during keyboard [smaller screens] ──
+             When ON and the chat input is focused on a narrow screen (≤800px),
+             the main app header and chat panel header collapse so the keyboard
+             doesn't crowd the input. Saved server-side (hide_header_on_keyboard
+             in app-settings.json); served via /api/v1/auth/ui-config. Default
+             OFF — the header stays visible. Expand for threshold config. -->
+        <div class="ac-row" id="ac-hide-header-kb-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="panel-top-close" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Hide header during keyboard <span class="ac-fw400-fg3-fs12">[smaller screens]</span></div>
+              <div class="ac-ability-desc">When on and the chat input is focused on a narrow screen (&le;800px), collapse the header and chat panel title to reclaim vertical space from the on-screen keyboard. Off keeps the header visible at all times.</div>
+            </div>
+            <span class="ac-config-control">
+              <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+                <input type="checkbox" id="ac-hide-header-kb" class="conn-toggle">
+                <span class="conn-toggle-track"></span>
+              </label>
+            </span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Choose <strong>Always</strong> to hide the header whenever the keyboard is open on a narrow screen. Or set a pixel threshold &mdash; the header only hides when the remaining viewport height falls below that value.
+            </div>
+            <label class="ac-label" class="ac-mt10">Hide when viewport below</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-hide-header-kb-threshold" class="ac-input" min="0" max="9999" step="10" class="ac-w120" value="200">
+              <span class="ac-hint">px (0 = always hide)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Stream Buffer (in-memory per-turn event log for WS replay) ──
+             MOVED here from the retired Advanced group. Control ids unchanged
+             (`ac-storage-sbuf-*`) so ui/shared/js/storage.js keeps binding. -->
+        <div class="ac-row" id="ac-row-streambuffer">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="activity" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Stream Buffer</div>
+              <div class="ac-ability-desc">How long each chat turn's events stay in memory for replay after a refresh.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-storage-sbuf-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Each chat turn keeps its events (stream tokens, tool calls, results) in memory so a refresh or session switch can replay what was missed. Buffer is dropped this many seconds after the turn finishes. 0 = drop immediately. Max 3600.
+            </div>
+            <label class="ac-label" class="ac-mt10">Retention seconds</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-storage-sbuf-seconds" class="ac-input" min="0" max="3600" step="1" class="ac-w120" value="60">
+              <button id="ac-storage-sbuf-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-storage-sbuf-status" class="ac-hint" class="ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Auto-resume recovery (resume attempt budget + backoff) ──
+             The two knobs that decide whether/when a crashed run is re-ignited:
+             the per-run resume attempt budget (run_max_resume_attempts in
+             app-settings.json) and the exponential backoff base
+             (run_resume_backoff_seconds). Read by app/agent/runner.py through
+             admin.settings.get_self_heal_config(). The attempt limit is BOTH the
+             default and the CEILING for the per-agent override on Agents →
+             Runtime → Limits. Wired in app-settings.js (_initResumeRecovery). -->
+        <div class="ac-row" id="ac-resume-recovery-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="refresh-cw" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Auto-resume recovery</div>
+              <div class="ac-ability-desc">How many times a run that stopped involuntarily (server restart, crash, frozen) is automatically re-ignited before it is marked failed, how many of those attempts may share one error type, and how long to wait between attempts. Both limits are also the ceiling for each agent's own override.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-resume-recovery-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              Each resume attempt waits <strong>base &times; 2<sup>attempt</sup></strong> seconds (capped at 30 minutes). The <strong>per-run limit</strong> is every auto-resume a crashed run gets in total; the <strong>per-error-type limit</strong> stops a run early when the <em>same</em> cause (server restart, zombie, frozen, crash, empty response) repeats that many times, so one repeating fault cannot burn the whole budget — the run stops at whichever limit is reached first. Both counters are <strong>per run</strong>: they start at zero when a fresh turn begins, and a manual Continue bypasses both for one attempt. Raising the limits lengthens how long a genuinely broken run keeps retrying before it gives up — agents without their own override inherit them exactly.
+            </div>
+            <label class="ac-label ac-mt10" for="ac-resume-max-attempts">Resume attempts (app limit)</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-resume-max-attempts" class="ac-input ac-w120" min="0" max="99" step="1" value="6">
+              <span class="ac-hint">attempts per run</span>
+            </div>
+            <label class="ac-label ac-mt10" for="ac-resume-per-cause-attempts">Resume attempts (per error type)</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-resume-per-cause-attempts" class="ac-input ac-w120" min="0" max="99" step="1" value="3">
+              <span class="ac-hint">attempts per cause &middot; 0 = off</span>
+            </div>
+            <label class="ac-label ac-mt10" for="ac-resume-backoff-seconds">Backoff base</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-resume-backoff-seconds" class="ac-input ac-w120" min="1" max="86400" step="1" value="30">
+              <span class="ac-hint">seconds</span>
+              <button id="ac-resume-recovery-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-resume-recovery-status" class="ac-hint" class="ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Closing-message gate (attempt budget + per-requirement cap) ──
+             The END-OF-RUN corrective-turn budget: how many extra turns the run
+             may spend getting its final working-agent message to meet the closing
+             contract (a valid flag, a 1-N word notification, a non-empty message).
+             This is REQUIREMENT COMPLIANCE, not error recovery — deliberately
+             separate from the Auto-resume recovery row above (different trigger,
+             counter and lifecycle; never "per error type"). Both values are BOTH
+             the default AND the CEILING for the per-agent override on Agents →
+             Runtime → Limits (run_max_closing_attempts /
+             run_max_closing_attempts_per_requirement in app-settings.json), read
+             by app/agent/closing_message.py (effective_max_attempts). Wired in
+             app-settings.js (_initClosingMessageGate).
+             The two budget fields read TOP-DOWN in the shared gate-field pattern —
+             name (label) on its own line, the control on the next, its description
+             under that — the same stacked `.ac-gate-param` arrangement the gate
+             params use on Agent tools & abilities (dom-utils.js
+             `buildGateParamRowsHtml`). Save + status keep their own row so the
+             description sits directly under the box it explains.
+             (GATES-PARAM-LAYOUT: app-level ⇄ agent-level stay mirrored.) -->
+        <div class="ac-row" id="ac-closing-gate-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="flag" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Closing message gate</div>
+              <div class="ac-ability-desc">How many corrective turns a run may spend getting its final message to meet the closing-message contract (a valid flag, a short notification above 0 and within the word limit, a non-empty message), and how many of those one still-unmet requirement may use. Both limits are also the ceiling for each agent's own override. This is requirement compliance, not error recovery.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-closing-gate-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              The closing gate re-injects its instruction while the run's final message does not yet meet the contract; nothing has failed, so this budget is <strong>not</strong> the resume/error counters above. The <strong>overall limit</strong> is every corrective turn a run gets in total; the <strong>per-requirement limit</strong> stops a run early when one requirement (flag, notification, message) keeps failing, so a single stubborn requirement cannot burn the whole budget — the run stops at whichever is reached first, then shows the last message as a labelled partial with a system note. Both are <strong>per run</strong>, both are the ceiling for the per-agent override, and agents without their own override inherit them exactly.
+            </div>
+            <label class="ac-label ac-mt10" for="ac-closing-max-attempts">Closing-message attempts (app limit)</label>
+            <input type="number" id="ac-closing-max-attempts" class="ac-input ac-w120" min="0" max="99" step="1" value="8">
+            <div class="ac-hint ac-mt6">Turns per run.</div>
+            <label class="ac-label ac-mt10" for="ac-closing-per-requirement-attempts">Closing-message attempts (per requirement)</label>
+            <input type="number" id="ac-closing-per-requirement-attempts" class="ac-input ac-w120" min="0" max="99" step="1" value="3">
+            <div class="ac-hint ac-mt6">Turns per requirement &middot; 0 = off.</div>
+            <div class="ac-flex-gap8 ac-mt10">
+              <button id="ac-closing-gate-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-closing-gate-status" class="ac-hint ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Pre-tool progress-message gate (app-wide progress-update style) ──
+             The pre-tool progress-message gate INFORMS, it does not gate: in Auto mode the first edit
+             is held back exactly once so the agent posts a progress update it is about to
+             execute as a visible message, and then the run carries straight on —
+             no approval is requested, none is waited for, and the progress update's content
+             is never checked. Gate-off and Plan/Ask paths are untouched. This row
+             is the APP-WIDE style for that message: it writes
+             data/config/app-settings.json → gate_settings['pre_tool_progress_message']
+             ['format'] via PUT /admin/settings/gates/pre_tool_progress_message, which
+             app/agent/pre_tool_progress.py (assemble_instruction) stacks on top of the
+             descriptor's own wording and BELOW the per-agent override on
+             Agents → Modes → the pre-tool progress-message gate row. Guidance only — published as
+             written, never validated.
+             Sibling row: the Closing-message gate directly above is the same
+             family of run-contract gates, so it keeps the same row order and
+             head-click expand behaviour (_wireBootRow). Wired in app-settings.js
+             (_initPreToolProgressMessageGate). -->
+        <div class="ac-row" id="ac-pre-tool-progress-message-gate-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="megaphone" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Pre-edit progress message gate</div>
+              <div class="ac-ability-desc">Recommended for Auto mode: before its first edit, the agent sends a deliberate, tool-free progress message describing the work it is about to do, then carries on in the same run. Nothing waits for approval and the message content is never judged. Set the app-wide style that message should follow.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-pre-tool-progress-message-gate-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              The gate requires a <strong>separate, tool-free message</strong>: every Auto-mode edit remains blocked until the agent sends one deliberate progress message describing the work it is about to do. The run resumes automatically when that message is posted, so the user sees it as its own bubble between the activity before it and the activity that performs the edits. The message is published exactly as written — nothing audits or validates its prose.
+            </div>
+            <label class="ac-label ac-mt10" for="ac-pre-tool-progress-message-gate-format">Pre-edit progress message instructions (app-wide guidance)</label>
+            <textarea id="ac-pre-tool-progress-message-gate-format" class="ac-input" rows="4" placeholder="e.g. Headline first — what changes and why, then the order you will work in."></textarea>
+            <div class="ac-hint ac-mt6">Applied app-wide, before any per-agent override. Each agent can append its own on Agents → Modes → the Pre-edit progress message gate row; agents with no override inherit this one. Both layers guide the message content; the separate tool-free boundary is enforced.</div>
+            <div class="ac-flex-gap8 ac-mt10">
+              <button id="ac-pre-tool-progress-message-gate-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-pre-tool-progress-message-gate-status" class="ac-hint ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Assertions gate (app-wide corrective-turn budget) ──
+             The assertions gate opens every run by declaring the user's concrete
+             requirements as a checklist, then holds the run open until each one is
+             answered for (see app/agent/assertions.py). This row is that gate's
+             REQUIREMENT-COMPLIANCE budget: how many corrective turns a run may
+             spend getting those answers, and nothing has failed while it does.
+             Deliberately separate from the closing-message budget above (a
+             different requirement, counter and lifecycle: the declaration beat,
+             not the end-of-run message) and from Auto-resume recovery, which is
+             error recovery and never "per error type".
+             The app value is BOTH the default for an agent with no override AND
+             the ceiling the per-agent value is clamped to (Agents → Runtime →
+             Limits → Assertion Attempts). It writes
+             run_max_assertions_attempts in app-settings.json, read by
+             app/agent/assertions.py (effective_max_attempts). Wired in
+             app-settings.js (_initAssertionsGate).
+             Same stacked gate-field layout as the Closing-message gate row above
+             (GATES-PARAM-LAYOUT: app-level ⇄ agent-level stay mirrored). -->
+        <div class="ac-row" id="ac-assertions-gate-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="list-checks" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Assertions gate</div>
+              <div class="ac-ability-desc">How many corrective turns a run may spend answering for the assertions it declared before it is allowed to finish. A stated "not met" is a valid close; only an unanswered assertion holds the run open. Requirement compliance, not error recovery.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-assertions-gate-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              The run declares its own assertions on its first tool call, then answers for each one in its final message. While an assertion is still unanswered the gate re-injects its instruction &mdash; nothing has failed, so this budget is <strong>not</strong> the resume/error counters above. It is the ceiling for the per-agent override, and agents without their own override inherit it exactly.
+            </div>
+            <label class="ac-label ac-mt10" for="ac-assertions-max-attempts">Assertion attempts (app limit)</label>
+            <input type="number" id="ac-assertions-max-attempts" class="ac-input ac-w120" min="0" max="99" step="1" value="4">
+            <div class="ac-hint ac-mt6">Turns per run.</div>
+            <div class="ac-flex-gap8 ac-mt10">
+              <button id="ac-assertions-gate-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-assertions-gate-status" class="ac-hint ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Active session limit (concurrency cap + FIFO queue) ──
+             App-wide cap on how many sessions may be actively running a turn
+             at the same time. Sessions beyond the cap wait in a first-come
+             queue and start only after an active session completes. 0 =
+             unlimited (default). Saved server-side (max_active_sessions in
+             app-settings.json); enforced by app/agent/session_gate.py. Wired
+             in app-settings.js (_initMaxActiveSessions). -->
+        <div class="ac-row" id="ac-max-active-sessions-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="list-ordered" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Active session limit</div>
+              <div class="ac-ability-desc">Cap how many sessions can run at the same time, app-wide. Sessions above the cap queue up and start only after an active session finishes. 0 = unlimited.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-max-active-sessions-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              When the cap is reached, new sessions that try to run wait in line (first come, first served) and begin as soon as an active session completes. Each session occupies one slot only while its turn is actually running — a session is considered active between the moment its turn starts and the moment that turn finishes.
+            </div>
+            <label class="ac-label" class="ac-mt10">Concurrent sessions</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-max-active-sessions" class="ac-input" min="0" max="9999" step="1" class="ac-w120" value="0">
+              <button id="ac-max-active-sessions-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-max-active-sessions-status" class="ac-hint ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Row · Default Max Output Tokens (agents) ──
+             Output-token ceiling used ONLY for an agent that has never set its
+             own Max Tokens (Agents → Runtime → Limits → Max Tokens). An agent's
+             own value is authoritative and is sent to the provider unchanged —
+             there is no clamp against the context window and no env override, so
+             the number on the Runtime page is exactly what goes on the wire.
+             This app-wide value is also the starting value for a newly created
+             agent. Saved server-side (default_max_tokens in app-settings.json);
+             read on the loop's hot path by app/agent/loop.py
+             (_global_max_output_tokens) via app/admin/settings.py
+             (get_default_max_tokens). Wired in app-settings.js
+             (_initDefaultMaxTokens). -->
+        <div class="ac-row" id="ac-default-max-tokens-row">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="gauge" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Default Max Output Tokens</div>
+              <div class="ac-ability-desc">Output ceiling for an agent that has never set its own Max Tokens, and the starting value for a new agent. An agent's own Runtime setting always wins.</div>
+            </div>
+            <span class="ac-ability-status" id="ac-default-max-tokens-badge"></span>
+          </div>
+          <div class="ac-ability-body">
+            <div class="ac-hint">
+              An agent's own Runtime → Limits → Max Tokens is authoritative and is sent to the provider unchanged. This app-wide value applies only to an agent that has never set one, and seeds a newly created agent. Set it too low and a long response is cut off — most visibly a large generated dashboard, whose whole HTML document rides inside the tool call.
+            </div>
+            <label class="ac-label ac-mt10" for="ac-default-max-tokens">Default max output tokens</label>
+            <div class="ac-flex-gap8">
+              <input type="number" id="ac-default-max-tokens" class="ac-input ac-w120" min="1" max="1000000" step="1" value="8096">
+              <button id="ac-default-max-tokens-save" class="ac-btn ac-btn-primary">Save</button>
+              <span id="ac-default-max-tokens-status" class="ac-hint ac-ml6"></span>
+            </div>
+          </div>
+        </div>
+
+    </div>
+  </div>
+
+</div>
+</div>
+</template>

@@ -1,0 +1,2094 @@
+/* JOURNEY ENTRY: app.* — /app?tab=app&view=<catalog-page-id>; registry: docs/claude/ui-journeys.md. */
+/* Instances — MAIN-PANEL page styling.
+   A grid of instance tiles + an expandable tabbed detail region, modelled on the
+   main Agents page (ui/main-panel/agents/agents.css) but SELF-CONTAINED with an
+   `inst-` prefix so it never depends on that page's stylesheet being loaded.
+
+   COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / rgba(var(--brand-rgb), a) for the
+   accent, var(--success|warning|danger) for status, the --bg-*, --fg-*, --border
+   neutrals for surfaces. Both dark AND light must stay correct — a couple of
+   explicit body.light-mode overrides below match the agents page's ink tints. */
+
+/* ── Page mount ──
+   Instances is a MAIN-PANEL tab now (moved out of Admin Tools): style the
+   #tab-app mount the same way #tab-agents does — a full-height flex column
+   with the page's own background — so .inst-root's height:100% resolves against
+   it exactly like the Agents page. The old .files-sidebar[data-view="instances"]
+   panel-less rules further down are dead code as a main page (no Admin Tools
+   sidebar) and kept only for history. */
+#tab-app {
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0);
+  position: relative;
+}
+
+/* Dashboard-only page dock. Like the Agents Sessions dock, this is a sibling of
+   the page scroll grid—not content inside it—so it remains visible throughout the
+   carousel-to-detail transition. The active dashboard panel reserves its height. */
+#inst-dashboard-footer-dock {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+  display: none;
+  box-shadow: 0 -1px 0 var(--border);
+}
+#tab-app:has(.inst-dashboard-host) #inst-dashboard-footer-dock {
+  display: flex;
+}
+
+.inst-root {
+  display: flex;
+  flex-direction: column;
+  /* Definite height + own clip: the scroll lives on .inst-grid below. A bare
+     `flex: 1` (basis 0%) inside .files-main — which is only *stretched* to
+     height, not explicitly sized — is treated as indefinite by browsers, so
+     .inst-grid grows to content instead of scrolling (the Dashboard dodges this
+     by setting height:100% on its own main). height:100% + overflow:hidden is
+     the known-good pin; don't swap it back to flex:1. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-0);
+  /* Single source of truth for the page's side inset — the one edge margin from
+     the panel edge to content. Feeds the tile grid, the carousel row, the
+     carousel chevrons AND the opened-instance detail region, so they all share
+     the exact same margin and can never drift apart (mirrors the Agents page's
+     --agents-content-inset). Currently 0 — the page runs edge-to-edge and each
+     individual element/sub-page owns its own internal padding. */
+  --inst-content-inset: 0px;
+}
+/* Mobile / narrow screens: keep the same 0 edge inset (previously halved
+   20px → 10px; now there is no page-level inset to halve). */
+@media (max-width: 800px) {
+  .inst-root { --inst-content-inset: 0px; }
+}
+
+/* ── Toolbar ── */
+.inst-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px var(--inst-content-inset) 12px;
+  flex-shrink: 0;
+}
+.inst-toolbar-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.inst-toolbar-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700; color: var(--fg-1);
+}
+.inst-toolbar-title > svg, .inst-toolbar-title > .lucide-icon { width: 17px; height: 17px; }
+.inst-toolbar-sub { font-size: 12px; color: var(--fg-4); font-weight: 400; }
+
+.inst-tb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  font-size: 12px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04); color: var(--fg-1); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.inst-tb-btn:hover { background: rgba(var(--ink-rgb), 0.12); border-color: rgba(var(--ink-rgb), 0.30); }
+.inst-tb-btn > * { pointer-events: none; }
+.inst-tb-btn > svg, .inst-tb-btn > .lucide-icon { width: 14px; height: 14px; }
+
+/* ── Grid shell ──
+   Outer shell: a flex column holding the toolbar, squares strip, and (when an
+   instance is open) the expanded detail region below it.
+   - Grid mode: the shell doesn't scroll; the squares scroller fills it.
+   - Carousel mode: the shell becomes the SINGLE vertical scroll container for
+     the toolbar, carousel row, and expanded card, so scrolling down lifts the
+     toolbar and carousel off-screen and gives the card full height. The open
+     instance's TAB BAR (.inst-tabs) then STICKS to the top of this scroller,
+     so once the toolbar + squares row + the card's head/action row scroll
+     away the tabs pin in place and only the detail body below keeps
+     scrolling. */
+.inst-grid {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.inst-grid.carousel {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.inst-grid.carousel::-webkit-scrollbar { width: 5px; }
+.inst-grid.carousel::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+
+/* The tile scroller — a wrapping grid. */
+.inst-squares {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 12px;
+  padding: 4px var(--inst-content-inset) 24px;
+}
+
+/* ── One instance tile ── */
+.inst-square {
+  position: relative;
+  width: 120px; height: 120px;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  padding: 12px;
+  border: var(--border-width) solid var(--border); border-radius: 14px;
+  background: var(--bg-1);
+  cursor: pointer;
+  transition: border-color .14s ease, background .14s ease, transform .14s ease, box-shadow .14s ease;
+}
+.inst-square:hover { border-color: rgba(var(--brand-rgb), 0.5); transform: translateY(-1px); }
+.inst-square.active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.45);
+}
+.inst-square.is-self { background: rgba(var(--brand-rgb), 0.06); }
+
+.inst-square-top { display: flex; align-items: flex-start; gap: 8px; }
+.inst-icon-wrap {
+  width: 40px; height: 40px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px;
+  background: rgba(var(--brand-rgb), 0.16); color: var(--brand);
+}
+.inst-icon-wrap > svg, .inst-icon-wrap > .lucide-icon { width: 20px; height: 20px; }
+/* Per-platform tint so a mixed fleet reads at a glance. */
+.inst-icon-wrap.plat-win { background: rgba(var(--brand-rgb), 0.16); color: var(--brand); }
+.inst-icon-wrap.plat-mac { background: rgba(var(--purple-rgb), 0.16); color: var(--purple); }
+.inst-icon-wrap.plat-linux { background: rgba(var(--success-rgb), 0.16); color: var(--success); }
+.inst-icon-wrap.plat-other { background: rgba(var(--ink-rgb), 0.1); color: var(--fg-3); }
+
+.inst-status-dot {
+  width: 8px; height: 8px; flex: 0 0 auto; margin-left: auto; margin-top: 4px;
+  border-radius: 50%;
+  background: var(--fg-4);
+}
+.inst-status-dot.online { background: var(--success); box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.18); }
+
+.inst-square-body { margin-top: auto; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.inst-square-name {
+  font-size: 12.5px; font-weight: 650; color: var(--fg-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.inst-square-meta {
+  font-size: 11px; color: var(--fg-4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.inst-self-badge {
+  align-self: flex-start;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px;
+  background: rgba(var(--brand-rgb), 0.18); color: var(--brand);
+}
+
+/* ── Phantom loading square ──────────────────────────────────────────────────
+   One skeleton tile shown while the connected instances are still loading
+   (first paint / refresh with no cloud data yet). Mirrors the real tile's
+   dimensions so it swaps out with zero layout shift; inert (no click wiring)
+   and gently breathing until real tiles replace it. */
+.inst-phantom-square {
+  position: relative;
+  width: 120px; height: 120px;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  padding: 12px;
+  border: var(--border-width) solid var(--border); border-radius: 14px;
+  background: var(--bg-1);
+  pointer-events: none;
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-top { display: flex; align-items: flex-start; gap: 8px; }
+.inst-phantom-icon {
+  width: 40px; height: 40px; flex: 0 0 auto;
+  border-radius: 11px;
+  background: var(--bg-tint);
+}
+.inst-phantom-dot {
+  width: 8px; height: 8px; margin-left: auto; margin-top: 4px;
+  border-radius: 50%;
+  background: var(--bg-tint);
+}
+.inst-phantom-body { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.inst-phantom-line {
+  height: 10px; border-radius: 5px;
+  background: var(--bg-tint);
+}
+.inst-phantom-line.short { width: 55%; }
+@keyframes inst-phantom-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* ── Pending square (partial-loading "fall back to being last") ───────────────
+   One labelled skeleton tile per cloud account still loading, appended at the
+   END of the grid while its instances are in flight (see _pendingSquareHtml in
+   instances.js). Ready cards keep their ordered slots; a pending card sits at
+   the tail, breathing like the phantom, and is replaced by the account's real
+   tiles (in prewarm order) the moment its data lands. Same box + inner skeleton
+   blocks as the phantom square so the swap is zero-layout-shift. */
+.inst-square-pending {
+  position: relative;
+  width: 120px; height: 120px;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  padding: 12px;
+  border: var(--border-width) dashed var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-1);
+  pointer-events: none;
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-square-pending .inst-square-body { margin-top: auto; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inst-square-pending .inst-square-name { font-size: 12.5px; font-weight: 650; color: var(--fg-3); }
+.inst-square-pending .inst-square-name .inst-phantom-line { display: block; width: 78%; height: 10px; border-radius: 5px; background: var(--bg-tint); }
+.inst-square-pending .inst-square-meta { font-size: 11px; color: var(--fg-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Phantom first-paint shell (STATIC — ships in instances.html) ─────────
+   The page partial carries this skeleton INSIDE #inst-root so the tab is
+   never blank between opening and instances.js's first _render() (the entry
+   module is a large dynamic import + the fleet/cloud loads are network waits).
+   It mirrors the real first paint — toolbar row, TWO squares (New tile + one
+   instance), and the open Overview detail below (sticky head, action buttons,
+   tab bar, fact grid) — with the same dimensions, so the swap to live content
+   is zero-layout-shift. Purely decorative (aria-hidden, pointer-events:none,
+   no data-* attrs), so no click wiring can ever bind to it; _render()'s
+   innerHTML rebuild wipes it on first paint, then the page's per-section
+   phantoms (fleet square, cloud overview, New-Deployment bars) layer in as
+   data arrives. */
+.inst-phantom-shell { pointer-events: none; }
+.inst-phantom-tb-icon {
+  width: 17px; height: 17px; flex: 0 0 auto;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-tb-title {
+  width: 110px; height: 15px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-tb-sub {
+  display: inline-block;
+  width: 150px; height: 11px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-tb-btn {
+  width: 82px; height: 28px; flex: 0 0 auto;
+  border-radius: 7px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+/* The static New-tile echo reuses the real .inst-square-new classes (dashed
+   accent box from new-deployment.css) but swaps the plus + label for inert
+   skeleton blocks. */
+.inst-phantom-new { cursor: default; }
+.inst-phantom-new-plus {
+  display: inline-block;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-new-label {
+  display: inline-block;
+  width: 76px; height: 10px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+
+/* ── Overview-detail phantom (echoes the open card's shape) ────────────────
+   The static shell's lower half mirrors the "This device" Overview the page
+   opens by default: sticky head (icon · name/sub · close), head action
+   buttons, the tab bar, and the two-column fact grid. Reuses the real
+   .inst-detail/.inst-tabs/.inst-facts shells so margins/borders/grid match
+   exactly; only the innards are inert skeleton blocks. */
+.inst-phantom-dt-icon {
+  width: 38px; height: 38px; flex: 0 0 auto;
+  border-radius: 10px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-dt-name {
+  display: inline-block;
+  width: 150px; height: 14px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-dt-sub {
+  display: inline-block;
+  width: 190px; height: 11px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-dt-close {
+  margin-left: auto; flex: 0 0 auto;
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-act-btn {
+  width: 82px; height: 28px; flex: 0 0 auto;
+  border-radius: 7px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-tab {
+  width: 62px; height: 14px;
+  margin: 8px 14px 10px;   /* mirrors .inst-tab's padding → same tab-bar height */
+  border-radius: 4px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-tab.active { background: rgba(var(--brand-rgb), 0.25); }
+.inst-phantom-fact-label {
+  display: inline-block;
+  width: 74px; height: 9px;
+  border-radius: 4px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+.inst-phantom-fact-value {
+  display: inline-block;
+  width: 150px; height: 12px;
+  border-radius: 5px;
+  background: var(--bg-tint);
+  animation: inst-phantom-breathe 1.6s ease-in-out infinite;
+}
+
+/* ── Empty / loading states ── */
+.inst-empty {
+  width: 100%; padding: 48px 20px; text-align: center;
+  font-size: 13px; color: var(--fg-4); line-height: 1.5;
+}
+.inst-empty > svg, .inst-empty > .lucide-icon { width: 26px; height: 26px; opacity: 0.5; margin-bottom: 8px; }
+
+/* ── Expanded detail region (below the grid, when a tile is active) ──
+   FLAT REDESIGN (mirrors the Agents page): the open instance is NOT a bordered
+   card floating on the page — it's the base content. So no visible box border,
+   no boxed background, no rounded card frame. The head / tabs / body all align
+   to the SAME single edge margin (the --inst-content-inset side margin) with no
+   nested second margin. The sticky head keeps an opaque fill below (needed so it
+   hides content scrolling beneath it). */
+.inst-detail {
+  margin: 0 var(--inst-content-inset) 24px;
+  background: transparent;
+}
+.inst-detail-head {
+  display: flex; align-items: center; gap: 12px;
+  /* Horizontal padding 0 so the icon/name/close align to the single edge margin
+     as the tabs + body below — no nested second indent. */
+  padding: 14px 0;
+  border-bottom: var(--border-width) solid var(--border);
+}
+.inst-detail-head .inst-icon-wrap { width: 38px; height: 38px; border-radius: 10px; }
+.inst-detail-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.inst-detail-name {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 700; color: var(--fg-1);
+}
+.inst-detail-sub { font-size: 12px; color: var(--fg-4); }
+
+/* Primary action buttons pinned in the open card's sticky header (moved out of
+   the Overview body): a wrapable row between the head (icon/name/close) and the
+   tabs, so Open/Start/Stop/Delete/Ping/… never scroll away with the facts. */
+.inst-detail-head-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 12px 0 0;
+}
+.inst-detail-head-actions .inst-tb-btn { height: 28px; }
+.inst-detail-head-actions .inst-ping-status { flex-basis: 100%; }
+.inst-tunnel-platform-notice {
+  align-self: center;
+  max-width: 520px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--warning, var(--fg-3));
+}
+.inst-detail-close {
+  margin-left: auto; flex: 0 0 auto;
+  width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: transparent; color: var(--fg-3); cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.inst-detail-close:hover { background: rgba(var(--ink-rgb), 0.1); color: var(--fg-1); }
+.inst-detail-close > * { pointer-events: none; }
+.inst-detail-close > svg, .inst-detail-close > .lucide-icon { width: 15px; height: 15px; }
+
+/* ── Tab bar (masked edge-fade carousel) ──
+   Mirrors the Agents page's in-card tab carousel (.agent-card-tabs-wrap) — a
+   horizontally scrollable tab strip with edge-fade masks + chevron buttons over
+   the faded edges. The wrapper hosts the scroller + chevrons; the alpha mask is
+   on the scroller itself (paints no colour, so the fade blends into ANY themed
+   surface). Toggled by the can-scroll-left / can-scroll-right classes
+   _wireTabCarousel keeps. */
+.inst-tabs-wrap { position: relative; min-width: 0; }
+.inst-tabs {
+  display: flex; align-items: center; gap: 2px;
+  padding: 8px 0 0;   /* horizontal 0 → aligns to the single edge margin */
+  border-bottom: var(--border-width) solid var(--border);
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: none;
+  min-width: 0;
+}
+.inst-tabs::-webkit-scrollbar { display: none; }
+
+/* Edge-fade masks — the scroller only fades on the side that has more to scroll. */
+.inst-tabs-wrap.can-scroll-right .inst-tabs {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+}
+.inst-tabs-wrap.can-scroll-left .inst-tabs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px);
+}
+.inst-tabs-wrap.can-scroll-left.can-scroll-right .inst-tabs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+}
+
+/* Chevron buttons — transparent, sit above the faded edge. */
+.inst-tabs-chev {
+  position: absolute; top: 8px; bottom: 0; width: 30px;
+  display: none; align-items: center; justify-content: center;
+  padding: 0; background: none; border: none; cursor: pointer;
+  color: var(--fg-2); font-size: 14px; line-height: 1; z-index: 2;
+  transition: color 0.15s;
+}
+.inst-tabs-chev.left  { left: 0; }
+.inst-tabs-chev.right { right: 0; }
+.inst-tabs-chev:hover { color: var(--fg-1); }
+.inst-tabs-wrap.can-scroll-left  .inst-tabs-chev.left  { display: flex; }
+.inst-tabs-wrap.can-scroll-right .inst-tabs-chev.right { display: flex; }
+
+.inst-tab {
+  position: relative;
+  padding: 8px 14px 10px;
+  font-size: 12.5px; font-weight: 600; color: var(--fg-3);
+  background: transparent; border: none; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  white-space: nowrap;   /* never wrap / compress in the scroll row */
+  flex-shrink: 0;
+  transition: color .12s ease, border-color .12s ease;
+}
+.inst-tab:hover { color: var(--fg-1); }
+/* One active underline belongs to the label + active-tab action as a unit. */
+.inst-tab-wrap { position:relative; display:inline-flex; align-items:center; flex:0 0 auto; border-bottom:2px solid transparent; margin-bottom:-1px; }
+/* App header drag feedback mirrors the Agents carousel: source recedes and the
+   target exposes a leading insertion edge without changing strip geometry. */
+.inst-tab-wrap[draggable="true"] { cursor:grab; }
+.inst-tab-wrap.dragging { opacity:.48; cursor:grabbing; }
+.inst-tab-wrap.drag-over::before { content:""; position:absolute; z-index:3; top:4px; bottom:4px; left:-1px; width:2px; border-radius:2px; background:var(--brand); pointer-events:none; }
+.inst-tab-wrap:has(.inst-tab.active) { border-bottom-color:var(--brand); }
+.inst-tab.active { color:var(--brand); border-bottom-color:transparent; }
+.inst-tab-wrap .inst-tab { padding-right:7px; }
+/* App-page actions live in a floating sibling of the scrolling tab strip so
+   opening them never creates a second tab-row line or gets clipped by overflow. */
+.inst-tab-more-button {
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:4px 7px 4px 1px; border:0; background:transparent;
+  color:var(--fg-3); cursor:pointer;
+}
+.inst-tab-more-button:hover, .inst-tab-more-button:focus-visible { color:var(--fg-1); }
+.inst-tab-more-button > svg, .inst-tab-more-button > .lucide-icon { width:15px; height:15px; }
+.inst-tab-more-menu {
+  position:absolute; top:calc(100% + 4px); z-index:4;
+  display:flex; flex-direction:column; min-width:112px; padding:4px;
+  border:var(--border-width) solid var(--border); border-radius:7px;
+  background:var(--bg-elev); box-shadow:0 8px 20px rgba(0,0,0,.18);
+}
+.inst-tab-more-menu[hidden] { display:none; }
+.inst-tab-more-menu button {
+  padding:6px 8px; border:0; border-radius:4px; background:transparent;
+  color:var(--fg-1); font:inherit; font-size:12px; text-align:left; white-space:nowrap; cursor:pointer;
+}
+.inst-tab-more-menu button:hover, .inst-tab-more-menu button:focus-visible { background:var(--bg-2); }
+
+/* Horizontal padding 0: the single edge margin is the detail region's side
+   margin, so content aligns to it directly with no nested second margin. */
+.inst-detail-body { padding: 18px 0 22px; overflow-y: visible; }
+
+/* App sub-pages use the same centered 750px reading/form column as Agent
+   sub-pages. Dashboard, Usage Data, File Manager, and Admin Tools remain
+   full-width because each is a dedicated canvas or table workspace. */
+.inst-detail-body > :not(.inst-dashboard-host):not(.inst-users-host):not(.inst-file-manager-host):not(.inst-admin-host) {
+  box-sizing: border-box;
+  width: min(100%, 750px);
+  margin-inline: auto;
+}
+
+/* Overview: a two-column key/value grid. */
+.inst-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px 20px;
+}
+.inst-fact { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inst-fact-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.2px; text-transform: uppercase;
+  color: var(--fg-4);
+}
+.inst-fact-label > svg, .inst-fact-label > .lucide-icon { width: 13px; height: 13px; }
+.inst-fact-value { font-size: 13px; color: var(--fg-1); word-break: break-word; }
+.inst-fact-value.mono { font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); }
+.inst-fact-value a { color: var(--brand); text-decoration: none; }
+.inst-fact-value a:hover { text-decoration: underline; }
+.inst-device-os { font-weight: 600; }
+.inst-device-prov { font-weight: 600; }
+.inst-device-prov a { color: var(--brand); }
+.inst-device-proj { font-size: 12px; color: var(--fg-2); }
+.inst-device-proj a { color: var(--brand); }
+.inst-device-connect-btn { color: var(--brand); font-weight: 500; cursor: pointer; background: none; border: none; font-size: 12px; padding: 1px 2px; }
+.inst-device-connect-btn:hover { text-decoration: underline; }
+.inst-device-connect { background: var(--bg-2); border: 1px solid var(--border-1); border-radius: 8px; padding: 14px 16px; margin-top: 10px; }
+.inst-device-connect-head { font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--fg-1); }
+.inst-device-connect-hint { font-size: 12px; color: var(--fg-3); margin-bottom: 12px; line-height: 1.4; }
+.inst-device-connect-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.inst-device-connect-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.inst-device-connect-actions { display: flex; align-items: center; gap: 8px; }
+/* Saved-credential summary rows — shown in the "summary" panel mode */
+.inst-dc-saved-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--fg-4); margin-bottom: 4px; }
+.inst-dc-saved-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: var(--border-width) solid var(--border); border-radius: 8px;
+  background: var(--bg-0); padding: 8px 10px; margin-bottom: 6px;
+}
+.inst-dc-saved-name { flex: 0 0 auto; font-size: 12px; font-weight: 600; color: var(--fg-1); }
+.inst-dc-saved-project { flex: 0 0 auto; font-size: 11px; color: var(--fg-4); font-family: var(--font-mono); }
+.inst-dc-saved-actions { flex: 1 1 auto; display: flex; gap: 5px; justify-content: flex-end; }
+.inst-dc-new-row { display: flex; align-items: center; gap: 6px; }
+/* Top-of-panel status note (set programmatically by _deviceConnectSave / _deviceConnectUseSaved) */
+.inst-device-connect-note {
+  font-size: 12px; line-height: 1.5; padding: 7px 10px; border-radius: 6px;
+  margin-bottom: 8px; color: var(--fg-2); background: var(--bg-1); border: var(--border-width) solid var(--border);
+}
+.inst-device-connect-note-warn { color: var(--warning); border-color: var(--warning); background: rgba(var(--warning-rgb), 0.06); }
+.inst-device-connect-note-ok { color: var(--success); border-color: var(--success); background: rgba(var(--success-rgb), 0.06); }
+/* Phantom/skeleton placeholder text — shown while cloud data loads, then
+   replaced smoothly when real data arrives (no layout shift since the size
+   is locked by the fact row). Animated subtle pulse that stops after 3
+   cycles to keep it calm. */
+.inst-ghost {
+  display: inline-block;
+  color: var(--fg-4);
+  font-size: 12px;
+  font-style: italic;
+  animation: inst-ghost-pulse 1.5s ease-in-out 3;
+  opacity: 0.7;
+}
+@keyframes inst-ghost-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* "Database" fact — shared-DB vs. not-shared indicator (see _dbShareValue).
+   A coloured pill followed by a one-line plain-English note. */
+.inst-db-badge {
+  display: inline-block; vertical-align: 1px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 7px; border-radius: 999px;
+  border: var(--border-width) solid var(--border-strong); color: var(--fg-3);
+}
+.inst-db-badge.inst-db-shared {
+  color: var(--success); border-color: var(--success); background: rgba(var(--success-rgb), 0.10);
+}
+.inst-db-badge.inst-db-sep { color: var(--fg-3); background: transparent; }
+.inst-db-note { display: block; margin-top: 3px; font-size: 11px; color: var(--fg-4); line-height: 1.4; }
+.inst-db-note.inst-db-warn { color: var(--warning); }
+/* Live provider details for this device's database and vault. */
+.inst-db-sources { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; padding-top: 7px; border-top: var(--border-width) solid var(--border); }
+.inst-db-source { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; line-height: 1.4; color: var(--fg-3); }
+.inst-db-source-label { flex: 0 0 72px; font-size: 10px; font-weight: 700; letter-spacing: 0.2px; text-transform: uppercase; color: var(--fg-4); }
+
+/* "Tunnel" fact — Remote Access (cloudflared / ngrok) state for an instance
+   (see _tunnelFactHtml). A state pill + provider name, then the public address on
+   its own line. Reuses the same pill shape as the DB badge above. */
+.inst-tun-pill {
+  display: inline-block; vertical-align: 1px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 7px; border-radius: 999px;
+  border: var(--border-width) solid var(--border-strong); color: var(--fg-3);
+}
+.inst-tun-pill.inst-tun-on {
+  color: var(--success); border-color: var(--success); background: rgba(var(--success-rgb), 0.10);
+}
+.inst-tun-pill.inst-tun-off { color: var(--fg-3); background: transparent; }
+.inst-tun-pill.inst-tun-na { color: var(--warning); border-color: var(--warning); background: rgba(var(--warning-rgb), 0.08); }
+.inst-tun-prov { font-size: 11px; color: var(--fg-3); margin-left: 4px; }
+.inst-tun-url { margin-top: 3px; font-size: 12px; }
+
+/* Simple "+" trigger — plain text, clickable */
+.inst-tun-plus {
+  display: inline; color: var(--primary); cursor: pointer; font-size: 14px;
+  margin-left: 2px; vertical-align: middle;
+}
+.inst-tun-plus:hover { color: var(--primary-hover, var(--primary)); }
+
+/* Edit/remove action spans (pencil, x, Save, Cancel) */
+.inst-tun-act-btn {
+  display: inline; color: var(--fg-3); cursor: pointer; font-size: 13px;
+  margin-left: 4px; vertical-align: middle;
+}
+.inst-tun-act-btn:hover { color: var(--primary); }
+.inst-tun-act-btn[data-act="tunnel-save-url"] { color: var(--success); }
+.inst-tun-act-btn[data-act="tunnel-save-url"]:hover { color: var(--success); opacity: 0.8; }
+.inst-tun-act-btn i { width: 12px; height: 12px; }
+
+/* Custom URL row — URL link + edit/remove actions */
+.inst-tun-custom { margin-top: 3px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.inst-tun-custom .inst-url-row { flex: 0 1 auto; }
+
+/* Inline confirm row when removing a tunnel URL — Cancel + hazard Remove */
+.inst-tun-confirm-actions { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
+.inst-tun-confirm-actions .inst-tb-btn { height: 24px; font-size: 11px; padding: 0 8px; }
+
+/* Inline input row when editing / adding a tunnel URL */
+.inst-tun-input-row {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 3px; vertical-align: middle;
+}
+.inst-tun-input {
+  width: 140px; height: 22px; font-size: 12px;
+  padding: 1px 5px; border: var(--border-width) solid var(--border);
+  border-radius: 4px; background: var(--bg); color: var(--fg);
+  outline: none;
+}
+.inst-tun-input:focus { border-color: var(--primary); }
+
+.inst-detail-actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+.inst-detail-actions .inst-tb-btn { height: 30px; }
+
+/* ── Carousel mode (a tile is active) — mirrors the main Agents page ──
+   With a tile open, the wrapping tile grid collapses into a SINGLE horizontal
+   row (a carousel) pinned above the expanded detail card. Because .inst-grid is
+   the vertical scroll container, scrolling is TWO-PHASED exactly like the
+   Agents page: scrolling down lifts the toolbar and carousel off-screen, then
+   the TAB BAR (.inst-tabs — Overview/Dashboard/Settings/Users) PINS to the top
+   of the scroller (the card's head + action buttons scroll away above it) and
+   stays put while the detail body below keeps scrolling under it. The
+   Configuration page's own subnav (.inst-settings-host #app-config-subnav)
+   sticks BELOW the pinned tab bar (offset rule further down). Toggled by the
+   `.carousel` class instances.js adds to .inst-grid whenever an instance is
+   active. */
+
+/* The squares wrapper hosts the row scroller + its edge-fade chevrons. In grid
+   mode it's a transparent pass-through; the chevrons stay hidden. */
+.inst-squares-wrap { position: relative; }
+
+/* Carousel: one non-wrapping horizontal row that scrolls sideways. */
+.inst-grid.carousel .inst-squares {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-content: center;
+  padding: 4px var(--inst-content-inset) 12px;   /* 4px top clears the active tile's 2px glow ring */
+  scrollbar-width: none;
+  overscroll-behavior-x: none;
+}
+.inst-grid.carousel .inst-squares::-webkit-scrollbar { display: none; }
+.inst-grid.carousel .inst-square { flex: 0 0 auto; }  /* never compress in the row */
+
+/* ── Carousel edge fades + chevrons ──
+   Same masked-edge technique as the Agents page: a CSS alpha mask fades the row
+   to transparent at a scrollable edge (paints no colour, so it blends into the
+   surface in either theme), with transparent chevron buttons over the faded
+   edge. Toggled by the can-scroll-left / can-scroll-right classes the JS keeps. */
+.inst-carousel-chev {
+  position: absolute; top: 4px; bottom: 12px; width: 30px;
+  display: none; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--fg-3); font-size: 18px; line-height: 1; z-index: 2;
+}
+.inst-carousel-chev:hover { color: var(--fg-1); }
+.inst-carousel-chev.left  { left: var(--inst-content-inset); }
+.inst-carousel-chev.right { right: var(--inst-content-inset); }
+.inst-grid.carousel .inst-squares-wrap.can-scroll-left  .inst-carousel-chev.left  { display: flex; }
+.inst-grid.carousel .inst-squares-wrap.can-scroll-right .inst-carousel-chev.right { display: flex; }
+
+.inst-grid.carousel .inst-squares-wrap.can-scroll-right .inst-squares {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent 100%);
+}
+.inst-grid.carousel .inst-squares-wrap.can-scroll-left .inst-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px);
+}
+.inst-grid.carousel .inst-squares-wrap.can-scroll-left.can-scroll-right .inst-squares {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%);
+}
+
+/* ── Detail header (sticky tabs — two-phase scroll, mirrors the Agents page) ──
+   The .inst-detail overflow is visible in carousel mode so nested sticky
+   elements (the tab bar, the Configuration subnav) resolve against the
+   .inst-grid scroller. Scrolling has TWO phases:
+     1. The toolbar + tile carousel row scroll off-screen.
+     2. Only the TAB BAR (.inst-tabs — Overview/Dashboard/Settings/Users) pins
+        to the top of the scroller and stays put while the head (icon + name +
+        close), the action buttons and the detail body below keep scrolling
+        under it. WHY `display:contents` on the wrapper: a `position:sticky`
+        element can only travel inside its own containing block — the wrapper's
+        box (head + actions + tabs) is short, so the tabs could only stay stuck
+        for its height. Collapsing the wrapper's box makes the tabs' containing
+        block the whole .inst-detail card, which is what lets them stay pinned
+        for the entire body scroll (same technique as .ac-category-group in
+        app3.css). */
+.inst-grid.carousel .inst-detail { overflow: visible; margin-bottom: 32px; }
+.inst-grid.carousel .inst-detail-sticky {
+  /* Collapsed — the head + action buttons scroll away with the page; only the
+     sticky .inst-tabs-wrap below pins. No background needed: nothing sticks here. */
+  display: contents;
+}
+.inst-grid.carousel .inst-tabs-wrap {
+  position: sticky;
+  top: 0;
+  /* Above everything the detail body can throw at it: the Configuration
+     subnav (4), the bottom-pinned assistant bar (5) and the dashboard's
+     dragging card (5) all stay underneath this opaque bar. */
+  z-index: 6;
+  /* Opaque page fill — required so content scrolling under the pinned tab bar
+     is hidden behind it. --bg-0 matches the page background around the card,
+     so the pinned bar blends seamlessly (the head above it has scrolled away). */
+  background: var(--bg-0);
+}
+
+/* ── Panel-less view: collapse the admin sidebar to the bare icon strip ──
+   Instances has NO sub-panel (its whole partial is just the #admin-tools main
+   slot), so — exactly like the Dashboard and Settings views — pin the sidebar
+   to the 38px icon strip and let the tile grid take the remaining width. These
+   live here (not in the frame's files.css) so the view stays a self-contained
+   drop-in. Equal specificity to the dashboard/settings rules but a different
+   data-view, so there's no conflict; the !important width beats the sidebar's
+   persisted inline width, and the .maximized override out-specifies the generic
+   mobile "hide main" rule regardless of stylesheet load order. */
+.files-sidebar[data-view="instances"] {
+  width: 38px !important;
+  min-width: 38px !important;
+  max-width: 38px !important;
+  flex: 0 0 38px;
+  /* PANEL-LESS-NO-BAND (mirrors files.css settings/dashboard): the sidebar's
+     base width/min-width transition held the min-width at its 160px floor when
+     navigating in from a panel view, leaving a ~120px empty band beside the
+     icon strip — a running transition overrides even !important, so the 38px
+     pin never settled. Killing the transition lets the pin apply instantly. */
+  transition: none !important;
+}
+.files-sidebar[data-view="instances"] ~ .files-resize-handle { display: none; }
+.files-sidebar[data-view="instances"] .files-sidebar-panel { display: none; }
+.files-sidebar[data-view="instances"].maximized ~ .files-main:not([hidden]) { display: flex; }
+/* Strip fills the whole sidebar so there's no empty band beside it, in both the
+   38px collapsed rail and the 184px expanded rail (the strip's rigid
+   flex:0 0 38px basis otherwise left it ~10px short of the expanded width). */
+.files-sidebar[data-view="instances"] .files-sidebar-strip {
+  flex: 1 1 auto;
+  width: 100%;
+}
+/* …but still allow the icon rail's own expand toggle to widen it to the labelled
+   rail (mirrors the dashboard/settings entries in files.css's .rail-expanded
+   block). Higher specificity than the 38px pin above, so it wins when expanded. */
+.files-sidebar.rail-expanded[data-view="instances"] {
+  width: 184px !important;
+  min-width: 184px !important;
+  max-width: 184px !important;
+  flex: 0 0 184px;
+}
+
+/* ── Loading spinner (shown in the toolbar sub-line while the fleet loads) ── */
+.inst-spin {
+  display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
+  margin-right: 5px;
+  animation: inst-spin 0.8s linear infinite;
+}
+.inst-spin > svg, .inst-spin > .lucide-icon { width: 12px; height: 12px; }
+@keyframes inst-spin { to { transform: rotate(360deg); } }
+/* A stub tile (this device, pre-fetch) reads slightly quieter until confirmed. */
+.inst-square.is-stub { opacity: 0.72; }
+
+/* ── Cloud tiles (a VM in a connected cloud account) ── */
+.inst-icon-wrap.plat-cloud { background: rgba(var(--purple-rgb), 0.16); color: var(--purple); }
+.inst-cloud-badge {
+  align-self: flex-start;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px;
+  background: rgba(var(--purple-rgb), 0.16); color: var(--purple);
+}
+
+/* ── Local checkout tiles (another WebAgent folder on this machine) ── they use
+   the accent hue to read as "your own", distinct from cloud (purple). */
+.inst-icon-wrap.plat-local { background: rgba(var(--brand-rgb), 0.16); color: var(--brand); }
+.inst-local-badge {
+  align-self: flex-start;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px;
+  background: rgba(var(--brand-rgb), 0.16); color: var(--brand);
+}
+/* The local tile Overview's inline edit fields sit in an "Edit" mini-section. */
+.inst-local-edit { display: flex; flex-direction: column; }
+
+/* Cloud Overview: status line, repo edit pencil, danger action, ping result. */
+.inst-cloud-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.inst-cloud-status .cvm-dot { width: 8px; height: 8px; }
+.inst-repo-none { color: var(--fg-4); font-style: italic; }
+.inst-repo-edit {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: -2px;
+  background: transparent; border: 0; color: var(--fg-4); cursor: pointer; padding: 2px; border-radius: 4px;
+}
+.inst-repo-edit:hover { color: var(--brand); background: rgba(var(--ink-rgb), 0.08); }
+.inst-repo-edit > * { pointer-events: none; }
+.inst-repo-edit svg, .inst-repo-edit .lucide-icon { width: 12px; height: 12px; }
+.inst-tb-btn.inst-tb-danger { color: var(--danger); }
+.inst-tb-btn.inst-tb-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); background: rgba(var(--danger-rgb), 0.10); }
+.inst-tb-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Press-and-hold confirm (device Unlink, see _holdStart). The button holds a fill
+   bar that sweeps left→right over the hold duration; the action fires only when it
+   completes, so a deliberate hold replaces a confirm popup. .holding is toggled by
+   JS to start the sweep; releasing removes it and the fill snaps back to zero.
+   touch-action/user-select keep a touch-hold from scrolling or selecting text.
+   Colour routes through the design-system danger token (dark + light). */
+.inst-tb-btn.inst-hold { position: relative; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.inst-hold .inst-hold-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: rgba(var(--danger-rgb), 0.22);
+  border-right: var(--border-width) solid var(--danger);
+  pointer-events: none;
+}
+.inst-hold.holding { border-color: var(--danger); color: var(--danger); }
+.inst-hold.holding .inst-hold-fill { width: 100%; transition: width 950ms linear; }
+.inst-hold .inst-hold-label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; }
+
+/* Type-to-confirm gate for the destructive cloud-VM Delete (see _delConfirmHtml).
+   A bordered danger-tinted well that appears inline below the action row once the
+   admin clicks Delete; the final button stays disabled until the typed name
+   matches. Colours route through the design-system palette (dark + light). */
+.inst-confirm {
+  margin-top: 12px; padding: 12px 14px;
+  border: var(--border-width) solid rgba(var(--danger-rgb), 0.45);
+  border-radius: 8px; background: rgba(var(--danger-rgb), 0.06);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.inst-confirm-warn { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--fg-1); }
+.inst-confirm-warn > svg, .inst-confirm-warn > .lucide-icon { flex: 0 0 auto; width: 15px; height: 15px; color: var(--danger); margin-top: 1px; }
+.inst-confirm-warn b { color: var(--danger); }
+.inst-confirm-label { font-size: 11.5px; color: var(--fg-3); }
+.inst-confirm-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-1);
+  border: var(--border-width) solid var(--border); color: var(--fg-1);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none; font-family: inherit;
+}
+.inst-confirm-input:focus { border-color: var(--danger); }
+.inst-confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.inst-confirm-actions .inst-tb-btn { height: 30px; }
+.inst-ping-status { display: block; margin-top: 8px; font-size: 12px; color: var(--fg-3); }
+.inst-ping-status.ok { color: var(--success); }
+.inst-ping-status.err { color: var(--danger); }
+/* Live action log sits inside the Overview body (reuses the .cvm-log skin, but
+   drop its legacy page margins). */
+.inst-detail-body .cvm-log { margin: 12px 0 0; max-height: 180px; }
+
+/* ── Connections section (inside the "This device" tile's Overview) ──
+   The DB/vault sign-in cards + cloud-account manager, folded into this device's
+   own detail card. They used to be a collapsible strip at the top of the grid;
+   now they sit below the device facts, separated by a top rule. */
+.inst-conn-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: var(--border-width) solid var(--border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.inst-conn-section-head {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.2px; text-transform: uppercase;
+  color: var(--fg-4);
+}
+.inst-conn-section-head > svg, .inst-conn-section-head > .lucide-icon { width: 13px; height: 13px; }
+.inst-conn-section-hint { font-size: 11.5px; line-height: 1.5; color: var(--fg-4); margin-top: -4px; }
+.inst-conn-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
+/* Cloud-account manager block (rendered after the DB/vault cards). */
+.inst-conn-sub { display: flex; flex-direction: column; gap: 8px; }
+.inst-conn-sub-hint { font-size: 11px; line-height: 1.5; color: var(--fg-4); margin-top: -2px; }
+
+/* ── Tile drag-to-reorder (partial-loading order = UI placement) ──
+   Arrangeable tiles (device + cloud) are draggable; the grid's reading order
+   (top-left → bottom-right) IS the prewarm/reveal order. .dragging dims the
+   source tile while it's in flight; .drag-before/.drag-after paint a brand-
+   coloured insertion bar on the target tile so the drop point reads clearly
+   (left/right half of the tile). See _wireTileDrag in instances.js. */
+.inst-square[draggable] { cursor: grab; }
+.inst-square[draggable]:active { cursor: grabbing; }
+.inst-square.dragging { opacity: 0.35; }
+.inst-square.drag-before::before, .inst-square.drag-after::after {
+  content: '';
+  position: absolute;
+  top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--brand);
+  box-shadow: 0 0 0 1px rgba(var(--brand-rgb), 0.25);
+  pointer-events: none;
+}
+.inst-square.drag-before::before { left: -2px; }
+.inst-square.drag-after::after { right: -2px; }
+
+/* ── "Connection" fact (remote instance Overview) ──
+   A compact stat in the facts grid with ONE ROW PER CONNECTION TYPE — P2P, SSH,
+   and HTTP(S). Each row shows its own status pill and expands INDEPENDENTLY to
+   reveal a connection-specific toolbar (Ping / Disconnect / Open), the same
+   reveal pattern as the URL rows. All colours from the design-system palette. */
+.inst-conn-list { display: flex; flex-direction: column; gap: 6px; }
+.inst-conn-item {
+  display: block;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  padding: 6px 9px;
+}
+.inst-conn-head {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  cursor: default;
+}
+.inst-conn-head[role="button"] { cursor: pointer; user-select: none; }
+.inst-conn-type {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex: 0 0 auto; min-width: 56px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.2px; text-transform: uppercase;
+  color: var(--fg-3);
+}
+.inst-conn-type > svg, .inst-conn-type > .lucide-icon { width: 13px; height: 13px; }
+.inst-conn-addr {
+  flex: 0 1 auto; min-width: 0;
+  font-size: 11px; color: var(--fg-4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inst-conn-head .inst-db-badge { margin-left: auto; flex: 0 0 auto; }
+.inst-conn-chev {
+  width: 13px; height: 13px; color: var(--fg-4); flex: 0 0 auto;
+  transition: transform 0.22s ease;
+}
+.inst-conn-item.inst-conn-open .inst-conn-chev { transform: rotate(90deg); }
+.inst-conn-toolbar {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transform: translateY(-4px);
+  visibility: hidden;
+  transition: max-height 0.24s ease, opacity 0.24s ease, transform 0.24s ease,
+              margin-top 0.24s ease, visibility 0.24s;
+}
+.inst-conn-item.inst-conn-open .inst-conn-toolbar {
+  margin-top: 6px;
+  max-height: 44px; opacity: 1; transform: translateY(0);
+  visibility: visible;
+}
+.inst-conn-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 8px;
+  font-size: 11px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 6px;
+  background: rgba(var(--ink-rgb), 0.04); color: var(--fg-1);
+  cursor: pointer; text-decoration: none;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.inst-conn-btn:hover { background: rgba(var(--ink-rgb), 0.12); border-color: rgba(var(--ink-rgb), 0.30); }
+.inst-conn-btn > * { pointer-events: none; }
+.inst-conn-btn > svg, .inst-conn-btn > .lucide-icon { width: 13px; height: 13px; }
+.inst-conn-btn.danger { color: var(--danger); }
+.inst-conn-btn.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); background: rgba(var(--danger-rgb), 0.10); }
+.inst-conn-btn:disabled { opacity: 0.5; cursor: default; }
+.inst-conn-ping-status { font-size: 11px; color: var(--fg-3); }
+.inst-conn-ping-status.ok { color: var(--success); }
+.inst-conn-ping-status.err { color: var(--danger); }
+
+/* ── Local WebAgent port (inside the Device fact) ── */
+.inst-device-port {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 7px; padding-top: 7px;
+  border-top: var(--border-width) solid var(--border);
+}
+.inst-device-port-label { font-family: var(--font-mono); font-size: 12px; color: var(--fg-3); }
+.inst-device-port .smb-input { width: 76px; min-width: 0; height: 30px; }
+.inst-device-port .inst-tb-btn { flex: 0 0 auto; height: 30px; }
+.inst-hub-status { display: block; font-size: 11px; line-height: 1.5; color: var(--fg-3); margin-top: 6px; min-height: 1em; }
+.inst-hub-status.inst-srv-error { color: var(--danger); }
+/* The header Restart action shares this guarded two-tap confirmation state. */
+.inst-srv-reset-armed {
+  border-color: var(--danger); color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.10);
+}
+.inst-srv-reset-armed:hover { background: rgba(var(--danger-rgb), 0.16); }
+
+/* ── Compact on-demand Overview facts ── */
+.inst-compact-status { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.inst-compact-status-line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.inst-compact-hint { font-size: 11px; line-height: 1.45; color: var(--fg-4); }
+.inst-compact-action {
+  height: 25px; padding: 0 8px; border-radius: 6px;
+  border: var(--border-width) solid var(--border); background: var(--bg-1); color: var(--fg-2);
+  font: 600 11px var(--font-sans, inherit); cursor: pointer;
+}
+.inst-compact-action:hover:not(:disabled) { color: var(--fg-1); border-color: var(--border-strong); }
+.inst-compact-action.danger { color: var(--danger); }
+.inst-compact-action:disabled { opacity: 0.55; cursor: default; }
+.inst-fact-disclosure { margin-top: 1px; min-width: 0; }
+.inst-fact-disclosure > summary {
+  display: inline-flex; align-items: center; min-height: 24px; cursor: pointer;
+  color: var(--brand); font-size: 11px; font-weight: 600; list-style: none;
+}
+.inst-fact-disclosure > summary::-webkit-details-marker { display: none; }
+.inst-fact-disclosure > summary::before { content: '›'; margin-right: 5px; font-size: 15px; line-height: 1; transition: transform 0.16s ease; }
+.inst-fact-disclosure[open] > summary::before { transform: rotate(90deg); }
+.inst-fact-disclosure > .cvm-log,
+.inst-fact-disclosure .inst-https-controls { margin: 7px 0 0; }
+.inst-fact-disclosure .cvm-log { max-height: 160px; }
+.inst-fact .inst-https-section { margin-top: 0; }
+.inst-https-controls { display: flex; flex-direction: column; gap: 7px; }
+.inst-https-controls .inst-https-row { margin-top: 0; flex-wrap: wrap; align-items: center; }
+.inst-https-controls .inst-https-row > .smb-input { min-width: 180px; }
+
+/* The degraded banner (ported smb-degraded) floats at the top of the grid as an
+   always-visible alert; its "fix" button opens this device's Overview. */
+.inst-grid > .smb-degraded { margin: 0 var(--inst-content-inset) 10px; }
+
+/* ── Light-mode ink-tint overrides (match agents.css) ── */
+body.light-mode .inst-tb-btn {
+  color: var(--fg-1); border-color: rgba(61, 44, 46, 0.18); background: rgba(61, 44, 46, 0.03);
+}
+body.light-mode .inst-tb-btn:hover { background: rgba(61, 44, 46, 0.08); border-color: rgba(61, 44, 46, 0.30); }
+body.light-mode .inst-detail-close:hover { background: rgba(61, 44, 46, 0.08); }
+body.light-mode .inst-icon-wrap.plat-other { background: rgba(61, 44, 46, 0.06); color: var(--fg-3); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Ported connection primitives (smb- = DB/vault cards; cvm- = cloud accounts +
+   live log). These were previously loaded from the Database & Devices and Server
+   Manager pages; those pages are gone, so the exact rules this page uses now live
+   here — the Instances folder is self-contained. Every colour still routes through
+   the design-system palette (dark + light) and structural borders use
+   var(--border-width). Only the classes the Connections section renders are kept
+   (the old pages' sidebar/list/manual-entry rules were dropped).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Shared status dot + generic button ── */
+.cvm-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--fg-4); }
+.cvm-dot-run { background: var(--success); }
+.cvm-dot-stop { background: var(--fg-4); }
+.cvm-dot-busy { background: var(--warning); }
+.cvm-hint { font-size: 11px; line-height: 1.5; color: var(--fg-4); }
+.cvm-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-2); border: var(--border-width) solid var(--border); color: var(--fg-2);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; font-family: inherit;
+}
+.cvm-btn:hover:not(:disabled) { border-color: var(--border-strong); color: var(--fg-1); }
+.cvm-btn:disabled { opacity: 0.5; cursor: default; }
+.cvm-btn svg { width: 13px; height: 13px; }
+.cvm-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg-0); }
+.cvm-btn-primary:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--accent); color: var(--bg-0); }
+.cvm-btn-danger { color: var(--danger); }
+.cvm-btn-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); background: rgba(var(--danger-rgb), 0.10); }
+
+/* ── Cloud-account manager (add control + expandable account rows) ── */
+.cvm-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-1);
+  border: var(--border-width) solid var(--border); color: var(--fg-1);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none;
+}
+.cvm-input:focus { border-color: var(--accent); }
+.cvm-add { display: flex; align-items: center; gap: 6px; }
+.cvm-add .cvm-input { flex: 1 1 auto; min-width: 0; }
+.cvm-add-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+  background: var(--accent); border: var(--border-width) solid var(--accent); color: var(--bg-0);
+}
+.cvm-add-btn:hover:not(:disabled) { filter: brightness(1.06); }
+.cvm-add-btn:disabled { opacity: 0.5; cursor: default; }
+.cvm-add-btn svg { width: 15px; height: 15px; }
+.cvm-accounts { display: flex; flex-direction: column; gap: 6px; }
+.cvm-acct { border: var(--border-width) solid var(--border); border-radius: 8px; background: var(--bg-1); overflow: visible; }
+.cvm-acct-row {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 8px 9px; background: transparent; border: 0; color: var(--fg-1);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.cvm-acct-row:hover { background: var(--bg-2); }
+.cvm-acct-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--fg-2); }
+.cvm-acct-name { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cvm-acct-pill {
+  flex: 0 0 auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600;
+  padding: 1px 6px; border-radius: 999px; color: var(--fg-3);
+  border: var(--border-width) solid var(--border-strong);
+}
+.cvm-acct-pill-ok { color: var(--success); border-color: var(--success); }
+.cvm-acct-pill-warn { color: var(--warning); border-color: var(--warning); }
+.cvm-acct-pill-off { color: var(--fg-3); }
+.cvm-acct-chevron { width: 14px; height: 14px; flex: 0 0 auto; color: var(--fg-4); transition: transform 0.15s ease; }
+.cvm-acct.cvm-open .cvm-acct-chevron { transform: rotate(180deg); }
+.cvm-acct-menu { padding: 6px 9px 10px; display: flex; flex-direction: column; gap: 10px; border-top: var(--border-width) solid var(--border); }
+.cvm-acct-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.cvm-acct-foot { margin-top: -2px; }
+
+/* ── Login form fields (each account sub-menu) ── */
+.cvm-field { display: flex; flex-direction: column; gap: 5px; }
+.cvm-field-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.cvm-req { color: var(--danger); font-weight: 700; }
+.cvm-connect-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-0);
+  border: var(--border-width) solid var(--border); color: var(--fg-1);
+  border-radius: 7px; padding: 8px 10px; font-size: 12.5px; outline: none; font-family: inherit;
+}
+textarea.cvm-connect-input { font-family: var(--font-mono); resize: vertical; line-height: 1.5; }
+select.cvm-connect-input { font-family: inherit; }
+.cvm-connect-input:focus { border-color: var(--accent); }
+.cvm-field-tip { font-size: 11px; line-height: 1.5; color: var(--fg-4); }
+.cvm-key-input { font-family: var(--font-mono); }
+.cvm-key-status { font-size: 12px; color: var(--fg-3); }
+.cvm-key-ok { color: var(--success); }
+.cvm-key-err { color: var(--danger); }
+
+/* ── Live cloud-action log (NDJSON stream) ── */
+.cvm-log {
+  margin: 10px 12px 0; max-height: 150px; overflow: auto;
+  padding: 9px 11px; border: var(--border-width) solid var(--border); border-radius: 8px;
+  background: var(--bg-tint); color: var(--fg-2); font-family: var(--font-mono);
+  font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+}
+
+/* ── DB + vault cards (collapsed summary → expandable connect form) ── */
+.smb-card { border: var(--border-width) solid var(--border); border-radius: 10px; background: var(--bg-1); overflow: visible; }
+.smb-card.smb-open { border-color: var(--accent-line); }
+.smb-card-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
+.smb-card-head:hover { background: var(--bg-2); }
+.smb-card-icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--fg-2); }
+.smb-card-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.smb-card-title { font-size: 12.5px; font-weight: 600; color: var(--fg-1); }
+.smb-card-sub { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smb-card-status { font-size: 11px; color: var(--fg-3); flex: 0 0 auto; }
+.smb-chevron { width: 15px; height: 15px; flex: 0 0 auto; color: var(--fg-4); }
+.smb-badge { font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; flex: 0 0 auto;
+  border: var(--border-width) solid var(--border-strong); border-radius: 999px; padding: 1px 7px; color: var(--fg-3); }
+.smb-badge-shared { color: var(--success); border-color: var(--success); background: rgba(var(--success-rgb), 0.10); }
+.smb-badge-local { color: var(--fg-3); }
+.smb-badge-warn { color: var(--warning); border-color: var(--warning); background: rgba(var(--warning-rgb), 0.10); }
+.smb-card-body { padding: 4px 13px 13px; border-top: var(--border-width) solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.smb-label { font-size: 11px; font-weight: 600; color: var(--fg-2); margin-top: 8px; }
+.smb-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-0); border: var(--border-width) solid var(--border);
+  color: var(--fg-1); border-radius: 7px; padding: 7px 9px; font-size: 12.5px; outline: none; font-family: inherit;
+}
+.smb-input:focus { border-color: var(--accent); }
+.smb-textarea { font-family: var(--font-mono); resize: vertical; line-height: 1.5; }
+.smb-note { font-size: 11px; line-height: 1.5; color: var(--fg-4); margin-top: 6px;
+  padding: 7px 9px; background: var(--bg-tint); border-left: 3px solid var(--accent); border-radius: 4px; }
+.smb-hint { font-size: 11px; line-height: 1.5; color: var(--fg-4); }
+.smb-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-top: 6px; }
+.smb-field { display: flex; flex-direction: column; gap: 4px; grid-column: span 2; }
+.smb-field-half { grid-column: span 1; }
+.smb-req { color: var(--danger); font-weight: 700; }
+.smb-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.smb-btn {
+  display: inline-flex; align-items: center; gap: 5px; background: var(--bg-2);
+  border: var(--border-width) solid var(--border); color: var(--fg-2);
+  border-radius: 6px; padding: 6px 11px; font-size: 12px; cursor: pointer; white-space: nowrap; font-family: inherit;
+  text-decoration: none;
+}
+.smb-btn:hover:not(:disabled) { border-color: var(--border-strong); color: var(--fg-1); }
+.smb-btn:disabled { opacity: 0.5; cursor: default; }
+.smb-btn svg { width: 13px; height: 13px; }
+.smb-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg-0); }
+.smb-btn-primary:hover:not(:disabled) { filter: brightness(1.06); color: var(--bg-0); }
+.smb-output {
+  margin: 10px 0 0; padding: 8px 10px; background: var(--bg-tint); border: var(--border-width) solid var(--border);
+  border-radius: 6px; font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto;
+}
+.smb-restart {
+  margin-top: 10px; padding: 9px 11px; font-size: 11px; line-height: 1.55; color: var(--fg-2);
+  border: var(--border-width) solid var(--warning); border-left-width: 3px; border-radius: 6px;
+  background: rgba(var(--warning-rgb), 0.07);
+}
+.smb-restart svg { width: 13px; height: 13px; vertical-align: -2px; color: var(--warning); }
+.smb-restart .smb-btn { margin-top: 8px; }
+.smb-restart-status { font-size: 11px; color: var(--fg-3); margin-left: 8px; }
+
+/* ── "Couldn't reach the shared database" banner (silent-fallback alert) ── */
+.smb-degraded {
+  display: flex; gap: 9px; align-items: flex-start;
+  margin: 0 0 12px; padding: 11px 13px; border-radius: 8px;
+  font-size: 12px; line-height: 1.55; color: var(--fg-1);
+  border: var(--border-width) solid var(--danger); border-left-width: 3px;
+  background: rgba(var(--danger-rgb), 0.08);
+}
+.smb-degraded > svg { width: 17px; height: 17px; flex: 0 0 auto; margin-top: 1px; color: var(--danger); }
+.smb-degraded-title { font-weight: 700; color: var(--danger); }
+.smb-degraded-detail {
+  display: block; margin-top: 5px; font-family: var(--font-mono); font-size: 10.5px;
+  color: var(--fg-3); word-break: break-word;
+}
+.smb-degraded .smb-btn { margin-top: 9px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Rename + re-icon a device tile (shared DB overrides) — mirrors the Agents
+   page. Affordances live on the detail-head icon chip + name; the edit itself is
+   an inline contenteditable (name) or the shared icon picker (icon).
+   ══════════════════════════════════════════════════════════════════════════ */
+/* Icon chip becomes a click target: pointer + a soft ring on hover. */
+.inst-detail-head .inst-icon-wrap.inst-icon-editable { cursor: pointer; transition: box-shadow 0.12s, filter 0.12s; }
+.inst-detail-head .inst-icon-wrap.inst-icon-editable:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.45);
+}
+/* Emoji / short-text custom icon (non-Lucide): scale as text to fill the chip. */
+.inst-icon-wrap .inst-emoji-icon { font-size: 20px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.inst-detail-head .inst-icon-wrap .inst-emoji-icon { font-size: 19px; }
+
+/* Inline-editable name: subtle dotted underline hint until you double-click. */
+.inst-name-edit { cursor: text; border-radius: 3px; padding: 0 2px; margin: 0 -2px; }
+.inst-name-edit:hover { box-shadow: inset 0 -1px 0 var(--border-strong); }
+.inst-name-edit.editing {
+  cursor: text; outline: none; box-shadow: none;
+  background: var(--bg-0); border: var(--border-width) solid var(--accent);
+  padding: 1px 5px; margin: 0 -1px;
+  min-width: 40px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Shared icon-picker popover CSS — DUPLICATED from ui/main-panel/agents/agents.css
+   (the canonical home) so the picker is styled on this admin page, where that
+   stylesheet isn't loaded. Keep in sync if the shared picker markup changes.
+   All colours route through the design-system palette (dark + light).
+   ══════════════════════════════════════════════════════════════════════════ */
+.icon-picker-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9500;
+  display: flex; align-items: center; justify-content: center;
+}
+.icon-picker-popover {
+  background: var(--bg-elev); border: var(--border-width) solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  width: 420px; max-width: 92vw; max-height: 80vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.icon-picker-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; }
+.icon-picker-title { font-size: 14px; font-weight: 600; color: var(--fg-1); }
+.icon-picker-close {
+  background: none; border: none; color: var(--fg-3); font-size: 16px; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px;
+}
+.icon-picker-close:hover { color: var(--fg-1); background: rgba(var(--ink-rgb), 0.06); }
+.icon-picker-header-actions { display: flex; align-items: center; gap: 6px; }
+.icon-picker-save {
+  background: none; border: none; color: var(--fg-3); font-size: 16px; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-picker-save:hover { color: var(--success); background: rgba(var(--success-rgb),0.12); }
+.icon-picker-search-wrap { padding: 0 14px 8px; }
+.icon-picker-search {
+  width: 100%; box-sizing: border-box; background: var(--bg-2);
+  border: var(--border-width) solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; font-family: inherit; color: var(--fg-1); outline: none;
+}
+.icon-picker-search:focus { border-color: var(--brand); }
+.icon-picker-search::placeholder { color: var(--fg-4); }
+.icon-picker-grid {
+  flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 4px; padding: 0 14px 12px;
+}
+.icon-picker-grid::-webkit-scrollbar { width: 4px; }
+.icon-picker-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.icon-picker-item {
+  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; cursor: pointer; background: var(--bg-2);
+  border: 1px solid transparent; transition: background 0.12s, border-color 0.12s;
+}
+.icon-picker-item:hover { background: rgba(var(--brand-rgb),0.12); border-color: var(--brand); }
+.icon-picker-item.selected {
+  background: rgba(var(--brand-rgb),0.18); border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand);
+}
+.icon-picker-empty { grid-column: 1 / -1; text-align: center; padding: 24px; color: var(--fg-3); font-size: 13px; }
+
+/* ── HTTPS / SSL section (cloud VM Overview) ─────────────────────────────────
+   A card in the cloud VM's Overview tab for enabling HTTPS via Caddy's automatic
+   Let's Encrypt. Domain input + Enable button + live-log + status pill. Mirrors
+   the connection-section styling used for Server / DB / Vault cards. */
+.inst-https-section { margin-top: 24px; }
+.inst-https-pill {
+  display: inline-block; vertical-align: middle;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 1px 7px; border-radius: 999px;
+  border: var(--border-width) solid var(--border-strong); color: var(--fg-3);
+  background: transparent;
+}
+.inst-https-pill.on {
+  color: var(--success); border-color: var(--success); background: rgba(var(--success-rgb), 0.10);
+}
+.inst-https-pill.off { color: var(--fg-3); background: transparent; }
+.inst-https-pill.busy {
+  color: var(--brand); border-color: var(--brand); background: rgba(var(--brand-rgb), 0.10);
+}
+.inst-https-pill.error {
+  color: var(--danger); border-color: var(--danger); background: rgba(var(--danger-rgb), 0.08);
+}
+.inst-https-row {
+  display: flex; align-items: flex-end; gap: 8px;
+  margin-top: 10px;
+}
+.inst-https-row > .smb-input { flex: 1; }
+.inst-https-sibling-row {
+  margin-top: 6px; font-size: 12px; color: var(--fg-3);
+}
+.inst-https-sibling-label {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.inst-https-sibling-label input[type="checkbox"] {
+  accent-color: var(--brand); cursor: pointer;
+}
+/* HTTPS domain rows inside the overview facts — stacked vertically with a test button */
+.inst-https-domain-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 0;
+}
+.inst-https-domain-row + .inst-https-domain-row { border-top: 1px solid var(--border-color, rgba(128,128,128,0.15)); }
+.inst-https-domain-row > a {
+  font-family: var(--font-mono); font-size: 12px; color: var(--brand);
+  text-decoration: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inst-https-domain-row > a:hover { text-decoration: underline; }
+.inst-https-test-btn {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 4px; border: var(--border-width) solid var(--border-strong);
+  background: transparent; color: var(--fg-3); cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.inst-https-test-btn:hover { color: var(--fg-1); border-color: var(--fg-3); }
+.inst-https-test-result {
+  font-size: 11px; white-space: nowrap; flex-shrink: 0;
+  color: var(--fg-3); min-width: 40px;
+}
+.inst-https-test-result.ok { color: var(--success); }
+.inst-https-test-result.err { color: var(--danger); }
+.inst-https-test-result.busy { color: var(--brand); }
+/* Registered domains list below the input row */
+.inst-https-registered {
+  margin-top: 12px; padding: 10px 12px;
+  background: rgba(var(--brand-rgb), 0.04); border-radius: 8px;
+  border: var(--border-width) solid var(--border-color, rgba(128,128,128,0.12));
+}
+.inst-https-registered-head {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  color: var(--fg-3); margin-bottom: 8px;
+}
+.inst-https-reg-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0;
+}
+.inst-https-reg-row + .inst-https-reg-row { border-top: 1px solid var(--border-color, rgba(128,128,128,0.10)); }
+.inst-https-reg-domain {
+  font-family: var(--font-mono); font-size: 12px; color: var(--fg-1);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inst-https-reg-btn {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 4px; border: var(--border-width) solid var(--border-strong);
+  background: transparent; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  color: var(--fg-3);
+}
+.inst-https-reg-btn:hover { color: var(--fg-1); border-color: var(--fg-3); }
+.inst-https-del-btn { color: var(--danger); border-color: transparent; font-size: 13px; padding: 2px 6px; }
+.inst-https-del-btn:hover { background: rgba(var(--danger-rgb), 0.10); }
+.inst-https-cert-details {
+  margin-top: 10px; padding: 10px 12px;
+  background: rgba(var(--success-rgb), 0.06); border-radius: 8px;
+  font-size: 12px; color: var(--fg-2); line-height: 1.6;
+}
+.inst-https-cert-details strong { color: var(--fg-1); }
+.inst-https-cert-details .mono { font-family: var(--font-mono); font-size: 11px; }
+
+/* Configuration tab host - embeds the full App Config UI. */
+.inst-settings-host {
+  min-height: 0;
+  background: transparent;
+}
+/* Configuration shares the page's single constant edge inset. The nested
+   #app-config-content base margin (app3.css) is replaced below by a centred,
+   responsive 750px content column that stays stable when a sub-page opens. */
+/* Configuration is part of the Instances page, not a nested scrolling panel.
+   This keeps one vertical scrollbar: the toolbar and device strip remain in
+   place on tab switch, then scroll away only when the user scrolls the page. */
+.inst-grid.carousel .inst-detail:has(.inst-settings-host) {
+  display: block;
+}
+.inst-detail:has(.inst-settings-host) .inst-detail-body {
+  overflow: visible;
+  padding-top: 0;
+}
+.inst-detail:has(.inst-settings-host) .inst-settings-host,
+.inst-detail:has(.inst-settings-host) #app-config-container {
+  height: auto;
+  min-height: 0;
+}
+/* Dashboard tab: same one-scrollbar philosophy as Configuration.
+   The dashboard host is a flex column that must fill the detail body. */
+.inst-detail:has(.inst-dashboard-host) .inst-detail-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Reserve the page-level dashboard dock so it never covers the card grid. */
+  box-sizing: border-box;
+  padding: 0 0 45px;
+}
+.inst-detail:has(.inst-dashboard-host) .inst-dashboard-host {
+  height: auto;
+  min-height: 0;
+  flex: 1;
+}
+/* App-like tabs (Dashboard, Users) get a body that is at least tall enough to
+   bring the STICKY tab bar to the top of the scroller. If their content is
+   short (a few cards / a few users) the grid would otherwise have nothing to
+   scroll and the tabs could never pin — the two-phase scroll would stop short.
+   --inst-grid-h is set by _render from the grid's measured viewport height;
+   subtracting the tab bar's height (~48px) plus slack leaves the room needed
+   for the tabs to reach the top. The dashboard host's flex:1 then fills that
+   height and its card grid scrolls internally; the users host grows with its
+   content. */
+.inst-detail:has(.inst-dashboard-host) .inst-detail-body,
+.inst-detail:has(.inst-users-host) .inst-detail-body {
+  min-height: calc(var(--inst-grid-h, 100vh) - 56px);
+}
+/* App Config normally owns a bounded scroll viewport. Embedded here it instead
+   flows into .inst-grid, which is the sole Instances-page scroller. */
+.inst-settings-host #app-config-container,
+.inst-settings-host #app-config-scroll-wrap {
+  display: block;
+  overflow: visible;
+}
+.inst-settings-host #app-config-content {
+  flex: none;
+  overflow: visible;
+  /* Replace the standalone scroller's 20px side margins (app3.css) with a
+     responsive, centred content column. This includes the landing list and
+     every opened Settings section while the host and assistant pill stay full width. */
+  width: 100%;
+  max-width: 750px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  /* 5px padding on either side of the settings contents (user request).
+     Replaces the base scroller's `padding: 28px 0 0` — keeps the 28px top
+     breathing room (sticky-nav math is keyed to it), adds 5px left/right. */
+  padding: 28px 5px 0;
+  --rsc-r: 0px;
+  --rsc-side: 0px;
+}
+/* Keep Configuration's navigation pinned in the Instances scroller below both
+   sticky rows above it: the instance tabs and the composer. Their measured
+   heights are maintained by _syncConfigurationStickyOffset. */
+.inst-settings-host #app-config-subnav:not(:empty) {
+  position: sticky;
+  top: calc(var(--inst-tabs-sticky-h, 0px) + var(--inst-config-chat-height, 76px));
+  z-index: 4;
+  background: var(--bg-1);
+}
+/* In the embedded single-scroll layout the assistant is the first child of the
+   Configuration container and pins immediately below the instance tabs. Every
+   settings heading and content surface therefore starts after the composer in
+   normal flow, while the opaque sticky surface prevents scrolled rows showing
+   through it. */
+.inst-settings-host #ac-unified-pa-bar {
+  position: sticky;
+  top: var(--inst-tabs-sticky-h, 0px);
+  z-index: 5;
+  background: var(--bg-1);
+}
+/* Agent Settings has an asynchronous first-build gate. It is useful in the
+   standalone page but should not add a detached loading panel to Configuration.
+   The finished Agent Settings content appears normally when that gate clears. */
+.inst-settings-host .ac-section.is-building > .ac-section-loader {
+  display: none;
+}
+.inst-settings-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  color: var(--fg-3);
+  font-size: 14px;
+  gap: 12px;
+}
+.inst-settings-loading .inst-spin {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  animation: inst-spin 0.8s linear infinite;
+}
+.inst-settings-loading .inst-spin > svg,
+.inst-settings-loading .inst-spin > i { width: 20px; height: 20px; }
+
+/* ── URL row with copy + QR actions ───────────────────────────────────────────
+   Used inside .inst-fact-value for URL, tunnel, and repository fields. The
+   link and action buttons sit on the same row.
+   In the Overview URL section the action row is hidden until the URL link is
+   clicked: the link then enlarges (scale transition) and the buttons pop in.
+   Clicking the link again — or anywhere outside — collapses it. */
+.inst-url-row {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.inst-url-row > a {
+  flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.inst-url-actions {
+  display: inline-flex; align-items: center; gap: 2px;
+  flex-shrink: 0;
+}
+.inst-url-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--fg-3); cursor: pointer;
+  transition: background 0.1s, color 0.1s, transform 0.22s ease;
+}
+.inst-url-btn:hover { background: rgba(var(--ink-rgb), 0.08); color: var(--brand); }
+.inst-url-btn > svg, .inst-url-btn > .lucide-icon { width: 13px; height: 13px; }
+.inst-url-btn > * { pointer-events: none; }
+/* Expanded URL row: the action buttons pop in noticeably larger than the
+   collapsed 20px, and their icons grow along with them. */
+.inst-url-item.inst-url-open .inst-url-btn {
+  width: 26px; height: 26px; transform: scale(1.2);
+}
+.inst-url-item.inst-url-open .inst-url-btn > svg,
+.inst-url-item.inst-url-open .inst-url-btn > .lucide-icon { width: 16px; height: 16px; }
+.inst-url-auto-https {
+  display: inline-block; font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; line-height: 1; padding: 2px 5px; border-radius: 3px;
+  color: var(--brand); background: rgba(var(--brand-rgb), 0.1);
+  flex-shrink: 0; vertical-align: middle; cursor: default;
+}
+/* Freshness label beside a URL: "28s ago", colour-coded like the status chips
+   by time since last detected — green < 1 min (actively reporting), grey < 1 h,
+   amber < 1 day, red >= 1 day. The "2d ago" fallback marks a URL that can't be
+   detected (last signal was 2 days back) and shows red. Clickable — expands to
+   the untruncated "Completed 12 minutes ago" form for 1s. */
+.inst-url-stale {
+  font-size: 11px; white-space: nowrap;
+  flex-shrink: 0; cursor: pointer;
+}
+.inst-url-stale.fresh { color: var(--success); }
+.inst-url-stale.warm  { color: var(--fg-3); }
+.inst-url-stale.aging { color: var(--warning); }
+.inst-url-stale.stale { color: var(--danger); }
+/* Auto-detected local-network URLs (http://<lan-ip>:<port>/) carry no heartbeat
+   signal by design — "no signal" is expected, so the label is neutral grey and
+   not clickable, instead of the red "2d ago" a missing last_seen would show. */
+.inst-url-stale.local {
+  color: var(--fg-3); cursor: default;
+}
+/* Upgrade-to-HTTPS button next to the staleness counter on http:// URLs */
+.inst-url-https-btn {
+  font-size: 10px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+  padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  background: var(--surface-2); color: var(--brand);
+  border: 1px solid var(--border);
+  line-height: 1.5; transition: background .15s;
+}
+.inst-url-https-btn:hover { background: var(--brand); color: #fff; border-color: var(--brand); }
+/* Clear-URL button shown in the expanded meta toolbar */
+.inst-url-clear-btn {
+  font-size: 13px; padding: 2px 6px; border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--fg-4); border: none;
+  line-height: 1; vertical-align: middle; margin-left: 4px;
+}
+.inst-url-clear-btn:hover { color: var(--danger); background: rgba(var(--danger-rgb), 0.08); }
+.inst-url-clear-btn svg, .inst-url-clear-btn .lucide-icon { width: 13px; height: 13px; }
+/* Hide / Unhide button in a URL row's toolbar — icon + label. Auto width so the
+   text fits; the expanded-row rule below must not squash it back to a square. */
+.inst-url-btn.inst-url-hide-btn {
+  width: auto; height: 20px; padding: 0 7px; font-size: 11px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 4px; color: var(--fg-3);
+}
+.inst-url-btn.inst-url-hide-btn:hover { color: var(--brand); }
+.inst-url-item.inst-url-hidden .inst-url-btn.inst-url-hide-btn:hover { color: var(--success); }
+.inst-url-item.inst-url-open .inst-url-btn.inst-url-hide-btn {
+  width: auto; transform: none; padding: 0 9px; height: 24px;
+}
+.inst-url-item.inst-url-open .inst-url-btn.inst-url-hide-btn > svg,
+.inst-url-item.inst-url-open .inst-url-btn.inst-url-hide-btn > .lucide-icon { width: 14px; height: 14px; }
+/* Primary URL badge — shown next to the link on the row that is the canonical URL. */
+.inst-url-primary-badge {
+  display: inline-block; font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; line-height: 1; padding: 2px 5px; border-radius: 3px;
+  color: var(--success); background: rgba(var(--success-rgb), 0.10);
+  flex-shrink: 0; vertical-align: middle; cursor: default;
+}
+/* Redirected badge — shown on every non-primary URL when the redirect is ON.
+   Clickable: toggles per-host redirect exclusion. Uses accent colour; the
+   excluded (Direct) state uses a muted neutral grey. */
+.inst-url-redirected-badge {
+  display: inline-block; font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; line-height: 1; padding: 2px 5px; border-radius: 3px;
+  color: var(--brand); background: rgba(var(--brand-rgb), 0.10);
+  flex-shrink: 0; vertical-align: middle; cursor: pointer;
+  border: none; font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.inst-url-redirected-badge:hover {
+  background: rgba(var(--brand-rgb), 0.20);
+}
+/* Excluded state — the host is NOT being redirected (click to re-enable). */
+.inst-url-redirected-badge.excluded {
+  color: var(--fg-3); background: rgba(var(--ink-rgb), 0.06);
+  cursor: pointer;
+}
+.inst-url-redirected-badge.excluded:hover {
+  color: var(--fg-1); background: rgba(var(--ink-rgb), 0.10);
+}
+/* Set-as-primary star button — gold when active. */
+.inst-url-btn.inst-url-primary-btn {
+  width: auto; height: 20px; padding: 0 5px;
+}
+.inst-url-btn.inst-url-primary-btn.active { color: var(--warning); }
+.inst-url-btn.inst-url-primary-btn:hover { color: var(--warning); }
+.inst-url-item.inst-url-open .inst-url-btn.inst-url-primary-btn {
+  width: auto; transform: none; padding: 0 6px; height: 24px;
+}
+/* Redirect toggle button — green when ON, grey when OFF. */
+.inst-url-btn.inst-url-redir-btn {
+  width: auto; height: 20px; padding: 0 6px; font-size: 10px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 4px; color: var(--fg-3);
+}
+.inst-url-btn.inst-url-redir-btn.active { color: var(--success); }
+.inst-url-btn.inst-url-redir-btn:hover { color: var(--brand); }
+.inst-url-redir-label {
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.inst-url-item.inst-url-open .inst-url-btn.inst-url-redir-btn {
+  width: auto; transform: none; padding: 0 8px; height: 24px;
+}
+/* Hidden URL disclosure row — the LAST row of the URL section. A chevron +
+   "Hidden (N)" heading; clicking it expands all of the hidden URLs below. */
+.inst-url-hidden-group {
+  display: flex; align-items: center; margin-top: 6px; padding: 3px 4px;
+  border-radius: 5px; cursor: pointer; user-select: none;
+  color: var(--fg-4); font-size: 12px; font-weight: 600;
+  border-top: 1px dashed var(--border);
+  transition: background 0.12s, color 0.12s;
+}
+.inst-url-hidden-group:hover { background: rgba(var(--ink-rgb), 0.05); color: var(--fg-2); }
+.inst-url-hidden-group.open { color: var(--brand); }
+.inst-url-hidden-group .inst-url-link {
+  display: inline-flex; align-items: center; gap: 6px; color: inherit;
+}
+.inst-url-hidden-group svg,
+.inst-url-hidden-group .lucide-icon { width: 14px; height: 14px; }
+.inst-url-hidden-label { letter-spacing: 0.02em; }
+.inst-url-hidden-count { color: var(--fg-4); font-weight: 600; }
+.inst-url-hidden-group.open .inst-url-hidden-count { color: var(--brand); }
+.inst-url-item.inst-url-hidden { opacity: 0.55; }
+.inst-url-item.inst-url-hidden .inst-url-link > a { color: var(--fg-3); }
+.inst-url-hidden-badge {
+  display: inline-block; font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; line-height: 1; padding: 2px 5px; border-radius: 3px;
+  color: var(--fg-4); background: rgba(var(--ink-rgb), 0.06);
+  flex-shrink: 0; vertical-align: middle; cursor: default;
+}
+/* Working-tree diffstat beside the repo address ("3 changed · +42 −7"), fed by
+   the device's heartbeat. Green "clean" when nothing changed; amber when dirty,
+   with green + / red − counts — same placement as .inst-url-stale. */
+.inst-repo-stats {
+  font-size: 11px; white-space: nowrap; flex-shrink: 0;
+}
+.inst-repo-stats.clean { color: var(--success); }
+.inst-repo-stats.dirty { color: var(--warning); }
+.inst-repo-stats .add { color: var(--success); font-weight: 600; }
+.inst-repo-stats .del { color: var(--danger); font-weight: 600; }
+.inst-url-item {
+  display: block; margin-bottom: 4px;
+}
+.inst-url-item:last-child {
+  margin-bottom: 0;
+}
+/* Tunnel rows inside the URL section */
+.inst-tunnel-row .inst-url-link {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.inst-tunnel-row .inst-tun-pill { vertical-align: middle; }
+.inst-tunnel-row .inst-tun-prov { font-size: 11px; color: var(--fg-4); }
+.inst-tunnel-row .inst-tun-url { margin-top: 2px; width: 100%; }
+.inst-tunnel-add .inst-tun-plus {
+  font-size: 11px; color: var(--brand); cursor: pointer; user-select: none;
+}
+.inst-tunnel-add .inst-tun-plus:hover { text-decoration: underline; }
+/* "Get a domain" button — sits at the bottom of the URL section (self tile only),
+   opens a floating chat widget with the default agent to help the user register
+   or configure a domain. Matches the + Add tunnel URL row in visual weight. */
+.inst-get-domain {
+  padding-top: 6px; border-top: 1px dashed var(--border);
+}
+.inst-get-domain-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; color: var(--brand);
+  background: transparent; border: none; cursor: pointer; padding: 2px 0;
+  font-family: inherit; line-height: 1.5;
+  transition: color 0.15s;
+}
+.inst-get-domain-btn:hover { color: var(--brand); text-decoration: underline; }
+.inst-get-domain-btn svg, .inst-get-domain-btn .lucide-icon {
+  width: 14px; height: 14px;
+}
+/* Branch toolbar below repo URL */
+.inst-repo-toolbar {
+  margin-top: 3px; font-size: 11px; color: var(--fg-4);
+}
+.inst-repo-toolbar .mono { color: var(--fg-3); }
+.inst-url-link {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.inst-url-link > a {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+  transform-origin: left center;
+  transition: transform 0.22s ease, color 0.22s ease;
+}
+/* Expanded URL row: the link enlarges to draw attention to the revealed actions. */
+.inst-url-item.inst-url-open .inst-url-link > a {
+  transform: scale(1.12);
+  color: var(--brand);
+}
+.inst-url-meta {
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 0;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transform: translateY(-4px);
+  visibility: hidden;
+  transition: max-height 0.24s ease, opacity 0.24s ease, transform 0.24s ease,
+              margin-top 0.24s ease, visibility 0.24s;
+}
+.inst-url-item.inst-url-open .inst-url-meta {
+  margin-top: 3px;
+  max-height: 40px; opacity: 1; transform: translateY(0);
+  visibility: visible;
+}
+
+/* ── QR code popup — moved to ui/shared/js/qr-popup.js + app3.css ───────────── */
+
+/* ── Embedded dashboard tab ──────────────────────────────────────────────── */
+/* The dashboard tab's host div fills the detail body and acts as a flex
+   container for the toolbar + scrollable grid. The dashboard CSS (dashboard.css)
+   is loaded via page.json `css` array, so all .dash-* rules apply as usual. */
+.inst-dashboard-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Nested .dash-toolbar: tighten padding slightly since it's inside a tab
+   rather than a full-page main. */
+.inst-dashboard-host .dash-toolbar {
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+/* The grid wrap fills remaining height inside the detail body. */
+.inst-dashboard-host .dash-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+/* ── Embedded File Manager tab ───────────────────────────────────────────── */
+/* The File Manager (Explorer) host fills the detail body like the dashboard.
+   The file manager's own CSS (ui/main-panel/admin-tools/files.css) is loaded via
+   page.json `css`, so all .files-* / #files-* rules apply as usual. */
+.inst-detail:has(.inst-file-manager-host) .inst-detail-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 0;
+  min-height: calc(var(--inst-grid-h, 100vh) - 56px);
+}
+.inst-detail:has(.inst-file-manager-host) .inst-file-manager-host {
+  height: auto;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+/* The .admin-tools shell explorer.html injects is a full-height flex row; it must
+   fill the host so the sidebar + editor split fills the tab. */
+.inst-file-manager-host .admin-tools {
+  height: 100%;
+}
+/* Lucide icons are decorative (clicks route to their parent button) — mirror the
+   #tab-explorer rule so the nested file manager's buttons respond the same way. */
+.inst-file-manager-host .lucide-icon,
+.inst-file-manager-host i[data-lucide],
+.inst-file-manager-host svg { pointer-events: none; }
+
+/* ── Embedded Admin Tools tab ─────────────────────────────────────────────── */
+/* The Admin Tools hub fills the detail body as the .admin-tools flex row, same
+   as the File Manager host above. admin-tools.html ships the same .admin-tools
+   shell, so the sizing rules are duplicated for this host id. */
+.inst-detail:has(.inst-admin-host) .inst-detail-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 0;
+  min-height: calc(var(--inst-grid-h, 100vh) - 56px);
+}
+.inst-detail:has(.inst-admin-host) .inst-admin-host {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.inst-detail:has(.inst-admin-host) .inst-admin-host .admin-tools {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1;
+}
+.inst-admin-host .lucide-icon,
+.inst-admin-host i[data-lucide],
+.inst-admin-host svg { pointer-events: none; }
+
+/* ── Inline-style replacements (CSP compliance) ────────────────────────────── */
+
+/* Tunnel remove button — danger colour, was style="color:var(--danger)" */
+.inst-tun-act-btn[data-act="tunnel-remove-url"] { color: var(--danger); }
+.inst-tun-act-btn[data-act="tunnel-remove-url"]:hover { color: var(--danger); opacity: 0.8; }
+
+/* Server section port label — was style="margin-top:12px" */
+.inst-srv-reset-row + .smb-label { margin-top: 12px; }
+
+/* Local-overview warn notes — was style="margin-top:8px" */
+.inst-db-note.inst-db-warn { margin-top: 8px; }
+
+/* Local-overview edit form labels — was style="margin-top:8px" */
+.inst-local-edit .smb-label { margin-top: 8px; }
+
+/* Local-overview edit actions row — was style="margin-top:10px" */
+.inst-local-edit .inst-detail-actions { margin-top: 10px; }
+
+
+/* Cloud-overview ghost loading row — was style="display:inline-block;width:80px" */
+.inst-ghost.inst-ghost-actions { width: 80px; }
+
+/* Settings error state — was style="color: var(--danger);" */
+.inst-settings-loading.inst-settings-error { color: var(--danger); }
+
+/* HTTPS cert check rows — was inline div styles */
+.inst-https-cert-row { margin-bottom: 6px; }
+.inst-https-cert-check { color: var(--success); }
+.inst-https-cert-nocheck { color: var(--fg-4); }
+.inst-https-cert-detail { font-size: 11px; color: var(--fg-3); }
+
+/* Hub restart message — was style="line-height:1.6" */
+.smb-hint.inst-hub-restarting { line-height: 1.6; }
+
+/* ── JavaScript .style.X → class replacements (+ CSP compliance) ──────────── */
+
+/* _out() helper — status colour */
+.inst-out-ok { color: var(--success); }
+.inst-out-err { color: var(--danger); }
+
+/* _srvStatus() — error colour */
+.inst-srv-error { color: var(--danger); }
+
+/* Tunnel edit mode — hide url row + action buttons */
+.inst-tun-editing .inst-url-row,
+.inst-tun-editing > .inst-tun-act-btn { display: none; }
+
+/* Fallback copy-to-clipboard textarea — invisible but selectable */
+.inst-copy-ta { position: fixed; opacity: 0; }
+
+/* ── CSP compliance: inline-style → class replacements (app-config subtree) ──── */
+
+/* utils.js — copy button icon span */
+.copy-btn-icon { pointer-events: none; display: inline-flex; }
+
+/* agent-settings.js — scopes panel */
+.ac-scopes-label { margin: 0; }
+.ac-scopes-hint { font-size: 11px; color: var(--fg-muted); }
+.ac-scopes-link { color: var(--fg-muted); text-decoration: underline; }
+
+/* event-sources.js — detail rows & status */
+.es-detail-row { font-size: 11px; margin: 2px 0; }
+.es-detail-row-muted { font-size: 11px; margin: 2px 0; color: var(--fg-4); }
+.es-source-name { font-weight: 600; font-size: 13px; }
+.es-source-desc { font-size: 11px; color: var(--fg-4); }
+.es-source-state-row { font-size: 11px; color: var(--fg-4); }
+.es-event-row { margin-bottom: 3px; }
+.es-event-time { color: var(--muted); }
+.es-event-status { font-weight: 600; }
+.es-event-source { color: var(--accent); }
+
+/* app-functions.js — ability icon colour (dynamic via JS custom property) */
+.ac-ability-icon-colored { color: var(--ac-icon-color, var(--brand)); }
+
+/* app-config.html — preview bar toggle */
+.ac-pa-hidden { display: none; }
+
+/* app-settings.js — preset dot (dynamic background via --preset-bg) */
+.ac-preset-dot { background: var(--preset-bg, #888); }
+
+
+/* ── CSP: agent-settings.html inline-style → class replacements ──── */
+.ac-kv-textarea { width: 100%; margin-top: 8px; font-family: var(--font-mono, monospace); font-size: 13px; line-height: 1.5; resize: vertical; }
+.ac-kv-tag-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ac-kv-btn-danger { border-color: var(--danger); color: var(--danger); }
+.ac-kv-mono-xs { margin-top: 8px; font-family: var(--mono, monospace); font-size: 10px; word-break: break-all; }
+.ac-kv-mt10-stack6 { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ac-kv-log-box { margin-top: 10px; padding: 8px; background: var(--bg-elev); border: var(--border-width) solid var(--border); border-radius: 6px; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow-y: auto; display: none; }
+.ac-kv-mt6-fs11 { margin-top: 6px; font-size: 11px; }
+.ac-kv-mt12-stack10 { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.ac-kv-tag-wrap-mt14 { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.ac-kv-mt8-fs11-muted { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.ac-kv-pre-box { margin-top: 10px; padding: 8px; background: var(--bg-0); border: var(--border-width) solid var(--border); border-radius: 6px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow-y: auto; color: var(--fg-3); }
+.ac-kv-mt10-fs11 { margin-top: 10px; font-size: 11px; }
+.ac-kv-tag-wrap-mt10 { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.ac-kv-stack10 { display: flex; flex-direction: column; gap: 10px; }
+.ac-kv-fs12-muted-p8 { font-size: 12px; color: var(--muted); padding: 8px; }
+.ac-kv-mono-scroll { font-size: 11px; font-family: var(--font-mono, monospace); max-height: 280px; overflow-y: auto; background: var(--bg-0); border: var(--border-width) solid var(--border); border-radius: 6px; padding: 8px; color: var(--fg-3); }
+.ac-kv-ico-16-blue { width: 16px; height: 16px; color: #26A5E4; }
+.ac-kv-ico-16-google { width: 16px; height: 16px; color: #4285F4; }
+.ac-kv-ico-16-warning { width: 16px; height: 16px; color: var(--warning); }
+.ac-kv-ico-16-success { width: 16px; height: 16px; color: var(--success); }
+.ac-kv-ico-16-brand { width: 16px; height: 16px; color: var(--brand); }
+
+
+/* ── CSP: app-config subtree inline-style → class replacements (shared) ──── */
+.ac-cursor-default { cursor: default; }
+.ac-fg-accent { color: var(--accent); }
+.ac-fg-danger { color: var(--danger); }
+.ac-fg-danger-fs115 { color: var(--danger); font-size: 11.5px; }
+.ac-fg-muted { color: var(--fg-muted); }
+.ac-fg-warn-danger-fs115 { color: var(--warning, var(--danger)); font-size: 11.5px; }
+.ac-fg3 { color: var(--fg-3); }
+.ac-fg3-fs13 { color: var(--fg-3); font-size: 13px; }
+.ac-flex-end-wrap { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.ac-flex-gap6-shrink0 { display: flex; gap: 6px; flex-shrink: 0; }
+.ac-flex-gap8 { display: flex; gap: 8px; align-items: center; }
+.ac-flex-gap8-mt10 { display: flex; gap: 8px; margin-top: 10px; }
+.ac-flex-none { flex: 0 0 auto; }
+.ac-flex-wrap-mt8 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.ac-flex1 { flex: 1; }
+.ac-fs10-success-hidden { font-size: 10px; color: var(--success); display: none; }
+.ac-fs11-mt4 { font-size: 11px; margin-top: 4px; }
+.ac-fs13 { font-size: 13px; }
+.ac-fw600-fg1 { font-weight: 600; color: var(--fg-1); }
+.ac-hidden { display: none; }
+.ac-ico-13 { width: 13px; height: 13px; }
+.ac-ico-14 { width: 14px; height: 14px; }
+.ac-ico-15 { width: 15px; height: 15px; }
+.ac-ico-16 { width: 16px; height: 16px; }
+.ac-ico-18 { width: 18px; height: 18px; }
+.ac-lh16 { line-height: 1.6; }
+.ac-m0 { margin: 0; }
+.ac-mb14 { margin-bottom: 14px; }
+.ac-mb4 { margin-bottom: 4px; }
+.ac-mb8 { margin-bottom: 8px; }
+.ac-ml6 { margin-left: 6px; }
+.ac-mt10 { margin-top: 10px; }
+.ac-mt6 { margin-top: 6px; }
+.ac-mt8 { margin-top: 8px; }
+.ac-op08 { opacity: 0.8; }
+.ac-p10-14-fg-danger { padding: 10px 14px; color: var(--danger); }
+.ac-p14 { padding: 14px; }
+.ac-py6 { padding: 6px 0; }
+.ac-py6-fs11-fg3 { padding: 6px 0; font-size: 11px; color: var(--fg-3); }
+.ac-py8-gap10 { padding: 8px 0; gap: 10px; }
+.ac-section-divider { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.ac-w120 { width: 120px; }
+.ac-w140 { width: 140px; }
+.ac-w200 { width: 200px; }
+.ac-w64 { width: 64px; }
+.ac-w80 { width: 80px; }
+.ac-w100p { width: 100%; }
+.ac-mt4 { margin-top: 4px; }
+.ac-mb6 { margin-bottom: 6px; }
+.ac-mr4 { margin-right: 4px; }
+
+.ac-deploy-empty { padding: 22px 12px; text-align: center; color: #555; }
+.ac-deploy-warn-box { border-left-color: var(--warning); font-size: 11px; line-height: 1.5; margin-bottom: 8px; }
+.ac-ds-grid { display: grid; grid-template-columns: minmax(170px, 1fr) 110px; gap: 7px 10px; align-items: center; }
+.ac-fs10-fg3 { font-size: 10px; color: var(--fg-3); }
+.ac-fs10-fg3-m3-10 { font-size: 10px; color: var(--fg-3); margin: 3px 0 10px; }
+.ac-fs12-fw700-fg1 { font-size: 12px; font-weight: 700; color: var(--fg-1); }
+.ac-fw400-fg3-fs12 { font-weight: 400; color: var(--fg-3); font-size: 12px; }
+.ac-inline-flex-mt6 { display: inline-flex; margin-top: 6px; }
+.ac-mt10-flex-gap8 { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+.ac-mt12 { margin-top: 12px; }
+
+/* ── Phase 4: .style.X → classList replacements (utils.js) ──── */
+
+/* _setIntStatus */
+.ac-int-status-ok { color: var(--success); }
+.ac-int-status-err { color: var(--danger); }
+.ac-int-status-visible { display: block; }
+
+/* _makeCopyBtn — base style for the copy button */
+.ac-uri-copy-btn {
+  background: none; border: none; cursor: pointer;
+  padding: 2px; color: var(--fg-3);
+  display: inline-flex; align-items: center; flex-shrink: 0; line-height: 0;
+}
+.ac-uri-copy-btn.ac-uri-copied { color: var(--success); }
+
+/* _attachUriCopy */
+.ac-uri-code-flex { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ac-uri-text { word-break: break-all; }
+.ac-uri-code-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ── Phase 4: agent-settings.js .style.X → classList ──── */
+
+/* scope checkboxes panel */
+.ac-mt14 { margin-top: 14px; }
+.ac-scopes-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.ac-scopes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+.ac-scopes-row { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; color: var(--fg-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ac-scopes-cb { flex-shrink: 0; accent-color: var(--accent); }
+.ac-scope-count { font-size: 12px; color: var(--fg-muted); margin-top: 4px; }
+
+/* accordion */
+.ac-accordion-header { margin-bottom: 0; cursor: pointer; user-select: none; }
+.ac-accordion-open { margin-bottom: 12px; }
+.ac-accordion-chevron { display: flex; align-items: center; margin-left: 8px; flex-shrink: 0; transition: transform 0.2s; color: var(--fg-muted); }
+.ac-rotated { transform: rotate(90deg); }
+
+/* detail bubble */
+.ac-detail-bubble { margin: 6px 0; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; }
+
+.ac-cursor-pointer { cursor: pointer; }
+
+/* event-sources.js — layout classes */
+
+.es-source-row-layout { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-bottom: var(--border-width) solid var(--border); }
+
+.es-result-label { font-size: 11px; min-width: 60px; }
+
+/* deploy.js — helpers */
+
+.ac-whitespace-normal { white-space: normal; }
+
+.ac-deploy-row-flex { display: flex; align-items: center; gap: 8px; }
+
+.ac-deploy-img-full { width: 100% !important; height: auto !important; display: block !important; }
+
+.ac-op07 { opacity: 0.7; }
+
+/* dns.js — inline style replacements */
+.ac-dns-field-link { display: inline-block; margin: 2px 0 4px; font-size: 12px; color: var(--accent); }
+.ac-dns-tip-badge { margin-left: 6px; color: var(--fg-3); cursor: help; font-size: 12px; }
+.ac-dns-field-full { grid-column: 1 / -1; }

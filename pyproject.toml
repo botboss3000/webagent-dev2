@@ -1,0 +1,77 @@
+[project]
+name = "webagent"
+version = "0.2.0"
+description = "WebAgent — FastAPI service with dynamic tool loading"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "numpy>=2.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "openai>=1.109.1,<2",
+    "httpx>=0.27.2",
+    "pydantic>=2.10.0,<3",
+    "python-dotenv>=1.2.3,<2",
+    "python-multipart>=0.0.18",
+    "PyJWT[crypto]>=2.13.0,<3",
+    "bcrypt>=4.2.0,<5",
+    "tiktoken>=0.5.2,<1",
+    "tree-sitter>=0.25.0,<0.26",
+    "tree-sitter-javascript>=0.25.0,<0.26",
+    "playwright>=1.40.0",
+    "Pillow>=12.3.0,<13",
+    "wsproto>=1.2.0",
+    "python-telegram-bot>=21.0.0",
+    "twilio>=9.0.0",
+    "tzdata>=2025.0",
+    "asyncpg>=0.29.0",
+    "pgvector>=0.3.0",
+    "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
+    "keyring>=24.0.0",
+    "aiomysql>=0.2.0",
+    "aiortc>=1.7.0",
+    "sqlglot>=23.0.0",
+    "croniter>=2.0.0",
+    "qrcode>=7.4",
+    "pypdf>=5.0.0",
+    # SSH client for the "Existing server (SSH)" deploy target (install onto a VM
+    # you already own). Runtime-guarded: app/deploy/providers/ssh_vm.py degrades
+    # cleanly if it's ever stripped from a trimmed edition.
+    "paramiko>=3.4.0",
+    "pywinpty>=2.0.10; sys_platform == 'win32'",
+]
+
+# Optional secrets-vault backends. These are NOT installed by default — the core
+# ships only the local vaults (inline_db / OS keyring). Install just the cloud
+# vault you actually use, e.g.  uv pip install -e ".[vault-gcp]"
+[project.optional-dependencies]
+vault-gcp = ["google-cloud-secret-manager>=2.20"]
+vault-azure = ["azure-keyvault-secrets>=4.8", "azure-identity>=1.16"]
+vault-aws = ["boto3>=1.34"]
+vault-hashicorp = ["hvac>=2.1"]
+# Full-database encryption at rest (SQLCipher). MANDATORY once any database is
+# encrypted (app/db_encryption.json) — without the engine the encrypted files
+# can't be opened and the server won't boot. The launch scripts install it with
+# `uv sync --extra encryption`. Windows ships binary wheels under `sqlcipher3`;
+# Linux under `sqlcipher3-binary`. macOS: install one manually if wanted.
+encryption = [
+    "sqlcipher3>=0.6.2; sys_platform == 'win32'",
+    "sqlcipher3-binary>=0.6.0; sys_platform == 'linux'",
+]
+# In-process ("local") memory embeddings — FastEmbed (ONNX Runtime, CPU, no GPU).
+# The app DEFAULTS to local embeddings (embedding_source = "local"), so this extra
+# is normally wanted. app/agent/embed.py lazy-imports it and degrades to
+# keyword-only search if it's absent (e.g. an edition that ships cloud-only), so a
+# fresh install without it still boots. Install with:  uv sync --extra embeddings-local
+embeddings-local = ["fastembed>=0.3.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

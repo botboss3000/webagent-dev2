@@ -1,0 +1,36 @@
+{
+  "display_name": "Memory",
+  "entitlement_group": "memory",
+  "risk_class": "write",
+  "action_class": "mixed",
+  "kind": "ability",
+  "virtual": true,
+  "icon": "brain",
+  "color": "#bb9af7",
+  "description": "Recalls useful facts from earlier conversations and saves durable notes for future chats.",
+  "note": "Built-in long-term memory. Recall and automatic saving can be configured independently.",
+  "simple": false,
+  "default_enabled": true,
+  "tools": [
+    "memory"
+  ],
+  "config": {
+    "settings": [
+      {
+        "key": "memory_recall",
+        "label": "Recall Past Info",
+        "type": "boolean",
+        "default": true,
+        "hint": "Search long-term memory before answering."
+      },
+      {
+        "key": "memory_save",
+        "label": "Remember Conversations",
+        "type": "boolean",
+        "default": true,
+        "hint": "Automatically save a short durable note after each exchange."
+      }
+    ]
+  },
+  "order": 1
+}

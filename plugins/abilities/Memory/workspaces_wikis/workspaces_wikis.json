@@ -1,0 +1,55 @@
+{
+  "display_name": "Workspaces & Wikis",
+  "kind": "ability",
+  "icon": "notebook-tabs",
+  "color": "#e0af68",
+  "description": "Search and read approved Notion workspaces and Confluence spaces as live business knowledge, with optional relevant-page recall before a turn.",
+  "skill_summary": "How to search connected Notion and Confluence sources, open authoritative pages, respect approved roots/spaces, and cite workspace knowledge without confusing it with the native Wiki.",
+  "skill_mode": "selectable",
+  "note": "This is for existing third-party knowledge workspaces. Wiki Control remains WebAgent's native shared Wiki.",
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "entitlement_group": "memory",
+  "risk_class": "read",
+  "action_class": "read",
+  "ui_panel": "workspaces_wikis",
+  "tools": [
+    "workspace_list_sources",
+    "workspace_search",
+    "workspace_get"
+  ],
+  "config": {
+    "settings": [
+      {
+        "key": "workspace_recall_enabled",
+        "label": "Automatic Workspace Recall",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Search configured workspaces before substantive turns and inject a few cited page excerpts."
+      },
+      {
+        "key": "workspace_max_results",
+        "label": "Maximum Search Results",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 50,
+        "ceiling": "max",
+        "hint": "Hard cap for workspace search results returned to the agent."
+      },
+      {
+        "key": "workspace_excerpt_chars",
+        "label": "Recall Excerpt Characters",
+        "type": "number",
+        "default": 900,
+        "min": 200,
+        "max": 3000,
+        "ceiling": "max",
+        "hint": "Maximum characters injected from each automatically recalled page."
+      }
+    ]
+  },
+  "order": 5
+}

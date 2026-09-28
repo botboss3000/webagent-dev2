@@ -1,0 +1,11 @@
+{
+  "id": "runtime-loop",
+  "label": "Runtime Loop",
+  "icon": "repeat",
+  "order": 6,
+  "html": "runtime.html",
+  "mount": "#files-runtime-loop-main",
+  "entry": "ui/admin-tools/runtime-loop/runtime-loop-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

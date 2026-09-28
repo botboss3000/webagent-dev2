@@ -1,0 +1,421 @@
+{
+  "_sources": "Loaded by ui/main-panel/agents/agent-loop/js/loop-node-data.js → consumed by ui/main-panel/agents/agent-loop/js/loop-logic.js (panel rendering, loop diagram) and ui/main-panel/agents/js/agents.js (agent config panel)",
+
+  "NODE_STATIC_ITEMS": {
+    "user_input": [
+      { "name": "/optimize",             "type": "command", "desc": "Run the optimizer on this session to improve agent skills" },
+      { "name": "/optimize <feedback>",  "type": "command", "desc": "Run optimizer with specific feedback about what to improve" }
+    ],
+
+    "slash_cmd": [
+      { "name": "/optimize [feedback]",  "type": "command", "desc": "Intercepts /optimize before the agent loop — runs optimizer directly" }
+    ],
+    "ensure_session": [
+      { "name": "Settings → Sessions",   "type": "admin",   "desc": "Creates a new session record if one does not already exist for this request" }
+    ],
+    "agent_resolve": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Configure agent template, system prompt, and max turns" }
+    ],
+    "save_user_msg": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "User message is persisted to the interactions table before the loop starts" }
+    ],
+
+    "load_context": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Edit context documents (agent, user, skills, tools, tasks sections)" }
+    ],
+    "copy_defaults": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Default context is seeded from the default template on first run" }
+    ],
+    "skip_gate": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Short/trivial messages skip memory_search entirely (regex skip gate)" }
+    ],
+    "memory_search": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "View and manage memory pages used for brain context injection" }
+    ],
+    "attachment_describe": [
+      { "name": "App Config → Default LLM", "type": "admin", "desc": "Set per-model Text/Image capability and pick the image describer model" }
+    ],
+    "build_prompt": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Edit the agent's core directive, persona, and context sections" }
+    ],
+    "build_history": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "View session history — internal tools (memory_search/save) are stripped" }
+    ],
+
+    "load_provider": [
+      { "name": "Settings → Provider",   "type": "admin",   "desc": "Configure LLM base URL, API key, model, and parallel providers" }
+    ],
+    "load_tools": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Configure which tools are enabled or disabled for this agent" }
+    ],
+    "integration_status": [
+      { "name": "Settings → Integrations", "type": "admin", "desc": "Enable OAuth integrations for this agent in the Integrations tab" }
+    ],
+    "assemble_msgs": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Assembled as: [system_prompt, ...history, {role:\"user\"}]" }
+    ],
+
+    "interrupt_chk": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "_check_interrupt() — checked at the start of every while-loop turn" }
+    ],
+    "turn_counter": [
+      { "name": "Settings → Max Turns",  "type": "admin",   "desc": "Increments turn counter; exits loop if max_turns exceeded" }
+    ],
+    "permission_chk": [
+      { "name": "Settings → Max Turns",  "type": "admin",   "desc": "At turn 11+ the agent requests permission to continue — configurable via fragments" }
+    ],
+    "build_tool_defs": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Converts loaded tool metadata into the LLM tool_calls schema format" }
+    ],
+    "llm_call": [
+      { "name": "Settings → Provider",   "type": "admin",   "desc": "Change the LLM model, base URL, or API key" },
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Edit the agent's system prompt and persona" }
+    ],
+
+    "db_persist_asst": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "Assistant message (with tool_calls suffix) is saved to DB before validation runs" }
+    ],
+    "validate_tools": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "_validate_tool_call() — checks tool name exists and args are valid" }
+    ],
+    "destructive_chk": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "DESTRUCTIVE_TOOLS set: edit_source, write_source, delete_source, run_command, restart_server" }
+    ],
+    "guardrails": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Destructive tools require _check_user_confirmed() before execution" }
+    ],
+    "post_val_chk": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "_check_interrupt() — checked again after the validation loop completes" }
+    ],
+
+    "execute_tools": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "Tool is dispatched to its handler; result streamed back to the loop" }
+    ],
+    "db_persist_tool": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "Tool result (role=tool) is persisted to the interactions table" }
+    ],
+    "delegation_chk": [
+      { "name": "Settings → Agent",      "type": "admin",   "desc": "If result contains __delegate__ key, agent switches mid-loop and rebinds session" }
+    ],
+    "skill_track": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "skill_track_execution + skill_get_rating run after every tool result" }
+    ],
+
+    "check_continue": [
+      { "name": "Settings → Max Turns",  "type": "admin",   "desc": "Configure the maximum number of agentic turns per request" }
+    ],
+
+    "final_response": [
+      { "name": "/optimize",             "type": "command", "desc": "Trigger optimizer on this session to improve future responses" }
+    ],
+    "db_persist_final": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "Final assistant response is saved to the interactions table" }
+    ],
+    "memory_save": [
+      { "name": "Settings → Source",     "type": "admin",   "desc": "View and manage memory and context documents" }
+    ],
+
+    "opt_collect": [
+      { "name": "/optimize [feedback]",  "type": "command", "desc": "Trigger a new optimizer run against the current session" },
+      { "name": "Settings → Optimizer",  "type": "admin",   "desc": "Configure run mode, intensity, schedule, and scan scope" }
+    ]
+  },
+
+  "OPTIMIZER_NODES": [
+    { "id": "opt_collect",  "label": "Collect",  "type": "opt", "cx": 100, "cy": 458, "hw": 50, "hh": 16, "desc": "Scan recent interactions" },
+    { "id": "opt_analyze",  "label": "Analyze",  "type": "opt", "cx": 285, "cy": 458, "hw": 50, "hh": 16, "desc": "Find failure patterns" },
+    { "id": "opt_propose",  "label": "Propose",  "type": "opt", "cx": 470, "cy": 458, "hw": 54, "hh": 16, "desc": "Generate skill changes" },
+    { "id": "opt_validate", "label": "Validate", "type": "opt", "cx": 658, "cy": 458, "hw": 54, "hh": 16, "desc": "Test proposed changes" },
+    { "id": "opt_apply",    "label": "Apply",    "type": "opt", "cx": 845, "cy": 458, "hw": 50, "hh": 16, "desc": "Update skills & prompts" }
+  ],
+
+  "NODE_PANEL_INFO": {
+    "user_input": {
+      "desc": "Entry point for user-facing agents. The user's message arrives here — plain text from the chat UI, Telegram, email, or other channel.",
+      "details": [
+        { "key": "Trigger type", "val": "user_input" },
+        { "key": "Input shape",  "val": "Plain text string from the user" },
+        { "key": "Channels",     "val": "Web chat, Telegram, email, webhook, SMS" }
+      ]
+    },
+    "slash_cmd": {
+      "desc": "Checks the message against _OPTIMIZE_PATTERN. If matched, routes directly to the optimizer session — the main agent loop never runs.",
+      "details": [
+        { "key": "Pattern",  "val": "_OPTIMIZE_PATTERN regex — catches /optimize and variants" },
+        { "key": "On match", "val": "Session rewritten to optimizer; main loop bypassed entirely" },
+        { "key": "On miss",  "val": "Falls through to ensure_session" }
+      ]
+    },
+    "ensure_session": {
+      "desc": "_ensure_session() — creates a new session row in the DB if none exists, or validates the provided session_id.",
+      "details": [
+        { "key": "Table",   "val": "sessions" },
+        { "key": "Creates", "val": "session_id, user_id, agent_id, created_at" }
+      ]
+    },
+    "agent_resolve": {
+      "desc": "Loads the agent record from the agents table. Determines which agent template, system prompt, tools, and max_turns apply.",
+      "details": [
+        { "key": "Table",   "val": "agents" },
+        { "key": "Outputs", "val": "agent_id, system_prompt, bootstrap_tools, max_turn_count, model, temperature" }
+      ]
+    },
+    "participants": {
+      "desc": "Enforces participant access rules — verifies the user is permitted to interact with this agent before any work begins.",
+      "details": [
+        { "key": "Checks",  "val": "user_id present in agent participants list" },
+        { "key": "On fail", "val": "Request rejected before any DB writes or loop execution" }
+      ]
+    },
+    "save_user_msg": {
+      "desc": "Inserts the user's message as role=\"user\" into the interactions table — the source-of-truth record for this turn.",
+      "details": [
+        { "key": "Table",  "val": "interactions" },
+        { "key": "Role",   "val": "user" },
+        { "key": "Timing", "val": "Before the agent loop — always written even if the agent errors out" }
+      ]
+    },
+    "load_context": {
+      "desc": "Queries the agents table for context documents to inject into the system prompt. Each column maps to a named section.",
+      "details": [
+        { "key": "Columns",  "val": "agent_prompt, user_prompt, skills_prompt, tasks_prompt, misc_prompt, system_prompt" },
+        { "key": "Sections", "val": "AGENT IDENTITY · USER · SKILLS · TOOLS · TASKS · MEMORY · PROJECT" }
+      ]
+    },
+    "copy_defaults": {
+      "desc": "On the agent's first run, copies context documents from the default template so the agent has a working starting configuration.",
+      "details": [
+        { "key": "Trigger", "val": "No existing context rows found for this agent" },
+        { "key": "Source",  "val": "Default agent template (agents table defaults)" }
+      ]
+    },
+    "skip_gate": {
+      "desc": "_should_skip_memory() — trivial or short messages (greetings, single commands) skip memory_search entirely to save latency.",
+      "details": [
+        { "key": "Pattern", "val": "Regex match on message length and content" },
+        { "key": "On skip", "val": "memory_search bypassed; brain_context = None" },
+        { "key": "On pass", "val": "Continues to memory_search normally" }
+      ]
+    },
+    "memory_search": {
+      "desc": "Semantic search over the agent's memory pages to find relevant facts from past sessions. Results injected into the system prompt as [BRAIN CONTEXT].",
+      "details": [
+        { "key": "Tool",     "val": "memory_search (internal — stripped from history shown to LLM)" },
+        { "key": "Injects",  "val": "# [BRAIN CONTEXT] section in system prompt" },
+        { "key": "On empty", "val": "No brain context injected; pipeline continues normally" }
+      ]
+    },
+    "resolve_attach": {
+      "desc": "Resolves attachment IDs into file metadata. Prepares a [USER ATTACHMENTS] section so the agent knows what files were uploaded.",
+      "details": [
+        { "key": "Reads",   "val": "attachments table by attachment_id list" },
+        { "key": "Injects", "val": "# [USER ATTACHMENTS] — name, mime_type, size, attachment_id" },
+        { "key": "Tool",    "val": "read_attachment — agent uses this to fetch file content" }
+      ]
+    },
+    "attachment_describe": {
+      "desc": "When the model handling the turn can't see images, a separately-configured vision model describes each attached image once and the description is injected into the user message (and persisted, so later turns keep it). Active only on turns where it actually runs.",
+      "details": [
+        { "key": "Fires when", "val": "An image is attached AND no selected text model is image-capable" },
+        { "key": "Model",      "val": "The image describer chosen in App Config → Default LLM (per-model Image capability)" },
+        { "key": "Injects",    "val": "[Attached image — <name>]: <description> into the user message" },
+        { "key": "Toggle",     "val": "Per-agent on/off; skip for agents that never handle images" }
+      ]
+    },
+    "build_prompt": {
+      "desc": "build_system_prompt() — assembles all context sections, brain context, and bootstrap tools into a single system prompt string.",
+      "details": [
+        { "key": "Order",  "val": "[AGENT DIRECTIVE] → [AGENT IDENTITY] → [USER] → [SKILLS] → [TOOLS] → [TASKS] → [BRAIN CONTEXT]" },
+        { "key": "Source", "val": "context docs + memory results + agent.system_prompt + bootstrap_tools" }
+      ]
+    },
+    "build_history": {
+      "desc": "build_openai_history_from_session() — fetches all prior interactions and converts to OpenAI message format. Strips internal tools from history.",
+      "details": [
+        { "key": "Strips",   "val": "memory_search, memory_save (internal — never forwarded to LLM)" },
+        { "key": "Rebuilds", "val": "assistant tool_calls from persisted [Tool calls: …] suffix" },
+        { "key": "Output",   "val": "[{role:user/assistant/tool, content:…}, …]" }
+      ]
+    },
+    "load_provider": {
+      "desc": "Reads LLM provider config from the agent record and environment. Sets base_url, api_key, model, temperature, max_tokens.",
+      "details": [
+        { "key": "Sources",  "val": "agent.model, agent.temperature, agent.max_tokens, env OPENROUTER_API_KEY / BASE_URL" },
+        { "key": "Default",  "val": "Runs the agent's default model; the chat user can switch it per conversation" }
+      ]
+    },
+    "load_tools": {
+      "desc": "Fetches tool definitions — built-in tools plus user skills — filtered by the agent's allowed_tools disabled list.",
+      "details": [
+        { "key": "Sources", "val": "BUILTIN_TOOL_METADATA + skills table" },
+        { "key": "Filter",  "val": "agent.allowed_tools = list of disabled tool names" },
+        { "key": "Output",  "val": "List of tool dicts: name, description, parameters schema" }
+      ]
+    },
+    "integration_status": {
+      "desc": "Checks which OAuth integrations are enabled for this agent and whether the user has connected them. Injects a summary into the system prompt so the agent knows which services are available — and can surface a connect link via check_oauth_connection() when the user needs to link an account.",
+      "details": [
+        { "key": "Source",       "val": "agent_connections table (enabled OAuth providers) + auth_elements table (user tokens)" },
+        { "key": "Injects",      "val": "## Available Integrations block appended to system prompt (only when integrations exist)" },
+        { "key": "Connected",    "val": "Provider listed with connected account email" },
+        { "key": "Not connected","val": "Provider listed with instruction to call check_oauth_connection(provider)" },
+        { "key": "User action",  "val": "Agent calls check_oauth_connection() → returns clickable link → user completes OAuth in popup (same link as Integrations tab)" }
+      ]
+    },
+    "assemble_msgs": {
+      "desc": "Builds the final messages array for the LLM: system prompt at [0], conversation history at [1..N], current user message at [N+1].",
+      "details": [
+        { "key": "[0]",    "val": "{role: \"system\", content: system_prompt}" },
+        { "key": "[1..N]", "val": "Prior session turns from build_history" },
+        { "key": "[N+1]",  "val": "{role: \"user\", content: current message + any attachment context}" }
+      ]
+    },
+    "interrupt_chk": {
+      "desc": "_check_interrupt() — checks for a cancellation or shutdown signal. Raises AgentInterrupted if set, which ends the stream.",
+      "details": [
+        { "key": "Checked", "val": "5× per turn: loop start, before LLM, in validation loop (per tool), after validation, in execution loop (per result)" },
+        { "key": "On flag", "val": "Raises AgentInterrupted → stream ends cleanly" }
+      ]
+    },
+    "turn_counter": {
+      "desc": "Increments the turn counter and checks against max_turns. If the limit is reached, forces exit to final_response. 0 means unlimited (no turn ceiling) — the wall-clock cap is the backstop instead.",
+      "details": [
+        { "key": "Default",  "val": "max_turns = agent.max_turn_count (0 = unlimited; new agents seed 9999)" },
+        { "key": "On limit", "val": "Exits while loop → final_response (skipped entirely when unlimited)" },
+        { "key": "Extended", "val": "When bounded, +1 block granted if user approves the permission_chk request" }
+      ]
+    },
+    "permission_chk": {
+      "desc": "At turn ≥ 11, injects a permission-request fragment asking the user if the agent may continue. Scans the last user message for approval.",
+      "details": [
+        { "key": "Trigger",  "val": "turn_num >= 11" },
+        { "key": "Approval", "val": "Scans user message for \"yes\", \"continue\", \"proceed\", etc." },
+        { "key": "On grant", "val": "max_turns extended by 10" }
+      ]
+    },
+    "build_tool_defs": {
+      "desc": "Converts the loaded tool list into the OpenAI tool_calls schema format consumed by the LLM.",
+      "details": [
+        { "key": "Format", "val": "[{type:\"function\", function:{name, description, parameters:{type:\"object\",properties:{…}}}}]" },
+        { "key": "Source", "val": "Tools loaded at load_tools stage" }
+      ]
+    },
+    "llm_call": {
+      "desc": "The actual streaming LLM call. Yields text chunks and/or tool_call deltas. Response determines whether routing or final output follows.",
+      "details": [
+        { "key": "Provider",  "val": "OpenRouter (or custom base_url from load_provider)" },
+        { "key": "Streaming", "val": "Server-sent event chunks yielded in real time to client" },
+        { "key": "Tools",     "val": "LLM may return tool_calls → db_persist_asst → validation → execution" },
+        { "key": "No tools",  "val": "LLM returns plain text → check_continue → final_response" }
+      ]
+    },
+    "db_persist_asst": {
+      "desc": "Saves the assistant's raw response as role=\"assistant\" BEFORE validation runs. Appends a [Tool calls: …] JSON suffix listing requested tool calls.",
+      "details": [
+        { "key": "Table",  "val": "interactions (role=assistant)" },
+        { "key": "Suffix", "val": "Appends \\n\\n[Tool calls: [{name, args}, …]] to content" },
+        { "key": "Timing", "val": "Immediately after LLM response — before any tool is validated or executed" }
+      ]
+    },
+    "validate_tools": {
+      "desc": "_validate_tool_call() — for each requested tool call, checks the tool name exists and arguments are parseable. Invalid calls get an error result without executing.",
+      "details": [
+        { "key": "Checks",   "val": "Tool name in registry · args JSON-parseable · required params present" },
+        { "key": "On fail",  "val": "Returns validation error result; tool skipped" },
+        { "key": "Per call", "val": "Validated in a for-loop; interrupt_chk runs each iteration" }
+      ]
+    },
+    "destructive_chk": {
+      "desc": "Checks if the requested tool is in the DESTRUCTIVE_TOOLS set. These tools require explicit user confirmation before they can execute.",
+      "details": [
+        { "key": "Set",      "val": "edit_source · write_source · delete_source · run_command · restart_server" },
+        { "key": "On match", "val": "Forwards to guardrails for confirmation check" },
+        { "key": "On clear", "val": "Proceeds to post_val_chk then execution" }
+      ]
+    },
+    "guardrails": {
+      "desc": "_check_user_confirmed() — verifies the user explicitly approved the destructive action in their most recent message. Blocks execution if no confirmation.",
+      "details": [
+        { "key": "Checks",   "val": "Last user message for confirmation keywords" },
+        { "key": "On pass",  "val": "Tool proceeds to execution" },
+        { "key": "On block", "val": "Tool skipped; emits blocked event; jumps to check_continue" }
+      ]
+    },
+    "post_val_chk": {
+      "desc": "_check_interrupt() again after the full validation loop completes. Catches cancellations that arrived while tools were being validated.",
+      "details": [
+        { "key": "Timing", "val": "After the per-tool validation for-loop, before execute_tools" },
+        { "key": "On flag", "val": "Raises AgentInterrupted — no tools execute" }
+      ]
+    },
+    "execute_tools": {
+      "desc": "Dispatches each validated tool to its registered handler function. Streams the result back into the turn's tool_results list.",
+      "details": [
+        { "key": "Dispatch", "val": "tool_name → handler lookup in tool registry" },
+        { "key": "Results",  "val": "Collected into tool_results list for this turn" },
+        { "key": "Errors",   "val": "Execution errors are caught and returned as error results — never raised" }
+      ]
+    },
+    "db_persist_tool": {
+      "desc": "Saves each tool result as role=\"tool\" in the interactions table. Includes execution metadata.",
+      "details": [
+        { "key": "Table",    "val": "interactions (role=tool)" },
+        { "key": "Metadata", "val": "tool_name · tool_call_id · duration_ms · success · input_params · error_message" }
+      ]
+    },
+    "delegation_chk": {
+      "desc": "Checks if the tool result contains a __delegate__ key. If found, switches the active agent mid-loop and rebinds the session.",
+      "details": [
+        { "key": "Trigger",  "val": "result contains __delegate__: {agent_id, session_id}" },
+        { "key": "On match", "val": "Session rebound · tools reloaded · new system prompt injected · loop continues" },
+        { "key": "On clear", "val": "Proceeds normally to skill_track" }
+      ]
+    },
+    "skill_track": {
+      "desc": "After each tool result: looks up the skill by tool name, records the execution event, and updates the performance rating score.",
+      "details": [
+        { "key": "Calls",        "val": "skill_get_id_by_name → skill_track_execution → skill_get_rating" },
+        { "key": "Updates",      "val": "skill score in DB (used by optimizer to prioritize improvements)" },
+        { "key": "Non-blocking", "val": "Errors swallowed — skill tracking never fails the turn" }
+      ]
+    },
+    "check_continue": {
+      "desc": "Decides whether to loop back for another turn or proceed to final output. Tool results present = loop; no tool calls = stop.",
+      "details": [
+        { "key": "Loop",  "val": "tool_results non-empty → back to interrupt_chk for turn N+1" },
+        { "key": "Stop",  "val": "No tool calls in LLM response → proceed to final_response" },
+        { "key": "Limit", "val": "max_turns reached → final_response regardless of tool results" }
+      ]
+    },
+    "final_response": {
+      "desc": "Streams the final assistant message to the client over WebSocket. This is the text the user sees.",
+      "details": [
+        { "key": "Delivery", "val": "Streamed as SSE chunks via WebSocket" },
+        { "key": "Content",  "val": "LLM response text — tool call results already reflected in conversation history" }
+      ]
+    },
+    "db_persist_final": {
+      "desc": "Saves the final assistant response to the interactions table. Distinct from db_persist_asst — that saved mid-loop tool-calling turns; this saves the concluding message.",
+      "details": [
+        { "key": "Table", "val": "interactions (role=assistant)" },
+        { "key": "When",  "val": "On clean exit — interrupt and max_turns paths are handled earlier in the loop" }
+      ]
+    },
+    "memory_save": {
+      "desc": "The memory_save internal tool runs after the final response — extracts key facts from the session and upserts them into the agent's long-term memory store.",
+      "details": [
+        { "key": "Tool",     "val": "memory_save (internal — stripped from history shown to LLM)" },
+        { "key": "Storage",  "val": "brain / memory pages table" },
+        { "key": "Optional", "val": "Skipped if the memory tool is disabled for this agent" }
+      ]
+    },
+    "opt_collect": {
+      "desc": "Triggered by a tool call from another agent — not by direct user input. Receives a structured JSON payload containing session_id, optional feedback, and scan scope.",
+      "details": [
+        { "key": "Trigger type", "val": "tool_call" },
+        { "key": "Input shape",  "val": "JSON: { session_id, feedback?, scope?, intensity? }" },
+        { "key": "Fired by",     "val": "run_optimizer tool call · /optimize slash command" }
+      ]
+    }
+  }
+}

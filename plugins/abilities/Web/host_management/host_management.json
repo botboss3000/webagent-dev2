@@ -1,0 +1,31 @@
+{
+  "display_name": "Host Management",
+  "entitlement_group": "host_management",
+  "risk_class": "write",
+  "action_class": "external_action",
+  "kind": "ability",
+  "icon": "server-cog",
+  "color": "#7aa2f7",
+  "description": "Connect Cloudflare and other hosting providers so the agent can inspect domains and manage approved DNS records.",
+  "status": "beta",
+  "skill_summary": "How to use saved hosting-provider connections, inspect domains and DNS records, and make deliberate DNS changes without exposing provider credentials.",
+  "skill_mode": "selectable",
+  "note": "Cloudflare, DigitalOcean, Route 53, Google Cloud DNS, Namecheap, Porkbun, and manual DNS are discovered from the installed provider registry.",
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": false,
+  "ui_panel": "host_connections",
+  "tools": [
+    "host_list_connections",
+    "host_list_zones",
+    "host_list_dns_records",
+    "host_upsert_dns_record"
+  ],
+  "tool_metadata": {
+    "host_list_connections": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "host_list_zones": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "host_list_dns_records": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "host_upsert_dns_record": {"stages": ["guardrails", "execute_tools"], "destructive": true, "requires_confirmation": true}
+  },
+  "order": 5
+}

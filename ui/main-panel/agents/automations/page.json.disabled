@@ -1,0 +1,14 @@
+{
+  "id": "automations",
+  "required_backend_capability": "page:automations",
+  "label": "Automations",
+  "icon": "settings-2",
+  "order": 6,
+  "html": "automations.html",
+  "mount": "#tab-automations",
+  "entry": "ui/main-panel/agents/automations/js/automations.js",
+  "start": "startAutomations",
+  "stop": "stopAutomations",
+  "css": ["automations.css"],
+  "router": "server.py"
+}

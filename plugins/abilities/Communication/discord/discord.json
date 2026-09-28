@@ -1,0 +1,12 @@
+{
+  "display_name": "Discord",
+  "kind": "placeholder",
+  "icon": "radio",
+  "color": "#26A5E4",
+  "description": "Send messages via Discord bot.",
+  "note": "Free — create a Discord bot/app.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 4
+}

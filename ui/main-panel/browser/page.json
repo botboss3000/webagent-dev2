@@ -1,0 +1,13 @@
+{
+  "id": "browser",
+  "required_backend_capability": "page:browser",
+  "label": "Control",
+  "icon": "mouse-pointer-2",
+  "order": 4,
+  "html": "browser.html",
+  "mount": "#tab-browser",
+  "entry": "ui/main-panel/browser/js/browser.js",
+  "start": "startBrowser",
+  "stop": "stopBrowser",
+  "css": ["browser.css"]
+}

@@ -1,0 +1,12 @@
+{
+  "display_name": "Snapchat",
+  "kind": "oauth",
+  "icon": "ghost",
+  "color": "#bb9af7",
+  "description": "Snap Kit identity and Bitmoji.",
+  "note": "Free OAuth — Snap Kit exposes identity and Bitmoji only.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 7
+}

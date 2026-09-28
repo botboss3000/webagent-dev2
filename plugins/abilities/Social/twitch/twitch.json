@@ -1,0 +1,12 @@
+{
+  "display_name": "Twitch",
+  "kind": "oauth",
+  "icon": "twitch",
+  "color": "#bb9af7",
+  "description": "Twitch channel, chat, and clips.",
+  "note": "Free — register a Twitch app for channel, chat, and clips.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 8
+}

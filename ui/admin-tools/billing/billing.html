@@ -1,0 +1,14 @@
+<!-- Platform (marketplace) billing — OPTIONAL, drop-in Admin Tools view partial.
+     This whole view is the platform tier and is STRIPPED from a public /
+     agent-only edition. Discovered via ui/admin-tools/billing/page.json; driven
+     by billing.js (startView/stopView). The always-present agent-tier UI lives in
+     ui/main-panel/agents/billing/agent-billing.js; shared builders + the global
+     runtime (pill/paywall/buy-credits) live in ui/shared/js/billing.js.
+     REMOVE-WHEN: the platform billing tier is excluded from the edition. -->
+<template data-slot="#admin-tools">
+  <main class="files-main" id="files-billing-main" data-view="billing" hidden>
+    <div id="billing-platform-panel" style="padding:16px;max-width:760px;">
+      <div style="color:var(--fg-3);font-size:13px;">Loading…</div>
+    </div>
+  </main>
+</template>

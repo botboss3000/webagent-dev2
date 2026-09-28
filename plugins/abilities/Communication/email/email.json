@@ -1,0 +1,12 @@
+{
+  "display_name": "Email",
+  "kind": "placeholder",
+  "icon": "mail",
+  "color": "#26A5E4",
+  "description": "Send and receive email via SMTP/IMAP.",
+  "note": "Free with your own SMTP/IMAP or an email provider.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 5
+}

@@ -1,0 +1,26 @@
+{
+  "id": "models",
+  "label": "Model Catalog",
+  "icon": "cpu",
+  "description": "The LLM providers and models agents can use \u2014 provider connections, capability discovery, and the catalog agents inherit from.",
+  "keywords": [
+    "llm",
+    "provider",
+    "api",
+    "key",
+    "claude",
+    "openai",
+    "openrouter",
+    "ollama",
+    "default",
+    "model",
+    "token",
+    "embeddings"
+  ],
+  "group": "agent",
+  "runtime": "settings",
+  "page": "models",
+  "anchor": "",
+  "paPage": "agent_settings",
+  "html": "page.html"
+}

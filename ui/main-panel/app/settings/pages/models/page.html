@@ -1,0 +1,112 @@
+<template data-slot="#settings-page-slot-models">
+<div class="settings-page" id="settings-page-models" data-pa-page="agent_settings" hidden>
+<div class="ac-category-group" id="ac-cat-models" data-pa-area="models">
+    <!-- Always-open heading (no chevron): a pinnable section label for the
+         sticky section navigator (see ../sticky-nav.js). -->
+    <div class="ac-category-summary">
+      <i data-lucide="cpu" class="lucide-icon" class="ac-kv-ico-16-accent"></i>
+      <span class="ac-category-title">Model Catalog</span>
+    </div>
+    <div class="ac-category-body">
+
+      <!-- The Models configurator + saved-models table is built by the shared
+           component ui/shared/js/model-table.js (mounted into #ac-model-host by
+           agent-settings.js). SISTER-PANEL: MODEL-TABLE — the agent card's Config
+           tab mounts the SAME component; keep them mirrored. Standard is the
+           primary/default chat roster position; there is no separate default.
+           The app-global extras below (AI message suggestions + "Extend default
+           LLM to agents") are NOT part of the table: on mount the component
+           RELOCATES #ac-model-adv-extras into its Advanced (sliders) panel, so
+           their ids stay live for app-settings.js + _initSuggestionsCheckbox. -->
+      <div class="model-scope-toolbar" aria-label="Model catalog scope and publication">
+        <label class="model-scope-field" for="ac-model-scope">
+          <span>Configuring</span>
+          <select id="ac-model-scope" class="ac-input" aria-describedby="ac-model-scope-hint">
+            <option value="base" data-roster-id="roster-admin">Base — Admin only</option>
+          </select>
+        </label>
+        <span id="ac-model-scope-status" class="model-scope-status is-loading" role="status">Loading…</span>
+        <button id="ac-model-save-draft" type="button" class="ac-btn">Save draft</button>
+        <button id="ac-model-publish" type="button" class="ac-btn ac-btn-primary" disabled>Publish</button>
+        <details class="model-scope-actions" id="ac-model-lifecycle-actions">
+          <summary class="ac-btn">Actions</summary>
+          <div class="model-scope-actions-menu" role="menu">
+            <button type="button" class="ac-btn" data-model-lifecycle="validate">Validate draft</button>
+            <button type="button" class="ac-btn" data-model-lifecycle="preview">Preview impact</button>
+            <button type="button" class="ac-btn" data-model-lifecycle="history">History</button>
+            <button type="button" class="ac-btn is-danger" data-model-lifecycle="retire">Retire roster</button>
+          </div>
+        </details>
+        <span id="ac-model-scope-hint" class="model-scope-hint">Base is the global model catalog for administrators. User tiers remain unchanged.</span>
+      </div>
+      <!-- MODEL-ANALYTICS BOUNDARY: a standalone sibling before the shared
+           model table; never nest it in #ac-model-host or a table row. -->
+      <div id="ac-model-analytics"></div>
+      <div id="ac-model-host"></div>
+      <section id="ac-model-lifecycle-result" class="model-lifecycle-result" hidden aria-live="polite"></section>
+      <div id="ac-model-adv-extras" class="ac-kv-hidden">
+        <label class="ac-label" class="ac-kv-clickable-header">
+          <input type="checkbox" id="ac-use-ai-suggestions" class="ac-kv-checkbox">
+          <span>Use AI message suggestions — EXPERIMENTAL</span>
+        </label>
+        <div class="ac-hint" class="ac-kv-indent-m2-14">Grey suggestion chips above the chat box, written in your voice. Requires a configured model.</div>
+        <label class="ac-label" class="ac-kv-clickable-row">
+          <input type="checkbox" id="ac-extend-llm-to-agents" checked class="ac-kv-checkbox">
+          <span>Extend app model roster to agents</span>
+        </label>
+        <div class="ac-hint" class="ac-kv-indent-m2-6">When enabled, agents can select from "Inherited" options.</div>
+        <div class="ac-kv-indent-warn">
+          <strong>Warning:</strong> Agents inheriting the app roster will lose access to those model-provider connections
+        </div>
+        <div class="ac-actions" class="ac-kv-ml23">
+          <button id="ac-app-settings-save" class="ac-btn ac-btn-primary">Save</button>
+        </div>
+
+        <!-- ── Memory embeddings (app/agent/embed.py) — APP-WIDE, admin-only.
+             Lives HERE (relocated into the model-table Advanced panel), never on
+             the per-agent Config-tab model table: every stored memory vector
+             shares one column + width, so all agents MUST embed identically —
+             this is a single global choice, not a per-agent one. "Cloud" =
+             same provider as the chat model; "Local" = an in-process FastEmbed
+             model (no network hop on every memory search). Switching source or
+             model re-embeds every saved memory via POST
+             /admin/settings/embedding/reindex — driven by _initEmbeddingControl
+             in agent-settings.js. Colours use design-system tokens only. -->
+        <div id="ac-embed-block" class="ac-kv-section-divider">
+          <label class="ac-label" class="ac-kv-row-icon">
+            <i data-lucide="brain" class="lucide-icon" class="ac-kv-ico-15-accent"></i>
+            <span>Memory embeddings</span>
+          </label>
+          <div class="ac-hint" class="ac-kv-indent-m2-10">Which engine turns memories into searchable vectors — applied app-wide to every agent. <strong>Cloud</strong> uses your chat provider; <strong>Local</strong> runs a small model in-process, removing the network round-trip on every memory search.</div>
+
+          <div class="ac-kv-ml23-max340">
+            <label class="ac-label" for="ac-embed-source">Source</label>
+            <select id="ac-embed-source" class="ac-input">
+              <option value="cloud">Cloud — same provider as chat model</option>
+              <option value="local">Local — in-process (FastEmbed)</option>
+            </select>
+
+            <div id="ac-embed-local-row" class="ac-kv-hidden-mt10">
+              <label class="ac-label" for="ac-embed-model">Local model</label>
+              <select id="ac-embed-model" class="ac-input"></select>
+              <div id="ac-embed-local-warn" class="ac-hint" class="ac-kv-hidden-warn-mt6"></div>
+            </div>
+
+            <div id="ac-embed-current" class="ac-hint" class="ac-kv-mt8"></div>
+          </div>
+
+          <div class="ac-info-banner" class="ac-kv-hint-m10">
+            Switching the source or model <strong>re-embeds every saved memory</strong> so old and new vectors match. During the rebuild, memory search falls back to keyword-only. The memory store is small, so this is quick.
+          </div>
+
+          <div class="ac-actions" class="ac-kv-m12-ml23">
+            <button id="ac-embed-reindex" class="ac-btn ac-btn-primary">Apply &amp; re-embed</button>
+          </div>
+          <span id="ac-embed-status" class="ac-status" class="ac-kv-hidden-m8-23"></span>
+        </div>
+      </div>
+      <span id="ac-settings-status" class="ac-status" class="ac-kv-hidden-mt8"></span>
+    </div>
+  </div>
+</div>
+</template>

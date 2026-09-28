@@ -1,0 +1,49 @@
+<template data-slot="#settings-page-slot-storage-routing">
+<div class="settings-page" id="settings-page-storage-routing" data-pa-page="data_settings" hidden>
+<div class="ac-category-group" id="ac-database-card" data-pa-area="database">
+    <div class="ac-category-summary" class="ac-cursor-default">
+      <i data-lucide="database" class="lucide-icon" class="ac-ico-16 ac-fg-accent"></i>
+      <span class="ac-category-title">Storage Routing</span>
+    </div>
+    <div class="ac-category-body">
+
+      <div class="ac-list" id="ac-sr-list">
+        <div class="ac-sr-status" class="ac-py6-fs11-fg3">Loading routing config…</div>
+      </div>
+
+      <div class="ac-mt6">
+        <span id="ac-sr-saved" class="ac-fs10-success-hidden">✓ Saved</span>
+      </div>
+
+      <!-- Browser storage policy is configured via data/config/browser_storage_policy.json
+           (env-overridable via WEBAGENT_BROWSER_* when WEBAGENT_CONFIG_SOURCE=env). -->
+
+      <!-- ── Row · User BYOD (per-user bring-your-own-database master switch) ──
+           App-wide switch for per-user BYO-database routing (user_byod in
+           app-settings.json). OFF (default) = single shared database. ON = each
+           signed-in user can point their interaction data (chats, memories,
+           agents, their own LLM keys) at a Postgres database THEY connect from
+           the account page (ui/shared/js/tenant-db.js); the central DB keeps
+           accounts, the agent catalog and billing. Backend routing: app/db/router.py
+           + app/db/tenant.py. Wired in data-settings.js (initUserByod). -->
+      <div class="ac-list ac-mt6">
+        <div class="ac-ability-row" id="ac-row-user-byod">
+          <span class="ac-ability-icon"><i data-lucide="server" class="lucide-icon" class="ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">User BYOD</div>
+            <div class="ac-ability-desc">When on, each signed-in user can connect their own database and keep their chats, memories and keys there instead of the shared one. Off = single shared database for everyone.</div>
+          </div>
+          <span class="ac-category-count" id="ac-user-byod-badge">Off</span>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-user-byod" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+      </div>
+
+    </div><!-- /.ac-category-body -->
+</div>
+</div>
+</template>

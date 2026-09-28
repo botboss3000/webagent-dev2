@@ -1,0 +1,14 @@
+{
+  "display_name": "Scheduler",
+  "kind": "ability",
+  "icon": "alarm-clock",
+  "color": "#7dcfff",
+  "description": "Runs automations on their schedules. Turn off to pause every scheduled automation run app-wide. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 10,
+  "tools": [],
+  "_note": "Wired-in core singleton (app/scheduler). main.py gates the leader 'scheduler' registration on ability_app_enabled('scheduler'). Descriptor-only by design."
+}

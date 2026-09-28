@@ -1,0 +1,408 @@
+/* git_changes card — Local changes + commit graph (moved from the Instances
+   Overview tab). Scoped under .gc-root; the commit-graph rows reuse the shared
+   files-git.js fg-graph-* classes, so the graph rules below mirror files.css
+   (~lines 2757-2896) with the --files-* tokens defined here. KEEP in sync with
+   files.css. All colours come from the design-system palette; the flag colours
+   are a deliberate git decoration set (amber=modified, green=added, red=deleted,
+   blue=renamed, purple=untracked) matching the Git Control sidebar — see the
+   KEEP comment in files.css (~line 2623).
+   REMOVE-WHEN: the Dashboard tab is dropped from the Instances page. */
+
+.gc-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Graph tokens (values copied from files.css body block) so the shared
+     fg-graph-* classes render identically here. KEEP in sync with files.css. */
+  --files-row-hover: rgba(var(--ink-rgb), 0.06);
+  --files-text-strong: var(--fg-1);
+  --files-text-muted: var(--fg-3);
+  --files-text-faint: var(--fg-4);
+  --files-btn-hover: rgba(var(--ink-rgb), 0.08);
+  --files-btn-hover-strong: rgba(var(--ink-rgb), 0.15);
+  --files-border-strong: var(--border-strong);
+  --files-active-indicator: var(--accent);
+  --files-bg: var(--bg-0);
+  /* Lane/row metrics must match GRAPH_LANE_W / GRAPH_ROW_H in shared/files-git.js */
+  --lane-w: 14px;
+  --row-h: 38px;
+}
+
+/* ── tool row: status dot + hint + auto-refresh toggle ── */
+.gc-toolrow {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 0 6px; flex-shrink: 0;
+}
+.gc-status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-4); flex-shrink: 0;
+}
+.gc-status-dot.ok { background: var(--success); }
+.gc-status-dot.warn { background: #f59e0b; } /* KEEP (intentional): git status colour (amber=uncommitted) */
+.gc-status-dot.err { background: var(--danger); }
+.gc-hint {
+  flex: 1; min-width: 0;
+  font-size: 10.5px; color: var(--fg-4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gc-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 600; color: var(--fg-3);
+  background: transparent; border: none; padding: 2px 0; cursor: pointer; flex-shrink: 0;
+}
+.gc-toggle:hover { color: var(--fg-1); }
+.gc-toggle-track {
+  position: relative; width: 22px; height: 12px; border-radius: 7px;
+  background: var(--bg-tint); border: var(--border-width) solid var(--border);
+  transition: background .15s ease;
+}
+.gc-toggle-track.on { background: rgba(var(--accent-rgb), 0.35); }
+.gc-toggle-knob {
+  position: absolute; top: 1px; left: 1px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--fg-3); transition: left .15s ease, background .15s ease;
+}
+.gc-toggle-track.on .gc-toggle-knob { left: 12px; background: var(--accent); }
+
+/* ── two-column body: changes | divider | commit graph ── */
+.gc-cols {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; align-items: stretch;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.gc-col { min-height: 0; display: flex; flex-direction: column; }
+.gc-col-files { flex: 1 1 0; min-width: 0; padding: 6px 8px 8px; }
+.gc-col-graph { flex: 1 1 0; min-width: 0; padding: 6px 8px 8px; }
+.gc-divider {
+  width: var(--border-width); flex: 0 0 var(--border-width);
+  align-self: stretch; background: var(--border);
+}
+.gc-col-title {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px; font-weight: 600;
+  color: var(--fg-2);
+}
+.gc-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 15px; padding: 0 4px;
+  font-size: 10px; font-weight: 600;
+  border-radius: 8px;
+  background: var(--bg-tint);
+  color: var(--fg-3);
+}
+.gc-graph-hint {
+  font-weight: 400; text-transform: none; letter-spacing: 0;
+  color: var(--fg-4); font-size: 10px;
+}
+
+/* File list — the column is the scroll surface (capped by the card height). */
+.gc-file-list {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 4px 6px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.gc-file-list::-webkit-scrollbar { width: 4px; }
+.gc-file-list::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 2px; }
+.gc-clean {
+  padding: 8px 10px;
+  color: var(--fg-4);
+  font-style: italic;
+  font-size: 11px;
+}
+.gc-file {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 4px; border-radius: 3px;
+  cursor: default; font-size: 11px;
+  flex-shrink: 0;
+}
+.gc-file:hover { background: var(--files-row-hover, rgba(var(--ink-rgb), 0.04)); }
+.gc-file-path {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--fg-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; unicode-bidi: plaintext;
+}
+.gc-file-flag {
+  width: 18px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px;
+  font-size: 10px; font-weight: 700;
+  flex-shrink: 0;
+}
+.gc-file-stat {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gc-stat-add { color: var(--success); }
+.gc-stat-del { color: var(--danger); }
+/* KEEP (intentional): git status colour palette — fixed Tailwind-style hues
+   matching the Git Control sidebar (files.css ~line 2623). */
+.gc-flag-m { background: rgba(245, 158, 11, 0.25); color: #f59e0b; }
+.gc-flag-a { background: rgba(16, 185, 129, 0.25); color: #10b981; }
+.gc-flag-d { background: rgba(239, 68, 68, 0.25); color: #ef4444; }
+.gc-flag-r { background: rgba(59, 130, 246, 0.25); color: #3b82f6; }
+.gc-flag-u { background: rgba(139, 92, 246, 0.25); color: #8b5cf6; }
+/* Skeleton shimmer for the loading state */
+.gc-skel { padding: 6px 4px; }
+.gc-skel-line {
+  display: block; height: 10px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-tint) 25%, rgba(var(--ink-rgb), 0.08) 50%, var(--bg-tint) 75%);
+  background-size: 200% 100%;
+  animation: gc-shimmer 1.5s ease-in-out infinite;
+}
+.gc-skel-line.gc-skel-w1 { width: 62%; }
+.gc-skel-line.gc-skel-w2 { width: 48%; }
+.gc-skel-line.gc-skel-w3 { width: 70%; }
+@keyframes gc-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── commit graph (shared fg-graph-* classes, scoped) ──
+   Rows are rendered by shared/files-git.js (renderGraphRow) with the SAME
+   fg-graph-* classes as the Git Control page, so these styles are copied from
+   files.css (~lines 2757-2896) with --files-* resolved via the tokens on .gc-root.
+   Rows are display-only here (no commit-detail wiring), hence cursor: default.
+   KEEP in sync with files.css. */
+.gc-root .fg-graph-list {
+  flex: 1 1 auto; min-height: var(--row-h, 38px);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+.gc-root .fg-graph-list::-webkit-scrollbar { width: 4px; }
+.gc-root .fg-graph-list::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 2px; }
+.gc-root .fg-graph-row {
+  display: flex; flex-direction: column;
+  cursor: default;             /* not clickable here — no commit-detail wiring */
+  outline: none;
+  border-left: 2px solid transparent;
+  flex-shrink: 0;              /* rows keep their fixed height inside the scrollable list */
+}
+.gc-root .fg-graph-row-head {
+  display: flex; align-items: stretch;
+  height: var(--row-h, 38px);
+  overflow: hidden;
+}
+.gc-root .fg-graph-row-head:hover { background: var(--files-row-hover); }
+.gc-root .fg-graph-row:focus-visible .fg-graph-row-head { background: var(--files-row-hover); }
+.gc-root .fg-graph-row:focus-visible { border-left-color: var(--files-active-indicator); }
+.gc-root .fg-graph-row.unpulled { opacity: 0.85; }
+.gc-root .fg-graph-row.other-branch { opacity: 0.7; }
+.gc-root .fg-graph-col {
+  flex-shrink: 0;
+  height: var(--row-h, 38px);
+}
+.gc-root .fg-graph-svg {
+  display: block;
+  /* Let the unpushed-commit green halo bleed past the tight per-row lane box
+     without being clipped (the halo is wider than a single lane column). */
+  overflow: visible;
+}
+.gc-root .fg-graph-meta {
+  flex: 1; min-width: 0;
+  padding: 3px 8px 3px 6px;
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 2px;
+}
+.gc-root .fg-graph-msg-line {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; line-height: 1.25;
+  color: var(--files-text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gc-root .fg-graph-msg {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gc-root .fg-graph-sub {
+  display: flex; gap: 6px;
+  font-size: 10px; line-height: 1.2;
+  color: var(--files-text-faint);
+  align-items: center; min-width: 0;
+}
+/* Container holding HEAD badge + branch tags on the second line. Shrinks
+   and clips first so the hash, date, and author always stay visible. */
+.gc-root .fg-graph-tags {
+  display: flex; gap: 4px; align-items: center;
+  flex: 0 1 auto; min-width: 0; overflow: hidden;
+}
+.gc-root .fg-hash {
+  font-family: var(--font-mono, monospace);
+  background: var(--files-btn-hover);
+  padding: 0 4px; border-radius: 2px;
+  font-size: 10px; color: var(--files-text-muted);
+  flex-shrink: 0; cursor: pointer;
+}
+.gc-root .fg-graph-date { color: var(--files-text-faint); flex-shrink: 0; }
+.gc-root .fg-graph-author {
+  color: var(--files-text-faint);
+  margin-left: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; flex-shrink: 1;
+}
+.gc-root .fg-graph-badge {
+  display: inline-block; padding: 1px 5px;
+  font-size: 9px; font-weight: 700;
+  border-radius: 3px; letter-spacing: 0.04em; flex-shrink: 0;
+}
+.gc-root .fg-graph-badge.head { background: var(--files-active-indicator); color: var(--files-bg); }
+.gc-root .fg-graph-badge.unpulled { background: rgba(245, 158, 11, 0.25); color: #f59e0b; } /* KEEP (intentional): git status colour (amber=unpulled) */
+.gc-root .fg-branch-tag {
+  display: inline-block; padding: 1px 5px;
+  font-size: 9px; border-radius: 3px;
+  background: var(--files-btn-hover-strong);
+  color: var(--files-text-muted);
+  border: var(--border-width) solid var(--files-border-strong);
+  flex-shrink: 0;
+}
+
+/* ── git action buttons carousel ──
+   A horizontal row of buttons below the two columns, matching the Git Control
+   page's sync section. When the buttons don't fit the row scrolls horizontally —
+   no wrapping, no stacking. Chevrons appear over the edges when scrollable. */
+.gc-actions-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+.gc-actions {
+  display: flex; align-items: center; gap: 6px;
+  overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: none;
+  padding: 2px 0;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.gc-actions::-webkit-scrollbar { height: 3px; }
+.gc-actions::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+.gc-chev {
+  position: absolute; top: 0; bottom: 2px; width: 22px;
+  display: none; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--fg-3); font-size: 14px; line-height: 1; z-index: 2;
+}
+.gc-chev:hover { color: var(--fg-1); }
+.gc-chev.left { left: 0; }
+.gc-chev.right { right: 0; }
+.gc-actions-wrap.can-scroll-left .gc-chev.left { display: flex; }
+.gc-actions-wrap.can-scroll-right .gc-chev.right { display: flex; }
+.gc-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: var(--border-width) solid var(--border);
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+  white-space: nowrap;
+}
+.gc-action-btn:hover { background: rgba(var(--ink-rgb), 0.12); border-color: rgba(var(--ink-rgb), 0.30); }
+.gc-action-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+.gc-action-btn > svg, .gc-action-btn > .lucide-icon { width: 13px; height: 13px; }
+.gc-action-btn.gc-star {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.35);
+  color: var(--accent);
+}
+.gc-action-btn.gc-star:hover {
+  background: rgba(var(--accent-rgb), 0.20);
+  border-color: rgba(var(--accent-rgb), 0.50);
+}
+.gc-action-btn.gc-star:disabled { opacity: 0.35; }
+.gc-ahead-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+}
+
+/* Merge branch menu — in-flow (card bodies clip absolutely-positioned dropdowns) */
+.gc-merge-menu {
+  margin-top: 6px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  max-height: 160px;
+  overflow-y: auto;
+  min-width: 160px;
+  padding: 4px;
+}
+.gc-branch-loading,
+.gc-branch-empty,
+.gc-branch-err {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--fg-4);
+}
+.gc-branch-err { color: var(--danger); }
+.gc-branch-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.gc-branch-opt:hover { background: rgba(var(--ink-rgb), 0.06); }
+
+/* Result line (commit / push / pull / merge feedback) */
+.gc-result {
+  flex-shrink: 0;
+  margin-top: 6px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  border: var(--border-width) solid transparent;
+  transition: opacity .15s ease;
+}
+.gc-result.ok { background: rgba(var(--success-rgb), 0.10); border-color: rgba(var(--success-rgb), 0.25); color: var(--success); }
+.gc-result.err { background: rgba(var(--danger-rgb), 0.10); border-color: rgba(var(--danger-rgb), 0.25); color: var(--danger); }
+.gc-result.info { background: rgba(var(--accent-rgb), 0.08); border-color: rgba(var(--accent-rgb), 0.20); color: var(--accent); }
+.gc-result.warn { background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.25); color: #f59e0b; }
+.gc-result-spin {
+  display: inline-block; width: 9px; height: 9px; margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid rgba(var(--ink-rgb), 0.15);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: gc-spin 0.7s linear infinite;
+}
+.gc-result-cancel {
+  margin-left: 8px;
+  padding: 2px 7px;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+.gc-result-cancel:hover { background: rgba(var(--danger-rgb), 0.12); }
+@keyframes gc-spin { to { transform: rotate(360deg); } }

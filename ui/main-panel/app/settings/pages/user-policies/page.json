@@ -1,0 +1,24 @@
+{
+  "id": "user-policies",
+  "label": "User Policies",
+  "icon": "shield-check",
+  "description": "Control app access and experience-tier capabilities, credit budgets, anonymous allowances, and global safety ceilings.",
+  "keywords": [
+    "users",
+    "policy",
+    "access",
+    "anonymous",
+    "guest",
+    "tiers",
+    "entitlements",
+    "quota",
+    "credits",
+    "limits"
+  ],
+  "group": "agent",
+  "runtime": "settings",
+  "page": "user-policies",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

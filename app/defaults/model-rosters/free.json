@@ -1,0 +1,11 @@
+{
+  "id": "roster-free",
+  "slug": "roster-free",
+  "name": "Free platform models",
+  "description": "Default platform-funded model roster for registered users.",
+  "entries": [],
+  "default_entry_id": null,
+  "status": "published",
+  "revision": 1,
+  "source": "system-seed"
+}

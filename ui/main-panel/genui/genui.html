@@ -1,0 +1,77 @@
+<div id="genui-container">
+
+  <!-- New-page dialog (hidden by default) -->
+  <div id="genui-new-page-dialog">
+    <div class="genui-dialog-box">
+      <h3>New Page</h3>
+      <input type="text" id="genui-dialog-input" class="genui-dialog-input" placeholder="Page title (e.g. Dashboard, Notes)" maxlength="60" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
+      <div class="genui-dialog-actions">
+        <button id="genui-dialog-cancel" class="genui-dialog-btn genui-dialog-btn-cancel">Cancel</button>
+        <button id="genui-dialog-confirm" class="genui-dialog-btn genui-dialog-btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Viewport -->
+  <div id="genui-viewport">
+    <!-- FRONT-PAGE GALLERY — a card grid of every genui page, laid out after the
+         Agents page (ui/main-panel/agents/): a toolbar + a wrapping grid of
+         square tiles, one per page, each carrying a thumbnail preview of that
+         page's HTML (rendered scripts-stripped in its own shadow root and
+         scaled down). Shown by default when the tab opens — instead of
+         auto-loading the first page — and re-shown by the grid button in the
+         footer. Re-clicking the Gen UI tab in the main header while a page is
+         open also lands here (see startGenui's active-tab cycle in js/genui.js).
+         Clicking a card opens that page. Rendered by js/genui.js
+         (_renderGallery / _loadThumb). -->
+    <div id="genui-gallery" class="genui-gallery" hidden>
+      <div id="genui-gallery-toolbar" class="genui-gallery-toolbar">
+        <div class="genui-gallery-titles">
+          <span id="genui-gallery-title" class="genui-gallery-title"><i data-lucide="layout-grid" style="width:17px;height:17px;"></i> Gen UI</span>
+          <span id="genui-gallery-sub" class="genui-gallery-sub"></span>
+        </div>
+        <div class="genui-gallery-actions">
+          <button type="button" id="genui-gallery-new-btn" class="genui-gallery-tb-btn" title="New Gen UI"><i data-lucide="plus" style="width:14px;height:14px;"></i> New</button>
+          <button type="button" id="genui-gallery-refresh-btn" class="genui-gallery-tb-btn genui-gallery-tb-icon" title="Refresh page previews"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
+          <!-- Selection controls mirror the Agents page toolbar (select-all /
+               clear / trash). The delete button is hidden until at least one
+               page is checked, and permanently deletes the checked pages
+               (Gen UI has no recycling bin). -->
+          <button type="button" id="genui-gallery-select-all" class="genui-gallery-tb-btn genui-gallery-tb-icon" title="Select all pages"><i data-lucide="check-square" style="width:15px;height:15px;"></i></button>
+          <button type="button" id="genui-gallery-deselect-all" class="genui-gallery-tb-btn genui-gallery-tb-icon" title="Clear selection"><i data-lucide="square" style="width:15px;height:15px;"></i></button>
+          <button type="button" id="genui-gallery-delete-btn" class="genui-gallery-tb-trash" data-state="trash" title="Delete selected pages" style="display:none;">
+            <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
+          </button>
+        </div>
+      </div>
+      <div id="genui-gallery-squares" class="genui-gallery-squares"></div>
+    </div>
+
+    <div id="genui-placeholder" class="genui-placeholder">
+      <span class="genui-placeholder-icon"><i data-lucide="palette" style="width:48px;height:48px;"></i></span>
+      <span class="genui-placeholder-text">Loading Generated UI content</span>
+    </div>
+    <!-- FIRST-CLASS GENUI HOST (local-only). The agent's genui is grafted
+         straight into the app here — no sandboxed iframe — so it has real-page
+         powers (live webcam/mic, direct calls to the agent). It is rendered into
+         an open shadow root for CSS containment, and this host carries a CSS
+         containment context (contain: paint + transform in app1.css) so a
+         genui's full-bleed background / fixed children stay inside this box
+         instead of escaping over the app shell. See js/genui.js
+         (mountGenui) and the Visualizer skill for the authoring contract.
+         When the app is NOT in local single-user mode the host stays empty and
+         a notice is shown instead (agent-authored page code must never run with
+         app trust on a shared server). -->
+    <div id="genui-host" class="genui-host" style="display:none;"></div>
+    <div id="genui-loading" class="genui-loading" style="display:none;">
+      <span class="genui-spinner"></span>
+      <span>GenUi page is loading...</span>
+    </div>
+  </div>
+
+  <!-- Footer: an EMPTY mount filled by the swappable toolbar module
+       (js/genui-toolbar.js → _buildToolbar). It owns the page-selector popup
+       and the new / refresh / ✦ chat buttons, so a user can redesign the footer
+       there without touching the base genui markup or core. -->
+  <div id="genui-footer"></div>
+</div>

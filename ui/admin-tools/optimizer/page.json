@@ -1,0 +1,12 @@
+{
+  "id": "optimizer",
+  "label": "Optimizer Runs",
+  "icon": "zap",
+  "order": 8,
+  "locked": true,
+  "html": "optimizer-view.html",
+  "mount": "#files-optimizer-main",
+  "entry": "ui/admin-tools/optimizer/optimizer-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

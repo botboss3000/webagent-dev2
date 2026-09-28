@@ -1,0 +1,26 @@
+{
+  "display_name": "Wiki Control",
+  "kind": "ability",
+  "icon": "database",
+  "color": "#7dcfff",
+  "description": "Automatically recalls relevant company Wiki excerpts into the agent's context, and lets it search, read, create, edit, publish, restore, and delete Wiki entries. Writes change shared data everyone sees, so grant per agent with care.",
+  "skill_summary": "How automatic Wiki recall supplies relevant excerpts before each substantive turn, and how to search, read, and control the company-wide Wiki. Load when a question might be answered by the Wiki or when shared knowledge should be created or changed — inspect the relevant articles, then synthesize, cite, or update them carefully.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "wiki_search",
+    "wiki_list",
+    "wiki_get",
+    "wiki_create",
+    "wiki_update",
+    "wiki_set_status",
+    "wiki_delete",
+    "wiki_history",
+    "wiki_get_revision",
+    "wiki_restore",
+    "wiki_backlinks"
+  ],
+  "order": 2
+}

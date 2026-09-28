@@ -1,0 +1,16 @@
+{
+  "display_name": "Web Access",
+  "kind": "ability",
+  "icon": "globe",
+  "color": "#7aa2f7",
+  "description": "Lets the agent search the web, look up weather, and geocode addresses. No API keys needed.",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "web_search",
+    "maps_geocode",
+    "get_weather"
+  ],
+  "order": 2
+}

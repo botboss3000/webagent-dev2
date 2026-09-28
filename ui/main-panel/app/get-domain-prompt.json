@@ -1,0 +1,5 @@
+{
+  "title": "Get a domain",
+  "iconName": "globe",
+  "template": "[WebAgent Request | Source: Instances Page — Get a Domain]\n\nThe user wants to get or configure a domain for their WebAgent deployment. They need help with one or more of:\n- Choosing a domain registrar (Namecheap, Cloudflare, Porkbun, GoDaddy, etc.)\n- Registering a new domain\n- Configuring DNS records to point the domain to their server\n\nIf the user has an existing domain at a provider with no direct app integration, ask them to save their login to the encrypted vault (Browser Control credentials). Then:\n1. Call check_credential(ability=\"browser_control\") to confirm the login is saved\n2. Log in headlessly with vault_login — you never see the password\n3. Navigate to the DNS management panel in the browser\n4. Add or update DNS records as needed\n\nBe conversational. First, ask what they want to do and whether they have a domain or a provider in mind. Help them decide if they are unsure. Then walk them through the setup.\n\nThe app is currently reachable at the URLs shown on the Instances page — use those as the target for DNS records."
+}

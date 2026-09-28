@@ -1,0 +1,50 @@
+/* ============================================================
+   Stargaze background — colour tokens (read by stargaze.js)
+   ------------------------------------------------------------
+   These --sg-* tokens used to live in ui/shared/css/design-system.css.
+   They moved here so the Stargaze background is fully self-contained:
+   deleting ui/background/stargaze/ removes the renderer AND its palette.
+   stargaze.js carries identical hard-coded fallbacks, so there is no
+   flash before this stylesheet (injected by the plugin) applies.
+
+   PALETTE-DERIVED + LIVE: the moving nebula glows are wired to the theme
+   palette (accent / secondary / ambient) so the background tracks the
+   theme — and updates LIVE when the admin edits a colour in the Appearance
+   panel. The literal triple after each `var(...)` is the fallback used
+   only if that palette token is ever absent.
+
+   WHY THESE LIVE ON `body:not(.light-mode)` / `body.light-mode` (not :root):
+   appearance.js writes its live palette overrides onto exactly those two
+   body selectors. A `var(--brand-rgb)` reference only re-resolves to a live
+   edit when it is declared on the SAME element the override lands on — a
+   :root declaration would freeze to the base palette and ignore live edits.
+   The dark/light split also lets each theme keep its own fallback + its
+   non-palette structural tokens (edge / star hue+sat / ink).
+
+   Triples only; the genui applies its own alphas. To re-theme independently
+   of the palette, replace a `var(...)` with a literal triple here.
+   ============================================================ */
+
+/* Dark theme (default) */
+body:not(.light-mode) {
+  --sg-glow-1-rgb:  var(--ambient-2-rgb, 60, 70, 130);  /* top nebula — core (ambient glow) */
+  --sg-glow-1b-rgb: var(--purple-rgb, 40, 30, 80);      /* top nebula — mid (secondary) */
+  --sg-glow-2-rgb:  var(--brand-rgb, 125, 90, 200);     /* corner nebula — core (accent) */
+  --sg-glow-2b-rgb: var(--purple-rgb, 80, 60, 160);     /* corner nebula — mid (secondary) */
+  --sg-edge-rgb:    8, 8, 16;        /* nebula fade-out (≈ page background) */
+  --sg-star-hue:    220;             /* base star hue (deg) */
+  --sg-star-sat:    80%;             /* star saturation */
+  --sg-ink-rgb:     210, 225, 255;   /* constellation / shooting-star / dust */
+}
+
+/* Light theme — warm peach glow (palette-derived, with warm fallbacks) */
+body.light-mode {
+  --sg-glow-1-rgb:  var(--ambient-2-rgb, 255, 200, 150);
+  --sg-glow-1b-rgb: var(--purple-rgb, 220, 160, 110);
+  --sg-glow-2-rgb:  var(--brand-rgb, 200, 120, 70);
+  --sg-glow-2b-rgb: var(--purple-rgb, 180, 100, 60);
+  --sg-edge-rgb:    245, 220, 195;
+  --sg-star-hue:    22;
+  --sg-star-sat:    55%;
+  --sg-ink-rgb:     100, 50, 22;
+}

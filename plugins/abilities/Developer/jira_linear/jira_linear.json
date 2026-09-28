@@ -1,0 +1,12 @@
+{
+  "display_name": "Jira / Linear",
+  "kind": "placeholder",
+  "icon": "kanban-square",
+  "color": "#7aa2f7",
+  "description": "Issues and project management.",
+  "note": "Free OAuth — issues and projects.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 3
+}

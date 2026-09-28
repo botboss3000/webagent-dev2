@@ -1,0 +1,598 @@
+/* ── Chat widget — floating mini chat (ui/chat-widget/) ─────────────────────
+   A small floating card any page can spawn to run a task-scoped agent
+   session without disturbing the main chat side-panel. Built entirely from
+   design-system variables — works in dark AND light mode (body.light-mode).
+   The input row uses the chat-pill classes; this stylesheet only styles the
+   widget container and its widget-specific controls.
+   Tool-call rows reuse the global .ca-tool-* styles from the chat activity
+   panel; this file only styles their container.                            */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / var(--accent) / var(--accent-hover) for
+   the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALL @keyframes MUST stay here at the top — Android WebView silently ignores
+   any @keyframes that appear after an @media block in the same stylesheet.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes cw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes cw-spin { to { transform: rotate(360deg); } }
+@keyframes webagent-launcher-glow {
+  0%, 100% { filter: saturate(1); }
+  50% { filter: saturate(1.22) brightness(1.05); }
+}
+@keyframes wla-blink {
+  0%, 80%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.08); }
+}
+
+#chat-widget-layer {
+  position: fixed;
+  bottom: 16px;
+  right: 16px; /* shifted left at runtime when the main chat panel is open */
+  z-index: 8500; /* above page content, below modals (9000+) */
+  display: flex;
+  flex-direction: column-reverse; /* newest widget at the bottom, stack grows up */
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none; /* only the cards themselves catch the pointer */
+}
+
+.chat-widget {
+  pointer-events: auto;
+  position: relative; /* anchor for the resize handles */
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-height: min(480px, 60vh);
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.35);
+  overflow: hidden;
+}
+body.light-mode .chat-widget {
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.15);
+}
+
+/* Floating: the user dragged or resized the card, so it leaves the docked
+   stack and is positioned/sized explicitly via inline styles. */
+.chat-widget.cw-floating {
+  position: fixed;
+  z-index: 8600;
+  max-height: none;
+}
+
+/* ── Resize handles (one per edge/corner) ── */
+/* Handles sit ABOVE the header (z-index 6) so the outer edge/corner strips grab
+   for resize even where they overlap the header's top edge — otherwise the
+   header, being on top, would swallow the pointer-down and start a drag. The
+   strips are thin (top edge ~5px, corners ~10px inward), well clear of the
+   vertically-centred header buttons, so those stay clickable by geometry. */
+.cw-resize { position: absolute; z-index: 7; touch-action: none; }
+.cw-resize-n  { top: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.cw-resize-s  { bottom: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.cw-resize-e  { top: 10px; bottom: 10px; right: -3px; width: 8px; cursor: ew-resize; }
+.cw-resize-w  { top: 10px; bottom: 10px; left: -3px; width: 8px; cursor: ew-resize; }
+.cw-resize-ne { top: -4px; right: -4px; width: 14px; height: 14px; cursor: nesw-resize; z-index: 8; }
+.cw-resize-nw { top: -4px; left: -4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 8; }
+.cw-resize-se { bottom: -4px; right: -4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 8; }
+.cw-resize-sw { bottom: -4px; left: -4px; width: 14px; height: 14px; cursor: nesw-resize; z-index: 8; }
+/* The minimized chip is never resizable. */
+.chat-widget.minimized .cw-resize { display: none; }
+/* Keep text selection/cursor sane while a drag or resize is in progress. */
+body.cw-dragging, body.cw-dragging * { cursor: inherit !important; user-select: none !important; }
+
+/* ── Header (doubles as the minimized chip) ── */
+.cw-header {
+  position: relative;
+  z-index: 6; /* above the body/footer; the outer resize strips sit above this (see .cw-resize) */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: var(--border-width) solid var(--border-soft);
+  flex-shrink: 0;
+  user-select: none;
+  cursor: grab; /* draggable to move the card */
+  touch-action: none;
+  align-self: center;
+  width: 100%;
+  max-width: var(--chat-header-max-width, var(--chat-surface-max-width, 1000px));
+}
+.chat-widget.minimized .cw-header { cursor: pointer; }
+body.cw-dragging .cw-header { cursor: grabbing; }
+.cw-head-icon { color: var(--accent); }
+.cw-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-status {
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.cw-done .cw-status { color: var(--success); }
+
+.cw-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fg-4);
+}
+.cw-dot.starting,
+.cw-dot.running {
+  background: var(--accent);
+  animation: cw-pulse 1.2s ease-in-out infinite;
+}
+.cw-dot.done { background: var(--success); }
+.cw-dot.interrupted { background: var(--warning); }
+.cw-dot.error { background: var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .cw-dot.starting, .cw-dot.running { animation: none; }
+}
+
+.cw-icon-btn {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: 0.15s;
+}
+.cw-icon-btn:hover {
+  color: var(--fg-1);
+  background: var(--bg-tint);
+}
+
+/* ── Minimized = compact chip (also the "Done" chip) ── */
+.chat-widget.minimized {
+  width: auto;
+  max-width: 280px;
+}
+.chat-widget.minimized .cw-body,
+.chat-widget.minimized .cw-footer { display: none; }
+.chat-widget.minimized .cw-header {
+  border-bottom: none;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.chat-widget.minimized .cw-min-btn { display: none; }
+
+/* ── Message area ── */
+.cw-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 8px 40px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 60px;
+  align-content: start;
+  -webkit-mask-image: linear-gradient(to bottom, var(--chat-fade-top-stops, #000 0), #000 calc(100% - var(--chat-fade-bottom,0px)), transparent 100%);
+  mask-image: linear-gradient(to bottom, var(--chat-fade-top-stops, #000 0), #000 calc(100% - var(--chat-fade-bottom,0px)), transparent 100%);
+}
+/* The transcript uses the panel's flex-column flow. Bubble max-width and
+   user/agent alignment therefore come directly from the shared chat styles. */
+.cw-body > * {
+  max-width: min(90%, var(--chat-surface-max-width, 1000px));
+}
+
+.cw-bubble.streaming { opacity: 0.9; }
+.cw-bubble.scout-preview {
+  border-color: rgba(var(--brand-rgb), 0.28);
+  border-style: dashed;
+  opacity: 0.88;
+}
+.cw-bubble.scout-preview::before {
+  content: 'Scout · provisional';
+  display: block;
+  margin-bottom: 5px;
+  color: var(--fg-3, var(--fg-2));
+  font-size: 10px;
+  font-weight: 600;
+}
+.cw-bubble.cw-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.cw-bubble.failed { border-color: var(--danger); }
+
+/* Markdown output (filled by the shared bubble renderer) */
+.cw-bubble.md { white-space: normal; }
+.cw-bubble .md-body > :first-child { margin-top: 0; }
+.cw-bubble .md-body > :last-child { margin-bottom: 0; }
+.cw-bubble .md-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.cw-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  background: none;
+  border: var(--border-width) solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-2);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.cw-retry-btn:hover { color: var(--fg-1); border-color: var(--border-strong); }
+
+/* Tool/progress disclosures use the panel's .bubble-tool-calls and
+   .ca-tool-* components without widget-specific presentation rules. */
+
+/* Widget composers stay visually actionable even when Appearance disables the
+   app-wide neutral border token (--border-width: 0). This is intentionally
+   scoped to the widget: it does not alter the user's global border preference.
+   The shared #chat-panel/.chat-surface rule is !important, so this selector
+   deliberately outranks it and retains a one-pixel boundary on first open. */
+#chat-widget-layer .chat-widget .cw-pill,
+#chat-widget-layer .chat-widget .cw-pill:focus-within,
+#chat-widget-layer .chat-widget .cw-pill.drag-over {
+  border: 1px solid color-mix(in oklab, var(--fg-1) 16%, transparent) !important;
+}
+#chat-widget-layer .chat-widget .cw-pill:focus-within {
+  border-color: color-mix(in oklab, var(--fg-1) 28%, transparent) !important;
+}
+
+/* ── Footer (activity + shared chat pill) ── */
+.cw-footer {
+  position: relative;
+  z-index: 1; /* above resize edge handles so the pill/buttons stay usable */
+  flex-shrink: 0;
+  padding: 2px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-self: center;
+  width: 100%;
+  max-width: var(--chat-surface-max-width, 1000px);
+}
+/* The row above the pill contains only the JSON-configured activity control.
+   Stop and Continue live inside the shared pill layout. */
+.cw-actions { flex-shrink: 0; }
+/* Spinning loader shown above-left of the pill while the agent is working —
+   the widget's echo of the main panel's live tool-call activity. A genuine
+   loader icon (Lucide loader-circle), NOT a pulsing dot. */
+.cw-spinner { color: var(--accent); }
+.cw-spinner[data-footer-disabled="true"] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .cw-spinner { animation: none; }
+}
+
+/* Mobile: full-width cards */
+@media (max-width: 800px) {
+  .chat-widget { width: calc(100vw - 32px); }
+}
+
+/* Mobile: larger touch targets for corner buttons */
+@media (pointer: coarse) {
+  .chat-launcher-corner-btn,
+  .webagent-launcher-corner-btn {
+    width: 28px; height: 28px;
+  }
+  .chat-launcher-corner-btn.--tl,
+  .webagent-launcher-corner-btn.--tl {
+    top: -14px; left: -14px;
+  }
+  .chat-launcher-corner-btn.--tr,
+  .webagent-launcher-corner-btn.--tr {
+    top: -14px; right: -14px;
+  }
+  .chat-launcher-corner-btn.--bl,
+  .webagent-launcher-corner-btn.--bl {
+    bottom: -14px; left: -14px;
+  }
+  .chat-launcher-corner-btn.--br,
+  .webagent-launcher-corner-btn.--br {
+    bottom: -14px; right: -14px;
+  }
+}
+/* CHAT-LAUNCHER-SYNC: .chat-launcher is the shared launcher button (factory:
+   ui/chat-widget/js/chat-launcher.js — createChatLauncher). .webagent-launcher
+   is kept as a back-compat ALIAS for the global launcher's id-class pair; every
+   new launcher styles through .chat-launcher and both themes. Keep all launcher
+   geometry here — never re-style a launcher in a page's own CSS. */
+/* Persistent WebAgent launcher: keep the solid bubble/icon on the theme's
+   guaranteed high-contrast text/background pair. The accent still drives the
+   surrounding nebula glow, so custom palettes remain visible without putting
+   white ink on a light accent (or dark ink on a dark accent). */
+.chat-launcher,
+.webagent-launcher {
+  position: fixed; right: 22px; bottom: 22px; z-index: 2147482500;
+  width: 58px; height: 58px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); color: var(--bg-0);
+  background: var(--fg-1);
+  box-shadow: 0 0 18px rgba(var(--brand-rgb), .72), 0 0 48px rgba(var(--purple-rgb), .36), 0 8px 28px rgba(var(--shadow-rgb), .32);
+  cursor: grab; touch-action: none; user-select: none;
+  animation: webagent-launcher-glow 4s ease-in-out infinite;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.chat-launcher--inline {
+  position: relative; right: auto; bottom: auto;
+}
+.chat-launcher:hover,
+.webagent-launcher:hover { transform: scale(1.06); box-shadow: 0 0 24px rgba(var(--brand-rgb), .86), 0 0 62px rgba(var(--purple-rgb), .46), 0 10px 32px rgba(var(--shadow-rgb), .36); }
+.chat-launcher:focus-visible,
+.webagent-launcher:focus-visible { outline: 3px solid var(--bg-0); outline-offset: 3px; }
+.chat-launcher.dragging,
+.webagent-launcher.dragging { cursor: grabbing; transform: scale(1.08); animation: none; }
+.chat-launcher svg,
+.webagent-launcher svg {
+  pointer-events: none;
+  transform: translate(var(--launcher-icon-x, 0), var(--launcher-icon-y, 0));
+  transition: transform .12s ease-out;
+  will-change: transform;
+}
+.chat-launcher.dragging svg,
+.webagent-launcher.dragging svg { transform: translate(0, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-launcher,
+  .webagent-launcher { animation: none; }
+  .chat-launcher svg,
+  .webagent-launcher svg { transform: none; transition: none; }
+}
+.chat-launcher-label {
+  position: absolute; right: 62px; top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-size: 12px; font-weight: 600;
+  color: var(--fg-1);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(var(--shadow-rgb), 0.2);
+}
+
+/* ── Launcher hover corner menu ──────────────────────────────────────────────
+   Four small buttons that appear at the launcher's corners on hover. The menu
+   container is fixed and positioned to match the launcher's bounding box at
+   show-time. Each corner button is a 22px circle using design-system tokens. */
+.chat-launcher-hover-menu,
+.webagent-launcher-hover-menu {
+  position: fixed;
+  z-index: 2147482501; /* one above the launcher */
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  /* Sized to match the launcher; corner buttons are offset outside it */
+  width: 58px; height: 58px;
+}
+.chat-launcher-hover-menu.show,
+.webagent-launcher-hover-menu.show {
+  opacity: 1;
+  transform: scale(1);
+}
+body.cw-dragging .chat-launcher-hover-menu,
+body.cw-dragging .webagent-launcher-hover-menu,
+.chat-launcher.dragging ~ .chat-launcher-hover-menu,
+.webagent-launcher.dragging ~ .webagent-launcher-hover-menu {
+  display: none !important;
+}
+
+.chat-launcher-corner-btn,
+.webagent-launcher-corner-btn {
+  position: absolute;
+  width: 22px; height: 22px; padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  color: var(--fg-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, color 0.12s ease, background 0.12s ease;
+  box-shadow: 0 2px 6px rgba(var(--shadow-rgb), 0.25);
+  z-index: 1;
+}
+.chat-launcher-corner-btn:hover,
+.webagent-launcher-corner-btn:hover {
+  transform: scale(1.15);
+  color: var(--fg-1);
+  background: var(--bg-tint);
+}
+.chat-launcher-corner-btn:focus-visible,
+.webagent-launcher-corner-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-launcher-corner-btn svg,
+.webagent-launcher-corner-btn svg {
+  width: 12px; height: 12px;
+  pointer-events: none;
+}
+
+/* Corner positions — offset outward from the launcher centre */
+.chat-launcher-corner-btn.--tl,
+.webagent-launcher-corner-btn.--tl {
+  top: -11px; left: -11px;
+}
+.chat-launcher-corner-btn.--tr,
+.webagent-launcher-corner-btn.--tr {
+  top: -11px; right: -11px;
+}
+.chat-launcher-corner-btn.--bl,
+.webagent-launcher-corner-btn.--bl {
+  bottom: -11px; left: -11px;
+}
+.chat-launcher-corner-btn.--br,
+.webagent-launcher-corner-btn.--br {
+  bottom: -11px; right: -11px;
+}
+
+/* Element pickup active state on the corner button — lit ring when engaged */
+.chat-launcher-corner-btn.--active,
+.webagent-launcher-corner-btn.--active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(var(--brand-rgb), 0.5), 0 2px 6px rgba(var(--shadow-rgb), 0.25);
+}
+
+/* ── Element pickup alignment dot (12-o'clock on the launcher) ──────────────
+   A small dot at the top-center of the launcher button. Visible only when the
+   element pickup toggle is active — shows where the fingerprint is sampled. */
+.wla-pickup-dot {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 4px rgba(var(--brand-rgb), 0.4);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+.wla-pickup-dot.active {
+  opacity: 1;
+  animation: wla-pickup-pulse 2s ease-in-out infinite;
+}
+@keyframes wla-pickup-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(var(--brand-rgb), 0.4); }
+  50% { box-shadow: 0 0 10px rgba(var(--brand-rgb), 0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wla-pickup-dot.active { animation: none; }
+}
+
+/* ── Sessions popup (top-left corner) ── */
+.chat-launcher-sessions-popup,
+.webagent-launcher-sessions-popup {
+  position: fixed;
+  z-index: 2147482502;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(var(--shadow-rgb), 0.3);
+  padding: 4px 0;
+  display: none;
+  font-size: 13px;
+}
+.chat-launcher-sessions-popup.show,
+.webagent-launcher-sessions-popup.show {
+  display: block;
+}
+.chat-launcher-sessions-popup .wlsp-empty,
+.webagent-launcher-sessions-popup .wlsp-empty {
+  display: block;
+  padding: 12px 16px;
+  color: var(--fg-3);
+  text-align: center;
+  font-size: 12px;
+}
+.webagent-launcher-sessions-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--fg-1);
+  transition: background 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.webagent-launcher-sessions-item:hover {
+  background: var(--bg-tint);
+}
+.webagent-launcher-sessions-item .wlsp-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.webagent-launcher-sessions-item .wlsp-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.webagent-launcher-sessions-item .wlsp-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fg-4);
+}
+.webagent-launcher-sessions-item .wlsp-dot.running {
+  background: var(--accent);
+  animation: cw-pulse 1.2s ease-in-out infinite;
+}
+.webagent-launcher-sessions-item .wlsp-dot.done {
+  background: var(--success);
+}
+
+/* ── Robot icon animations (inside .chat-launcher / .webagent-launcher) ── */
+
+.chat-launcher .wla-bot-svg,
+.webagent-launcher .wla-bot-svg {
+  display: block;
+}
+
+/* Safari needs transform-box:fill-box for transform-origin to work on SVG <g> */
+.chat-launcher .wla-antenna,
+.chat-launcher .wla-eye-look,
+.chat-launcher .wla-eye-blink,
+.webagent-launcher .wla-antenna,
+.webagent-launcher .wla-eye-look,
+.webagent-launcher .wla-eye-blink {
+  transform-box: fill-box;
+}
+
+/* Blink: scale the eye-blink wrapper to a thin line then back */
+.chat-launcher .wla-eye-blink.blinking,
+.webagent-launcher .wla-eye-blink.blinking {
+  animation: wla-blink 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-launcher-hover-menu,
+  .webagent-launcher-hover-menu { transition: none; }
+  .chat-launcher-corner-btn,
+  .webagent-launcher-corner-btn { transition: none; }
+  .chat-launcher-corner-btn:hover,
+  .webagent-launcher-corner-btn:hover { transform: none; }
+  .chat-launcher-sessions-popup,
+  .webagent-launcher-sessions-popup { transition: none; }
+  .chat-launcher .wla-eye-blink.blinking,
+  .webagent-launcher .wla-eye-blink.blinking { animation: none; }
+  .chat-launcher .wla-antenna,
+  .webagent-launcher .wla-antenna { transition: none !important; }
+}

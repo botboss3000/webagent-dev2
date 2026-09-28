@@ -1,0 +1,24 @@
+{
+  "id": "browser-session-management",
+  "label": "Browser Session Management",
+  "icon": "monitor-cog",
+  "description": "Cap server-owned headless browsers, close idle sessions, and inspect live browser usage.",
+  "keywords": [
+    "browser",
+    "playwright",
+    "headless",
+    "sessions",
+    "concurrency",
+    "cap",
+    "idle",
+    "timeout",
+    "cleanup",
+    "chromium"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "browser-session-management",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

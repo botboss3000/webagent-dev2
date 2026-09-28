@@ -1,0 +1,71 @@
+<template data-slot="#files-sidebar">
+          <!-- Database panel: top header hosts the database-file selector
+               (session/agent dropdown styling); below it the relocated
+               #db-sidebar carries refresh + reset and the table list. -->
+          <div class="files-sidebar-panel" id="files-panel-database" data-view="database" hidden>
+            <div class="files-sidebar-header">
+              <div id="db-select-wrap" class="db-select-dropdown">
+                <select id="db-select" title="Switch database" hidden>
+                  <option value="local.db">local.db</option>
+                </select>
+                <button type="button" id="db-select-trigger" class="db-select-dropdown-trigger" title="Switch database" aria-haspopup="listbox" aria-expanded="false">
+                  <i data-lucide="database" style="width:13px;height:13px;flex-shrink:0;"></i>
+                  <span id="db-select-label">local.db</span>
+                  <i data-lucide="chevron-down" style="width:11px;height:11px;flex-shrink:0;opacity:0.6;"></i>
+                </button>
+                <ul id="db-select-menu" class="db-select-dropdown-menu" role="listbox" hidden></ul>
+              </div>
+            </div>
+            <div id="db-sidebar-host" class="db-sidebar-host"></div>
+          </div>
+</template>
+
+<template data-slot="#admin-tools">
+  <!-- Database view: replaces the file editor area when the Database
+       sidebar view is active. files.js moves #db-table-view (and the
+       #db-toolbar) into here at boot. -->
+  <main class="files-main files-database-main" id="files-database-main" data-view="database" hidden></main>
+</template>
+
+<template data-slot="#main-panel">
+  <!-- Database viewer markup, parked here so relocateAdminToolsContainers()
+       (in files.js) can move the pieces into the Admin Tools sidebar/main
+       hosts at boot. Hidden until then. -->
+    <div id="db-viewer-park" hidden>
+      <div id="db-viewer">
+        <div id="db-toolbar" style="display:none;">
+          <button id="db-show-hidden-btn" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--fg-3);padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;margin-left:auto;display:inline-flex;align-items:center;gap:4px;"><i data-lucide="eye" style="width:12px;height:12px;"></i> Hide hidden</button>
+          <span id="db-auto-status"></span>
+        </div>
+        <div id="db-panel">
+          <div id="db-sidebar" style="width:180px;min-width:140px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;">
+            <div id="db-sidebar-header" style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;position:relative;align-items:center;min-height:42px;box-sizing:border-box;">
+              <button id="db-refresh" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--fg-1);padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;">↻ Refresh</button>
+              <div id="db-reset-wrap" style="position:relative;">
+                <button id="db-reset" style="background:var(--danger);border:1px solid var(--danger);color:#fbf1c7;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;">Reset DB ▾</button>
+                <div id="db-reset-dropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:8px;z-index:100;min-width:180px;box-shadow:var(--shadow-md);">
+                  <div style="font-size:11px;color:var(--fg-1);margin-bottom:8px;font-weight:bold;">Select tables to RESET:</div>
+                  <div id="db-reset-options" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+                  <button id="db-reset-apply" style="width:100%;background:var(--danger);border:1px solid var(--danger);color:#fbf1c7;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;">Confirm Reset</button>
+                </div>
+              </div>
+            </div>
+            <div id="db-table-list" style="width:100%;border-right:none;flex:1;"></div>
+          </div>
+          <div id="db-table-view">
+            <div id="db-table-data">
+              <div class="db-hint">Select a table to view its contents</div>
+            </div>
+            <div id="db-table-footer">
+              <span id="db-page-info"></span>
+              <span class="db-table-footer-actions">
+                <button id="db-page-prev" style="display:none;background:var(--bg-elev);border:1px solid var(--border);color:var(--fg-1);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;"><i data-lucide="chevron-left" style="width:13px;height:13px;"></i></button>
+                <button id="db-page-next" style="display:none;background:var(--bg-elev);border:1px solid var(--border);color:var(--fg-1);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;"><i data-lucide="chevron-right" style="width:13px;height:13px;"></i></button>
+                <button id="db-download-btn" title="Download local.db" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--fg-3);padding:0 6px;border-radius:4px;cursor:pointer;font-size:14px;font-family:inherit;height:24px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1;"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+</template>

@@ -1,0 +1,144 @@
+/* New Deployment — tile + tab chrome for the Instances page's "New instance"
+   feature (ui/main-panel/app/new-deployment/). Loaded via page.json's css
+   list so the main instances.css stays focused on the fleet grid.
+
+   COLOR SCHEME → ui/shared/css/design-system.css (single source of truth). No raw
+   hex/rgb: use var(--brand) / rgba(var(--brand-rgb), a) for the accent and the
+   --bg-*, --fg-*, --border neutrals. The three deploy bars inside the tab body use
+   the app-wide `ac-` component styling from ui/shared/css/app3.css. Both dark AND
+   light must stay correct. */
+
+/* ── The "New instance" create tile (top-left of the grid / left of the carousel).
+   Mirrors the main Agents page's "New Agent" tile: a dashed accent square with a
+   centred plus that fills in on hover/active. Reuses instances.css's .inst-square
+   box (size/radius/transition); this only swaps the surface for the create look. */
+.inst-square.inst-square-new {
+  border-style: dashed;
+  border-color: rgba(var(--brand-rgb), 0.45);
+  background: rgba(var(--brand-rgb), 0.04);
+  align-items: center;
+  justify-content: center;
+}
+.inst-square.inst-square-new:hover {
+  border-color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.10);
+}
+.inst-square.inst-square-new.active {
+  border-style: solid;
+  background: rgba(var(--brand-rgb), 0.10);
+}
+
+.inst-square-new-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  color: var(--brand);
+}
+.inst-square-new-plus {
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: rgba(var(--brand-rgb), 0.16); color: var(--brand);
+}
+.inst-square-new-plus > svg, .inst-square-new-plus > .lucide-icon { width: 22px; height: 22px; }
+.inst-square-new-label {
+  font-size: 12.5px; font-weight: 650; color: var(--fg-1);
+  text-align: center;
+}
+
+/* ── New Deployment tab body ──
+   The fetched fragment mounts here. It carries its own `.ac-list` wrapper, so the
+   four deploy bars get their normal ability-list look from app3.css; we only add
+   a touch of top spacing so the first bar clears the tab bar. */
+.inst-nd-host { margin-top: 2px; }
+/* Cap + centre the bar column to the SAME 750px as App Settings' centred-column
+   tabs (`.ac-stickynav .ac-list` in app3.css), so the deploy bars line up with the
+   rest of the admin settings pages instead of stretching the full tab width. */
+.inst-nd .inst-nd-list { padding: 0; max-width: 750px; margin-left: auto; margin-right: auto; }
+
+/* The moved rows previously sat inside a `.ac-category-body`; standing alone in
+   the tab body they need no extra frame — the tab card already provides it. Keep
+   the rows edge-to-edge within the body padding. */
+.inst-nd .ac-list > .ac-row { margin: 0; }
+
+/* ── Loading skeleton ──
+   Four phantom bars painted INSTANTLY by instances.js (_ndSkeletonHtml) into the
+   New-instance card while the real fragment (+ deploy.js/dns.js on first bar touch)
+   loads. Same 750px centred column + collapsed-bar shape as the real bars, so the
+   swap to the live form is seamless. Removed by new-deployment.js once the fragment
+   attaches. Neutral shimmer only — no brand colour. */
+.inst-nd-skeleton { max-width: 750px; margin: 2px auto 0; }
+.inst-nd-skel-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-1);
+}
+.inst-nd-skel-row + .inst-nd-skel-row { margin-top: 8px; }
+.inst-nd-skel-ico { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 5px; }
+.inst-nd-skel-lines { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.inst-nd-skel-line { height: 9px; border-radius: 5px; }
+.inst-nd-skel-line.lg { width: 42%; }
+.inst-nd-skel-line.sm { width: 68%; height: 8px; }
+.inst-nd-skel-chev { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; }
+/* The shimmering fill — a soft sweep over neutral blocks, theme-derived. */
+.inst-nd-skel-ico, .inst-nd-skel-line, .inst-nd-skel-chev {
+  background: linear-gradient(100deg,
+    rgba(var(--ink-rgb), 0.06) 30%,
+    rgba(var(--ink-rgb), 0.13) 50%,
+    rgba(var(--ink-rgb), 0.06) 70%);
+  background-size: 220% 100%;
+  animation: inst-nd-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes inst-nd-shimmer {
+  0% { background-position: 180% 0; }
+  100% { background-position: -80% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inst-nd-skel-ico, .inst-nd-skel-line, .inst-nd-skel-chev { animation: none; }
+}
+
+
+/* ── CSP compliance: inline-style → class replacements ──── */
+.ac-deploy-ico-18-accent { width: 18px; height: 18px; color: var(--accent); }
+.ac-deploy-ico-14-success { width: 14px; height: 14px; color: var(--success); flex: 0 0 auto; }
+.ac-deploy-ico-13-success { width: 13px; height: 13px; color: var(--success); flex: 0 0 auto; }
+.ac-deploy-ico-14-muted { width: 14px; height: 14px; color: var(--fg-3); }
+.ac-deploy-flex-check { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0; font-size: 12px; cursor: pointer; }
+.ac-deploy-status-hidden { margin-top: 8px; font-size: 12px; line-height: 1.5; display: none; align-items: center; gap: 6px; }
+.ac-deploy-status-hidden-mt6 { margin-top: 6px; font-size: 12px; line-height: 1.5; display: none; align-items: center; gap: 6px; }
+.ac-deploy-token-status { font-size: 12px; margin-top: 5px; line-height: 1.5; display: none; align-items: center; gap: 6px; }
+.ac-deploy-pw-note { font-size: 11px; line-height: 1.5; margin: 2px 0 4px 26px; display: none; align-items: center; gap: 6px; }
+.ac-deploy-hidden-mt10 { display: none; margin-top: 10px; }
+.ac-deploy-hidden-mt6 { display: none; margin-top: 6px; }
+.ac-deploy-hidden-success { display: none; color: var(--success); }
+.ac-deploy-hidden-flex { display: none; align-items: center; gap: 6px; }
+.ac-deploy-mt14 { margin-top: 14px; }
+.ac-deploy-mt12 { margin-top: 12px; }
+.ac-deploy-mt10 { margin-top: 10px; }
+.ac-deploy-mt8 { margin-top: 8px; }
+.ac-deploy-mt6 { margin-top: 6px; }
+.ac-deploy-mt2 { margin-top: 2px; }
+.ac-deploy-ml6 { margin-left: 6px; }
+.ac-deploy-m0 { margin: 0; }
+.ac-deploy-m4-0-0-26 { margin: 4px 0 0 26px; }
+.ac-deploy-m6-0-0-pl18 { margin: 6px 0 0; padding-left: 18px; }
+.ac-deploy-fs11-mt6 { font-size: 11px; margin-top: 6px; }
+.ac-deploy-fs11-lh15-mb10 { font-size: 11px; line-height: 1.5; margin-bottom: 10px; }
+.ac-deploy-fs11-lh15-mt8 { font-size: 11px; line-height: 1.5; margin-top: 8px; }
+.ac-deploy-fs12-p4-10 { font-size: 12px; padding: 4px 10px; }
+.ac-deploy-fs11-mt4-lh15 { font-size: 11px; margin-top: 4px; line-height: 1.5; }
+.ac-deploy-fs11-mb10-lh15-muted { font-size: 11px; margin-bottom: 10px; line-height: 1.5; color: var(--fg-3); }
+.ac-deploy-fs11-mt3 { font-size: 11px; margin-top: 3px; }
+.ac-deploy-mt6-fs115 { margin-top: 6px; font-size: 11.5px; }
+.ac-deploy-fg-muted-fw400 { color: var(--fg-muted); font-weight: 400; }
+.ac-deploy-fg3 { color: var(--fg-3); }
+.ac-deploy-danger-link { color: var(--danger); text-decoration: underline; }
+.ac-deploy-flex-auto { flex: 1 1 auto; min-width: 0; }
+.ac-deploy-flex-gap8 { display: flex; gap: 8px; align-items: center; }
+.ac-deploy-flex-gap6 { display: flex; align-items: center; gap: 6px; }
+.ac-deploy-flex1 { flex: 1; }
+.ac-deploy-w90 { width: 90px; }
+.ac-deploy-mt10-flex-wrap { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+
+.ac-deploy-section-divider-flex { margin-top: 16px; border-top: var(--border-width) solid var(--border-soft); padding-top: 14px; display: flex; align-items: center; gap: 8px; }
+.ac-deploy-section-divider-pt14 { margin-top: 16px; border-top: var(--border-width) solid var(--border-soft); padding-top: 14px; }

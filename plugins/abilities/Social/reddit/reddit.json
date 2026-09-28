@@ -1,0 +1,12 @@
+{
+  "display_name": "Reddit",
+  "kind": "oauth",
+  "icon": "message-circle",
+  "color": "#bb9af7",
+  "description": "Reddit reading and posting.",
+  "note": "Free — register a Reddit app for reading and posting.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 6
+}

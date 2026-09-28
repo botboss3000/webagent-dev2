@@ -1,0 +1,12 @@
+{
+  "display_name": "Dropbox",
+  "kind": "oauth",
+  "icon": "hard-drive",
+  "color": "#4285F4",
+  "description": "File read/write and sharing.",
+  "note": "Free — a Dropbox app for file read/write and sharing.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 5
+}

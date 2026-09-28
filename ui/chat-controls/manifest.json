@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "description": "Chat control registry — each control is a self-contained module in controls/. Controls can be placed in any container (header, footer, etc.) via chat_ui.json config.",
+  "controls": {
+    "agent_name": {
+      "display_name": "Agent Name",
+      "description": "Current agent name with agent-switcher dropdown",
+      "file": "agent-name.js",
+      "targets": ["header", "footer"],
+      "icon": "bot"
+    },
+    "session_dropdown": {
+      "display_name": "Session Dropdown",
+      "description": "Session selector with chevron, label, and dropdown menu",
+      "file": "session-dropdown.js",
+      "targets": ["header", "footer"],
+      "icon": "list"
+    },
+    "new_session": {
+      "display_name": "New Session",
+      "description": "Create a new chat session",
+      "file": "new-session.js",
+      "targets": ["header", "footer"],
+      "icon": "plus"
+    },
+    "session_prev": {
+      "display_name": "Previous Session",
+      "description": "Navigate to the previous pinned session",
+      "file": "session-prev.js",
+      "targets": ["header", "footer"],
+      "icon": "arrow-big-left"
+    },
+    "session_next": {
+      "display_name": "Next Session",
+      "description": "Navigate to the next pinned session",
+      "file": "session-next.js",
+      "targets": ["header", "footer"],
+      "icon": "arrow-big-right"
+    },
+    "changes": {
+      "display_name": "Session Changes",
+      "description": "Toggle the file changes panel for the current session",
+      "file": "changes.js",
+      "targets": ["header", "footer", "below_pill"],
+      "icon": "files"
+    },
+    "refresh": {
+      "display_name": "Refresh Transcript",
+      "description": "Refresh the chat transcript",
+      "file": "refresh.js",
+      "targets": ["header", "footer"],
+      "icon": "refresh-cw"
+    },
+    "delete_session": {
+      "display_name": "Delete Session",
+      "description": "Delete the current session",
+      "file": "delete-session.js",
+      "targets": ["header", "footer"],
+      "icon": "trash-2"
+    },
+    "abilities": {
+      "display_name": "Abilities",
+      "description": "Toggle abilities on/off for the current chat",
+      "file": "abilities.js",
+      "targets": ["header", "footer"],
+      "icon": "blocks"
+    },
+    "target": {
+      "display_name": "Target Device",
+      "description": "Choose which device runs the next message",
+      "file": "target.js",
+      "targets": ["header", "footer"],
+      "icon": "monitor"
+    },
+    "mode": {
+      "display_name": "Execution Mode",
+      "description": "Cycle through the active agent's configured execution modes",
+      "file": "mode.js",
+      "targets": ["header", "footer"],
+      "icon": "toggle-left"
+    },
+    "voice": {
+      "display_name": "Voice Input",
+      "description": "Record voice input",
+      "file": "voice.js",
+      "targets": ["header", "footer"],
+      "icon": "mic"
+    },
+    "send": {
+      "display_name": "Send Button",
+      "description": "Send the current message",
+      "file": "send.js",
+      "targets": ["header", "footer"],
+      "icon": "send"
+    },
+    "attach": {
+      "display_name": "Attach Files",
+      "description": "Attach files to the current message",
+      "file": "attach.js",
+      "targets": ["header", "footer"],
+      "icon": "plus"
+    },
+    "stop": {
+      "display_name": "Stop Button",
+      "description": "Stop the current generation",
+      "file": "stop.js",
+      "targets": ["header", "footer"],
+      "icon": "square"
+    },
+    "continue": {
+      "display_name": "Continue Button",
+      "description": "Send 'continue' to resume the agent",
+      "file": "continue.js",
+      "targets": ["header", "footer"],
+      "icon": "play"
+    },
+    "activity": {
+      "display_name": "Activity Indicator",
+      "description": "Tool-call activity chip with expandable panel",
+      "file": "activity.js",
+      "targets": ["header", "footer"],
+      "icon": "activity"
+    },
+    "icon": {
+      "display_name": "Agent Icon",
+      "description": "Agent avatar/icon (widget/embed use)",
+      "file": "icon.js",
+      "targets": ["header", "footer"],
+      "icon": "bot"
+    },
+    "title": {
+      "display_name": "Chat Title",
+      "description": "Chat title text (widget/embed use)",
+      "file": "title.js",
+      "targets": ["header", "footer"],
+      "icon": "type"
+    },
+    "status": {
+      "display_name": "Status Indicator",
+      "description": "Connection/agent status dot (widget/embed use)",
+      "file": "status.js",
+      "targets": ["header", "footer"],
+      "icon": "circle"
+    },
+    "dot": {
+      "display_name": "Status Dot",
+      "description": "Small status indicator dot (widget/embed use)",
+      "file": "dot.js",
+      "targets": ["header", "footer"],
+      "icon": "circle"
+    },
+    "close": {
+      "display_name": "Close Button",
+      "description": "Close the chat panel (widget/embed use)",
+      "file": "close.js",
+      "targets": ["header", "footer"],
+      "icon": "x"
+    },
+    "minimize": {
+      "display_name": "Minimize Button",
+      "description": "Minimize the chat widget",
+      "file": "minimize.js",
+      "targets": ["header", "footer"],
+      "icon": "minus"
+    },
+    "stats": {
+      "display_name": "Stats",
+      "description": "Chat stats (tokens, context, cost) — configurable stat chips shown side by side in the pill (see chat_ui.json → controls.stats.visible)",
+      "file": "stats.js",
+      "targets": ["pill"],
+      "icon": "bar-chart"
+    }
+  }
+}

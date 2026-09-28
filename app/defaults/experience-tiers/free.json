@@ -1,0 +1,37 @@
+{
+  "id": "free",
+  "slug": "free",
+  "name": "Free",
+  "description": "Default registered-user experience.",
+  "status": "published",
+  "revision": 1,
+  "is_system": true,
+  "is_locked": false,
+  "policy_schema_version": 1,
+  "policy": {
+    "schema_version": 1,
+    "pages": ["agents", "browser", "instances", "wiki"],
+    "features": ["chat", "agent_create", "agent_clone", "connectors", "model_picker", "image_input", "attachments", "llm_byo"],
+    "ability_groups": ["chat_core", "memory", "user_files", "web_read", "browser_control", "image_vision", "model_switching", "personal_integrations"],
+    "agent_templates": ["*"],
+    "models": {
+      "roster_id": "roster-free",
+      "allowed_entry_ids": [],
+      "allow_byo": true,
+      "max_byo_entries": 1,
+      "max_reasoning_effort": "medium"
+    },
+    "limits": {
+      "max_agents": 1,
+      "max_automations": 0,
+      "max_connections": 2,
+      "concurrent_sessions_per_user": 1,
+      "messages_per_window": 60,
+      "window_seconds": 300,
+      "weekly_credit_limit": 250,
+    "weekly_credit_renews": true,
+      "max_attachment_bytes": 26214400,
+      "max_storage_bytes": 104857600
+    }
+  }
+}

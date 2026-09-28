@@ -1,0 +1,28 @@
+{
+  "id": "design",
+  "label": "Design",
+  "icon": "palette",
+  "description": "The whole app's look across both themes \u2014 palettes, fonts, borders, boot behaviour and chat layout.",
+  "keywords": [
+    "appearance",
+    "theme",
+    "color",
+    "colour",
+    "palette",
+    "background",
+    "font",
+    "border",
+    "welcome",
+    "boot",
+    "animation",
+    "tooltips",
+    "chat",
+    "position"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "design",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

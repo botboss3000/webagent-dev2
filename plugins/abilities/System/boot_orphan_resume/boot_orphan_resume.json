@@ -1,0 +1,14 @@
+{
+  "display_name": "Resume Runs at Startup",
+  "kind": "ability",
+  "icon": "rotate-ccw",
+  "color": "#9ece6a",
+  "description": "On startup, re-ignites agent runs that were interrupted by the last restart so work resumes automatically. Turn off to let interrupted runs stay stopped. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 13,
+  "tools": [],
+  "_note": "Wired-in core one-shot (app/agent/runner.resume_orphans_at_boot). main.py gates the leader 'boot-orphan-resume' registration on ability_app_enabled('boot_orphan_resume'). Descriptor-only by design."
+}

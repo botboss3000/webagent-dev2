@@ -1,0 +1,43 @@
+<template data-slot="#files-sidebar">
+  <!-- Interactions panel: event-type filter toggles + turn list.
+       loop.js populates the lists; click a turn to scroll the main
+       timeline to it. -->
+          <div class="files-sidebar-panel" id="files-panel-interactions" data-view="interactions" hidden>
+            <div class="files-sidebar-header">
+              <div class="files-sidebar-actions">
+                <button class="files-icon-btn" id="ix-refresh" title="Refresh"><i data-lucide="refresh-cw" class="lucide-icon"></i></button>
+              </div>
+            </div>
+            <div class="ix-body">
+              <div class="ix-section">
+                <div class="ix-section-title">Event types</div>
+                <div class="ix-filters" id="ix-filters"></div>
+              </div>
+              <div class="ix-section">
+                <div class="ix-section-title">Turns</div>
+                <div class="ix-turns" id="ix-turns">
+                  <div class="ix-empty">No turns yet</div>
+                </div>
+              </div>
+            </div>
+          </div>
+</template>
+
+<template data-slot="#admin-tools">
+  <!-- Interactions main (formerly the top-level Flow tab) — the
+       agent pipeline visualizer. -->
+        <main class="files-main" id="files-interactions-main" data-view="interactions" hidden>
+          <div id="loop-container">
+            <div id="loop-toolbar">
+              <span style="color:var(--fg-3);font-size:11px;display:inline-flex;align-items:center;gap:4px;"><i data-lucide="refresh-cw" style="width:12px;height:12px;"></i> Pipeline</span>
+              <button class="loop-filter-btn" data-level="basic">Basic</button>
+              <button class="loop-filter-btn active" data-level="detailed">Detailed</button>
+              <button class="loop-filter-btn" data-level="debug">Debug</button>
+              <button id="loop-autoscroll" class="active">Auto-scroll ✓</button>
+            </div>
+            <div id="loop-list">
+              <div class="loop-hint">Pipeline visualizer — connect to see agent flow</div>
+            </div>
+          </div>
+        </main>
+</template>

@@ -1,0 +1,40 @@
+{
+  "display_name": "SSH Control",
+  "entitlement_group": "ssh_control",
+  "risk_class": "write",
+  "action_class": "external_action",
+  "kind": "ability",
+  "icon": "square-terminal",
+  "color": "#7aa2f7",
+  "description": "Connect to named external devices over SSH, run commands, and manage process-lifetime remote jobs without granting access to this WebAgent host.",
+  "status": "beta",
+  "skill_summary": "How to add a named SSH device through the secure fingerprint-confirmation card, run bounded commands, manage background SSH jobs, and combine SSH Control with Automation for recurring monitoring. Load before any SSH or remote-server task.",
+  "skill_mode": "selectable",
+  "note": "External devices only",
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": false,
+  "tools": [
+    "ssh_request_connection",
+    "ssh_list_connections",
+    "ssh_test_connection",
+    "ssh_delete_connection",
+    "ssh_run_command",
+    "ssh_start_job",
+    "ssh_poll_job",
+    "ssh_list_jobs",
+    "ssh_cancel_job"
+  ],
+  "tool_metadata": {
+    "ssh_request_connection": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "ssh_list_connections": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "ssh_test_connection": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "ssh_delete_connection": {"stages": ["guardrails", "execute_tools"], "destructive": true, "requires_confirmation": true},
+    "ssh_run_command": {"stages": ["guardrails", "execute_tools"], "destructive": true, "requires_confirmation": false},
+    "ssh_start_job": {"stages": ["guardrails", "execute_tools"], "destructive": true, "requires_confirmation": false},
+    "ssh_poll_job": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "ssh_list_jobs": {"stages": ["execute_tools"], "destructive": false, "requires_confirmation": false},
+    "ssh_cancel_job": {"stages": ["guardrails", "execute_tools"], "destructive": true, "requires_confirmation": false}
+  },
+  "order": 4
+}

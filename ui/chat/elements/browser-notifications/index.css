@@ -1,0 +1,73 @@
+/* Browser notification preference control — a compact footer utility button. */
+.chat-browser-notifications-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 14px;
+  border: var(--border-width) solid transparent;
+  background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.chat-browser-notifications-btn:hover:not(:disabled) {
+  border-color: rgba(var(--brand-rgb), 0.25);
+  color: var(--fg-1);
+}
+.chat-browser-notifications-btn.is-active {
+  color: var(--brand);
+  border-color: rgba(var(--brand-rgb), 0.5);
+  background: color-mix(in oklab, var(--brand) 12%, var(--chat-pill-bg, transparent));
+}
+.chat-browser-notifications-btn.is-blocked {
+  color: var(--warning, #d99b25);
+  border-color: color-mix(in oklab, var(--warning, #d99b25) 55%, transparent);
+}
+.chat-browser-notifications-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.chat-browser-notifications-btn:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.chat-browser-notifications-popover {
+  position: fixed;
+  z-index: 1200;
+  width: min(300px, calc(100vw - 16px));
+  padding: 12px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  color: var(--fg-1);
+}
+.chat-browser-notifications-popover strong {
+  display: block;
+  font-size: 13px;
+  color: var(--warning, #d99b25);
+}
+.chat-browser-notifications-popover p {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+.chat-browser-notifications-dismiss {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tint);
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.chat-browser-notifications-dismiss:hover,
+.chat-browser-notifications-dismiss:focus-visible {
+  border-color: rgba(var(--brand-rgb), 0.5);
+  color: var(--brand);
+}

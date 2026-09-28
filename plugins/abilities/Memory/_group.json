@@ -1,0 +1,10 @@
+{
+  "name": "Knowledge",
+  "icon": "brain",
+  "color": "#bb9af7",
+  "desc": "Long-term knowledge — agent memory, context strategy, the native Wiki, document libraries, SQL databases, and third-party workspaces.",
+  "entitlement_group": "memory",
+  "risk_class": "write",
+  "action_class": "mixed",
+  "order": 2
+}

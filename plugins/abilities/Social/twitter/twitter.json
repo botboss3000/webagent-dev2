@@ -1,0 +1,12 @@
+{
+  "display_name": "Twitter",
+  "kind": "oauth",
+  "icon": "twitter",
+  "color": "#bb9af7",
+  "description": "X (Twitter) posting and reading.",
+  "note": "Paid — X API needs a paid tier (Basic ≈ $200/mo) for most posting/reading; the free tier is tiny.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 2
+}

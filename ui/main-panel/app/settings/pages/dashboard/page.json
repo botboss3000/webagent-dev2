@@ -1,0 +1,8 @@
+{
+  "id": "dashboard",
+  "label": "Dashboard",
+  "icon": "layout-dashboard",
+  "description": "Operational metrics and health.",
+  "group": "app-pages",
+  "runtime": "dashboard"
+}

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Privacy Policy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: var(--bg-0); color: var(--fg-1); }
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 32px 20px 80px;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.brand:hover { color: var(--accent-hover); }
+.theme-btn {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--fg-2);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.theme-btn:hover {
+  background: var(--bg-tint);
+  color: var(--fg-1);
+  border-color: var(--border-strong);
+}
+.page {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 36px 36px 40px;
+  box-shadow: var(--shadow-rest);
+}
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--fg-1);
+  margin-bottom: 6px;
+}
+.eff {
+  font-size: 13px;
+  color: var(--fg-3);
+  margin-bottom: 24px;
+}
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 28px;
+  margin-bottom: 10px;
+}
+p, li {
+  font-size: 14.5px;
+  color: var(--fg-2);
+  margin-bottom: 10px;
+}
+ul, ol {
+  margin: 8px 0 12px 22px;
+}
+li { margin-bottom: 6px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+strong { color: var(--fg-1); }
+.footer-links {
+  margin-top: 32px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 13px;
+  color: var(--fg-3);
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  body { padding: 20px 12px 60px; }
+  .page { padding: 24px 20px 28px; border-radius: var(--r-lg); }
+  h1 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('webagent_theme') || 'dark';
+      var light = t === 'light' || (t === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+      if (light) document.body.classList.add('light-mode');
+    } catch (_) {}
+  })();
+</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <a href="/" class="brand">← WebAgent</a>
+    <button class="theme-btn" id="theme-toggle" type="button">Toggle theme</button>
+  </div>
+
+  <div class="page">
+    <h1>Privacy Policy</h1>
+    <p class="eff">Effective date: 2026-05-23</p>
+
+    <p>
+      This Privacy Policy describes how WebAgent (“we”, “our”, or “the service”) collects, uses,
+      and protects information when you use the application at
+      <a href="https://webagent.live">webagent.live</a> and related interfaces.
+      By using the service you agree to the practices described here.
+    </p>
+
+    <h2>1. Information we collect</h2>
+    <ul>
+      <li><strong>Account information.</strong> When you create an account we store a username, a password hash, and optional profile details such as display name.</li>
+      <li><strong>Conversation data.</strong> Messages you send to agents, agent responses, tool calls, and related metadata (timestamps, agent identifiers, file uploads) are stored so that conversations persist across sessions.</li>
+      <li><strong>Integration credentials.</strong> If you connect third-party services (e.g. Google, GitHub, Telegram, LLM providers), we store the tokens or API keys you provide so the agent can act on your behalf. These are scoped to your account.</li>
+      <li><strong>Operational data.</strong> Standard server logs (IP address, user agent, request paths, error traces) used to operate and secure the service.</li>
+      <li><strong>Local browser storage.</strong> The web UI uses <code>localStorage</code> for preferences such as theme, panel widths, and an optional “remember me” token. This data lives in your browser, not on our servers.</li>
+    </ul>
+
+    <h2>2. How we use information</h2>
+    <ul>
+      <li>To provide the core service: routing your messages to agents, running tools, and returning results.</li>
+      <li>To authenticate you and keep your sessions secure.</li>
+      <li>To debug, monitor, and improve the service.</li>
+      <li>To enforce our <a href="/tos">Terms of Service</a> and protect users from abuse.</li>
+    </ul>
+
+    <h2>3. Third-party services</h2>
+    <p>
+      To function, the service sends data to third parties you have configured or that we use as infrastructure. These may include large-language-model providers (such as Anthropic, OpenAI, Google), OAuth providers (Google, GitHub), messaging platforms (Telegram), and our hosting and database providers. Their handling of data is governed by their own privacy policies.
+    </p>
+    <p>
+      When you send a message to an agent, the message content is transmitted to the LLM provider configured for that agent in order to generate a response.
+    </p>
+
+    <h2>4. Data storage and security</h2>
+    <p>
+      Account and conversation data are stored in our database. Secrets such as integration tokens are stored with encryption at rest where supported. We take reasonable technical and organizational measures to protect data, but no system is completely secure; you use the service at your own risk.
+    </p>
+
+    <h2>5. Data retention</h2>
+    <p>
+      We retain account and conversation data for as long as your account is active. You may request deletion of your account and associated data at any time by contacting us. Some records may be retained for a limited period to comply with legal obligations or to resolve disputes.
+    </p>
+
+    <h2>6. Your rights</h2>
+    <ul>
+      <li>Access, correct, or delete the data associated with your account.</li>
+      <li>Disconnect integrations at any time from the integrations settings.</li>
+      <li>Export your data, subject to reasonable technical limits.</li>
+      <li>Withdraw consent or close your account.</li>
+    </ul>
+    <p>To exercise these rights, contact us using the details below.</p>
+
+    <h2>7. Cookies</h2>
+    <p>
+      We do not use third-party advertising or tracking cookies. The service uses functional browser storage (such as <code>localStorage</code>) only to keep you signed in and to remember UI preferences.
+    </p>
+
+    <h2>8. Children</h2>
+    <p>
+      The service is not directed to children under 13 (or the equivalent minimum age in your jurisdiction). We do not knowingly collect personal information from children.
+    </p>
+
+    <h2>9. International users</h2>
+    <p>
+      The service may be operated from, and data may be processed in, jurisdictions other than your own. By using the service you consent to such transfer and processing.
+    </p>
+
+    <h2>10. Changes to this policy</h2>
+    <p>
+      We may update this Privacy Policy from time to time. Material changes will be announced in-product or by updating the effective date above. Continued use after a change constitutes acceptance of the revised policy.
+    </p>
+
+    <h2>11. Contact</h2>
+    <p>
+      Questions or requests regarding this policy can be sent to the contact email listed in the application or to the operator of the service.
+    </p>
+
+    <div class="footer-links">
+      <a href="/tos">Terms of Service</a>
+      <a href="/">Return to app</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var isLight = document.body.classList.toggle('light-mode');
+      try { localStorage.setItem('webagent_theme', isLight ? 'light' : 'dark'); } catch (_) {}
+    });
+  })();
+</script>
+</body>
+</html>

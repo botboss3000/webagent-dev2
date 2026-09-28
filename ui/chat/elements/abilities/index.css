@@ -1,0 +1,51 @@
+/* ── Abilities button — footer icon with badge ──────────────────────────
+   Sits in the footer row, right side next to the mode button. Shows the
+   Blocks icon and a badge with the number of active skills.                  */
+.chat-skills-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: var(--border-width) solid transparent;
+    border-radius: 14px;
+    background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+  }
+.chat-skills-btn svg { width: 20px; height: 20px; }
+.chat-skills-btn > * { pointer-events: none; }
+body.light-mode .chat-skills-btn {
+    background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent));
+  }
+.chat-skills-btn:hover {
+    border-color: rgba(var(--brand-rgb), 0.25);
+    color: var(--fg-1);
+  }
+.chat-skills-btn .csp-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    background: var(--accent);
+    color: #fff;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity 0.2s;
+    opacity: 0;
+  }
+.chat-skills-btn .csp-badge.visible { opacity: 1; }

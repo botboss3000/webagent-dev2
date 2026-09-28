@@ -1,0 +1,7 @@
+{
+  "id": "recorder",
+  "kind": "application",
+  "name": "Journey Recorder",
+  "entry": "toggle.js",
+  "assets": "frontend"
+}

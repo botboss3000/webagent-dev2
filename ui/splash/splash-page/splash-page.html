@@ -1,0 +1,74 @@
+<div class="splash-bg" aria-hidden="true"><span class="splash-orb o1"></span><span class="splash-orb o2"></span></div>
+
+<header class="splash-topbar" data-splash-topbar>
+  <div class="splash-brand"><span class="sp-mark">W</span><span>web<b>Agent</b></span></div>
+  <div class="sp-progress-wrap" aria-label="Setup progress"><span data-progress-label>Welcome</span><div class="sp-progress"><i data-progress></i></div></div>
+  <button class="sp-btn sp-btn-ghost" type="button" data-splash-enter>Skip setup</button>
+</header>
+
+<main class="splash-scroll" data-splash-scroll>
+  <section class="setup-step splash-hero" id="welcome" data-step="Welcome">
+    <span class="sp-eyebrow">Your AI workspace, shaped around you</span>
+    <h1>Turn an idea into an agent that can <em>do the work.</em></h1>
+    <p>WebAgent gives you a private, tool-using AI agent and a live interface for its work. Tell us what you need; we’ll configure the abilities, instructions and workspace with you.</p>
+    <button class="sp-btn sp-btn-primary sp-btn-lg" type="button" data-next="choose">Set up WebAgent <span>↓</span></button>
+  </section>
+
+  <section class="setup-step" id="choose" data-step="Choose a path">
+    <div class="step-copy"><span class="step-number">01</span><h2>What are you setting up?</h2><p>This changes the suggestions and final sharing defaults. You can revise everything later.</p></div>
+    <div class="choice-grid" role="radiogroup" aria-label="Setup type">
+      <button class="choice-card is-selected" type="button" data-path="about" role="radio" aria-checked="true"><span class="choice-icon">◎</span><strong>About the product</strong><small>Explore what WebAgent can do and how its parts work together.</small><span class="choice-check">Selected</span></button>
+      <button class="choice-card" type="button" data-path="personal" role="radio" aria-checked="false"><span class="choice-icon">✦</span><strong>Create an agent</strong><small>Build a personal assistant, specialist, app or dashboard.</small><span class="choice-check">Choose</span></button>
+      <button class="choice-card" type="button" data-path="selfhost" role="radio" aria-checked="false"><span class="choice-icon">⌂</span><strong>Create an instance</strong><small>Deploy your own installation for full infrastructure control.</small><span class="choice-check">Choose</span></button>
+    </div>
+    <button class="sp-btn sp-btn-primary" type="button" data-next="idea">Continue</button>
+  </section>
+
+  <section class="setup-step product-tour" id="product" data-step="About WebAgent">
+    <div class="product-intro"><span class="step-number">PRODUCT TOUR</span><h2>One workspace for agents that can act.</h2><p>WebAgent brings conversation, tools, live interfaces, knowledge and automation into one system you control.</p></div>
+    <article class="product-feature"><div><span>01 / Conversational agents</span><h3>Chat with agents that actually do the work</h3><p>Agents can search, browse, work with files and complete multi-step tasks while every tool call remains visible.</p></div><img src="ui/splash/splash-page/img/chat.webp" alt="WebAgent chat interface" loading="lazy"></article>
+    <article class="product-feature is-right"><div><span>02 / GenUI workspace</span><h3>Describe a dashboard. Watch it appear.</h3><p>Create live, interactive pages beside the conversation, then refine them naturally as the work evolves.</p></div><img src="ui/splash/splash-page/img/genui.webp" alt="Generated user interface workspace" loading="lazy"></article>
+    <article class="product-feature"><div><span>03 / Browser control</span><h3>Hand the web to your agent</h3><p>Share a persistent browser so an agent can see pages, navigate sites and help inside authenticated workflows.</p></div><img src="ui/splash/splash-page/img/browser.webp" alt="In-app browser control" loading="lazy"></article>
+    <article class="product-feature is-right"><div><span>04 / Shared knowledge</span><h3>One knowledge base for people and agents</h3><p>Build a searchable wiki with revisions, backlinks and publishing controls that every approved agent can use.</p></div><img src="ui/splash/splash-page/img/wiki.webp" alt="Shared WebAgent wiki" loading="lazy"></article>
+    <article class="product-feature"><div><span>05 / Automations</span><h3>Set it once. It runs itself.</h3><p>Schedule tasks, react to events and deliver results to chats, fresh sessions, channels or webhooks.</p></div><img src="ui/splash/splash-page/img/automations.webp" alt="WebAgent automations" loading="lazy"></article>
+    <div class="product-cta"><h2>Ready to make WebAgent yours?</h2><p>Start with an agent, or create a fully controlled instance.</p><div><button class="sp-btn sp-btn-primary sp-btn-lg" type="button" data-product-path="personal">Create an agent</button><button class="sp-btn sp-btn-ghost sp-btn-lg" type="button" data-product-path="selfhost">Create an instance</button></div></div>
+  </section>
+
+  <section class="setup-step" id="idea" data-step="Describe it">
+    <div class="step-copy"><span class="step-number">02</span><h2>What do you want to make?</h2><p>Give WebAgent a starting point, or leave this blank and configure the agent yourself.</p></div>
+    <div class="idea-pill"><span class="idea-spark">✦</span><textarea rows="2" data-idea aria-label="Describe your agent"></textarea><button type="button" data-idea-next aria-label="Continue">→</button></div>
+    <div class="prompt-chips" data-suggestions></div>
+    <button class="text-next" type="button" data-next="abilities">Skip for now</button>
+  </section>
+
+  <section class="setup-step" id="abilities" data-step="Abilities">
+    <div class="step-copy"><span class="step-number">03</span><h2>Choose what your agent can do</h2><p>Everything available is selected to start. Turn off anything this agent won’t need.</p></div>
+    <div class="ability-grid" data-abilities aria-live="polite"><div class="loading-row"><i></i> Loading available abilities…</div></div>
+    <button class="sp-btn sp-btn-primary" type="button" data-next="configure">Looks good</button>
+  </section>
+
+  <section class="setup-step" id="configure" data-step="Configure">
+    <div class="step-copy"><span class="step-number">04</span><h2>Final configuration</h2><p>Choose who can use the finished agent and whether it should appear on another site.</p></div>
+    <div class="config-card">
+      <fieldset><legend>Who can use this agent?</legend><label class="config-option is-selected"><input type="radio" name="access" value="private" checked><span><strong>Private / approved users</strong><small>Only you and people you explicitly approve.</small></span></label><label class="config-option"><input type="radio" name="access" value="anonymous"><span><strong>Anonymous visitors</strong><small>Anyone with access to the page can use it.</small></span></label></fieldset>
+      <label class="switch-row"><span><strong>Embed widget</strong><small>Add this agent to an existing website.</small></span><input type="checkbox" data-embed><i></i></label>
+    </div>
+    <button class="sp-btn sp-btn-primary sp-btn-lg" type="button" data-build>Build my agent</button>
+  </section>
+
+  <section class="setup-step build-step" id="build" data-step="Build & review">
+    <div class="step-copy"><span class="step-number">05</span><h2 data-build-title>Your build plan is ready</h2><p data-build-copy>WebAgent will build the agent instructions and live interface together when you continue.</p></div>
+    <div class="parallel-build">
+      <article class="build-card"><header><span class="build-status">Ready</span><h3>Agent prompt</h3></header><pre data-prompt-preview></pre></article>
+      <article class="build-card"><header><span class="build-status">Ready</span><h3>GenUI workspace</h3></header><div class="genui-preview"><div class="genui-bar"></div><div class="genui-metric"></div><div class="genui-metric short"></div><div class="genui-chart"></div></div></article>
+    </div>
+    <label class="remember-row"><input type="checkbox" data-splash-dontshow checked> Don’t show this setup again on this device</label>
+    <button class="sp-btn sp-btn-primary sp-btn-lg" type="button" data-start-agent>Continue with the default agent <span>→</span></button>
+  </section>
+
+  <section class="setup-step selfhost-step" id="selfhost" data-step="Self-host" hidden>
+    <div class="step-copy"><span class="step-number">02</span><h2>Deploy your own WebAgent</h2><p>Choose where you want WebAgent to run. The deployment workspace will guide you through the repository, configuration and domain.</p></div>
+    <div class="deploy-grid"><button data-target="cloud"><strong>Cloud server</strong><small>Deploy to a new or existing server.</small></button><button data-target="local"><strong>This device</strong><small>Run a second local installation.</small></button><button data-target="linux"><strong>Linux / Android</strong><small>Generate a terminal install command.</small></button><button data-target="windows"><strong>Windows</strong><small>Set up another Windows machine.</small></button><button data-target="macos"><strong>Mac</strong><small>Generate the macOS install steps.</small></button></div>
+    <button class="sp-btn sp-btn-primary sp-btn-lg" type="button" data-open-deploy>Open deployment setup <span>→</span></button>
+  </section>
+</main>

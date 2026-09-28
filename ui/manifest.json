@@ -1,0 +1,71 @@
+{
+  "name": "WebAgent",
+  "short_name": "WebAgent",
+  "description": "AI agent harness — chat, tools, automations, and pages",
+  "start_url": "/app?utm_source=homescreen",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#0d0d1a",
+  "theme_color": "#0d0d1a",
+  "categories": ["productivity", "utilities", "artificial-intelligence"],
+  "lang": "en-US",
+  "scope": "/",
+  "id": "/?utm_source=homescreen",
+  "icons": [
+    {
+      "src": "/ui/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/ui/icons/icon-192x192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/ui/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/ui/icons/icon-512x512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Chat",
+      "short_name": "Chat",
+      "description": "Open chat with the agent",
+      "url": "/app?tab=chat",
+      "icons": [
+        {
+          "src": "/ui/icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Admin Tools",
+      "short_name": "Admin",
+      "description": "File manager, terminal, and configuration",
+      "url": "/app?tab=admin-tools"
+    },
+    {
+      "name": "Gen UI",
+      "short_name": "Gen UI",
+      "description": "Visual genui workspace",
+      "url": "/app?tab=genui"
+    }
+  ],
+  "edge_side_panel": {
+    "preferred_width": 480
+  }
+}

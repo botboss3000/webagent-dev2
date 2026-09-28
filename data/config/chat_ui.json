@@ -1,0 +1,1226 @@
+{
+  "version": 3,
+  "description": "Chat presentation defaults. chat_common is the shared base; each chat_* surface overrides only the values it needs.",
+  "agents_page_widget": {
+    "description": "Shared Agents-page Ask or Search launcher. It expands in place, forwards live text to whichever Agents sub-view search control is on screen (the Agents/Abilities search, or the embedded Sessions view's footer search — title + content with per-session hit counts), and sends questions through the normal WebAgent widget with current page context. On the Sessions sub-view the pill is search-only (no chat): it advertises a 'Search for a session' label and its trailing control becomes a red clear/collapse button (search_clear_* and search_collapse_* below) — it empties the field, or collapses the pill when the field is already empty, because the filter already runs as the user types.",
+    "enabled": true,
+    "title": "WebAgent",
+    "icon": "bot",
+    "label": "Ask or Search",
+    "aria_label": "Ask WebAgent or search agents and abilities",
+    "tooltip": "Ask WebAgent or search agents and abilities",
+    "input_placeholder": "Ask or search",
+    "search_label": "Search for a session",
+    "search_placeholder": "Search for a session",
+    "search_tooltip": "Searches as you type",
+    "search_icon": "search",
+    "search_clear_label": "Clear search",
+    "search_clear_tooltip": "Clear search",
+    "search_clear_icon": "x",
+    "search_collapse_label": "Collapse search",
+    "search_collapse_tooltip": "Collapse search",
+    "default_side": "right",
+    "edge_offset": 16,
+    "bottom_offset": 16
+  },
+  "settings_page_widget": {
+    "description": "Shared Settings-page Ask or Search launcher. Replaces the old in-page composer pill: it expands in place, forwards live text to the Settings search engine, and sends questions through the normal WebAgent widget with the current settings page/section as context.",
+    "enabled": true,
+    "title": "WebAgent",
+    "icon": "bot",
+    "label": "Ask or Search",
+    "aria_label": "Ask WebAgent or search app settings",
+    "tooltip": "Ask WebAgent or search app settings",
+    "input_placeholder": "Search settings or ask how to configure something",
+    "default_side": "right",
+    "edge_offset": 16,
+    "bottom_offset": 16
+  },
+  "tier_gates": {
+    "description": "Server-authoritative capability gates for the complete chat UI document. The server removes this block, resolves subject/tier overlays, and forces denied controls off after per-agent overrides. Requirements use named capabilities rather than tier rank so custom tiers work correctly.",
+    "requires": {
+      "features": [
+        "chat"
+      ]
+    },
+    "controls": {
+      "model_changer": {
+        "features": [
+          "model_picker"
+        ]
+      },
+      "storage_mode": {
+        "features": [
+          "user_byod"
+        ]
+      },
+      "sub_agent_tabs": {
+        "ability_groups": [
+          "agent_orchestration"
+        ]
+      },
+      "local_changes": {
+        "ability_groups": [
+          "developer_write"
+        ]
+      },
+      "message_id": {
+        "admin_only": true
+      },
+      "agent_id": {
+        "admin_only": true
+      },
+      "session_id": {
+        "admin_only": true
+      },
+      "engine_thread_id": {
+        "admin_only": true
+      }
+    },
+    "subjects": {},
+    "tiers": {
+      "anonymous": {
+        "chat_common": {
+          "message_gutters": {
+            "user": {
+              "controls": {
+                "undo": {
+                  "locked": true,
+                  "locked_feature": "Undo"
+                }
+              }
+            },
+            "agent": {
+              "controls": {
+                "fork": {
+                  "locked": true,
+                  "locked_feature": "Fork"
+                }
+              }
+            }
+          },
+          "active_footer": {
+            "chat_pill": {
+              "controls": {
+                "attach": {
+                  "locked": true,
+                  "locked_message": "Register to attach files and unlock the full app.",
+                  "locked_cta": "Register"
+                }
+              }
+            }
+          },
+          "idle_footer": {
+            "chat_pill": {
+              "controls": {
+                "attach": {
+                  "locked": true,
+                  "locked_message": "Register to attach files and unlock the full app.",
+                  "locked_cta": "Register"
+                }
+              }
+            }
+          },
+          "chat_header": {
+            "controls": {
+              "session_dropdown": {
+                "menu": {
+                  "content_search": false,
+                  "batch_delete": false,
+                  "grouping": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "free": {},
+      "pro": {}
+    },
+    "admin": {}
+  },
+  "chat_common": {
+    "description": "Shared configuration for every chat surface. Surface profiles inherit this object at runtime, including its messages.",
+    "content_max_width": "1000px",
+    "context_composition": {
+      "enabled": true,
+      "detailed_segments": true
+    },
+    "transcript_overscroll": {
+      "description": "Vertical transcript pull distance in pixels. The maximum stretch and both top/bottom action triggers always use this same value. Surface profiles may override max_stretch_px.",
+      "max_stretch_px": 10
+    },
+    "transcript_tail_clearance": {
+      "description": "Gap in pixels between the newest transcript content and the composer overlay. This is added to the live composer height so the latest message stops above the pill.",
+      "gap_px": 74
+    },
+    "message_visibility": {
+      "description": "Independent show/hide per message lane type. These defaults apply when the user has no per-device override; the header filter popover (elements/visibility) writes overrides to localStorage and re-renders the transcript.",
+      "defaults": {
+        "main": true,
+        "progress": true,
+        "tool": true,
+        "summary": true,
+        "system": true
+      }
+    },
+    "user_message_truncation": {
+      "description": "Limits long user messages in the transcript while preserving their complete DOM content. Set enabled false to disable, or override max_lines and labels per surface or agent.",
+      "enabled": true,
+      "max_lines": 3,
+      "expand_label": "Click to see more",
+      "collapse_label": "Show less"
+    },
+    "message_gutters": {
+      "description": "Configurable footer gutters beneath user and agent messages. Order arrays replace entirely on surface or agent override. A locked control stays visible but displays its locked_message instead of executing. Tier gates are reapplied after agent overrides.",
+      "user": {
+        "enabled": true,
+        "order": [
+          "time",
+          "full_view",
+          "copy",
+          "undo",
+          "delete",
+          "more"
+        ],
+        "controls": {
+          "time": {
+            "enabled": true
+          },
+          "full_view": {
+            "enabled": true
+          },
+          "copy": {
+            "enabled": true
+          },
+          "undo": {
+            "enabled": true,
+            "locked": false,
+            "locked_message": "Sign in to undo messages."
+          },
+          "delete": {
+            "enabled": true
+          },
+          "more": {
+            "enabled": true
+          }
+        }
+      },
+      "agent": {
+        "enabled": true,
+        "order": [
+          "time",
+          "full_view",
+          "collapse",
+          "read_aloud",
+          "copy",
+          "fork",
+          "delete",
+          "more"
+        ],
+        "controls": {
+          "time": {
+            "enabled": true
+          },
+          "full_view": {
+            "enabled": true
+          },
+          "collapse": {
+            "enabled": true
+          },
+          "read_aloud": {
+            "enabled": true
+          },
+          "copy": {
+            "enabled": true
+          },
+          "fork": {
+            "enabled": true,
+            "locked": false,
+            "locked_message": "Sign in to fork a conversation."
+          },
+          "delete": {
+            "enabled": true
+          },
+          "schema": {
+            "enabled": true
+          },
+          "more": {
+            "enabled": true
+          }
+        }
+      },
+      "more_menu": {
+        "enabled": true,
+        "order": [
+          "context",
+          "cost",
+          "model",
+          "message_id",
+          "schema",
+          "refresh"
+        ],
+        "controls": {
+          "context": {
+            "enabled": true
+          },
+          "cost": {
+            "enabled": true
+          },
+          "model": {
+            "enabled": true
+          },
+          "message_id": {
+            "enabled": true
+          },
+          "schema": {
+            "enabled": true
+          },
+          "refresh": {
+            "enabled": true
+          }
+        }
+      }
+    },
+    "chat_header": {
+      "description": "Header layout and controls. Row arrays replace entirely on surface override. Each row has left/center/right zones; 'right' is pushed via margin-left:auto.",
+      "enabled": true,
+      "max_width": "750px",
+      "rows": [
+        {
+          "left": [],
+          "center": [
+            "icon",
+            "title",
+            "status",
+            "dot"
+          ],
+          "right": [
+            "visibility",
+            "close"
+          ]
+        }
+      ],
+      "anchor_navigation": {
+        "description": "Compact previous/next user-turn navigation beside the session-resource tabs. Both controls use the canonical transcript user-turn targets, including durable history outside the loaded window.",
+        "enabled": true,
+        "up_aria_label": "Jump to the previous user message",
+        "down_aria_label": "Jump to the next user message"
+      },
+      "controls": {
+        "session_dropdown": {
+          "description": "Session selector trigger and menu. Every affordance can be disabled independently; tier_gates may apply a final server-enforced override.",
+          "enabled": true,
+          "trigger": {
+            "agent_icon": true,
+            "status": true,
+            "row_actions": true,
+            "delete": false,
+            "rename_on_hold": true
+          },
+          "menu": {
+            "width": "min(420px, calc(100vw - 16px))",
+            "max_height": "min(66vh, 640px)",
+            "agent_icons": true,
+            "status": true,
+            "grouping": true,
+            "pinning": true,
+            "rename": true,
+            "auto_rename": true,
+            "row_actions": true,
+            "open_in_widget": true,
+            "start_scratchpad": true,
+            "always_on_display": true,
+            "delete": true,
+            "row_delete": false,
+            "agent_id": true,
+            "session_id": true,
+            "engine_thread_id": true,
+            "search": true,
+            "content_search": true,
+            "recycle_bin": true,
+            "hidden_sessions": true,
+            "batch_delete": true
+          }
+        },
+        "icon": {
+          "container_size": "28px"
+        },
+        "title": {
+          "container_size": "28px"
+        },
+        "status": {
+          "container_size": "28px"
+        },
+        "dot": {
+          "container_size": "28px"
+        },
+        "close": {
+          "container_size": "28px"
+        }
+      }
+    },
+    "component_panel": {
+      "description": "Agent component panel \u2014 the single surface for present_chat_component renderings. FULL VIEW is its only open state (CHAT-COMPONENT-FULL-VIEW): a full-height overlay pinned below the chat header tabs and ABOVE the composer (the composer stays visible and usable), as wide as the transcript's content width (chat_common.content_max_width). There is no drawer and no expand control; the header tabs open it and the (\u2014) header button closes it. Components load silently behind the chat pill by default; users open them from their header tabs. Set auto_open_on_present true only for a surface that deliberately needs live presentation. Radius defaults to 12px (structural CSS in app1.css); override with \"radius\" (any CSS length).",
+      "enabled": true,
+      "auto_open_on_present": false
+    },
+    "active_footer": {
+      "description": "Full-featured footer shown when the textarea is focused or has content.",
+      "margin_bottom": "0px",
+      "chat_pill": {
+        "description": "Shared two-row composer. Row 1: full-width textarea. Row 2: left=attach, center=carousel(stats), right=stop/continue/send.",
+        "pill_width": "500px",
+        "pill_radius": "41px",
+        "rows": [
+          {
+            "center": {
+              "controls": [
+                "textarea"
+              ]
+            }
+          },
+          {
+            "left": {
+              "controls": [
+                "attach"
+              ],
+              "align": "bottom",
+              "padding": "4px 2px 20px 20px"
+            },
+            "center": {
+              "carousel": [
+                "stats"
+              ],
+              "align": "bottom",
+              "padding": "0 0 28px 0"
+            },
+            "right": {
+              "controls": [
+                "stop",
+                "continue",
+                "mic_send"
+              ],
+              "align": "bottom",
+              "padding": "4px 20px 20px 0"
+            }
+          }
+        ],
+        "controls": {
+          "textarea": {
+            "min_height": "88px",
+            "font_size": "16px",
+            "max_height": "180px",
+            "padding": "28px 20px 13px 20px"
+          },
+          "stats": {
+            "description": "Usage stats shown in the pill. visible = ordered list of stat types: ctx (current context only, e.g. 77.2k), ctx-max (full 'ctx 77.2k / 200k' current/max readout), cost (price, e.g. $0.12). Each entry is a plain string or { type, decimals } \u2014 decimals overrides the default (ctx: 1 below 1M, 2 above; cost: 2, rounded up so the first charge reads $0.01). A stat hides itself while its value is zero.",
+            "visible": [
+              {
+                "type": "ctx"
+              },
+              {
+                "type": "cost"
+              }
+            ]
+          },
+          "attach": {
+            "enabled": true,
+            "locked": false,
+            "locked_message": "Register to attach files and unlock the full app.",
+            "locked_cta": "Register",
+            "element_size": "36px",
+            "container_size": "42px",
+            "attach_label": "Attach files",
+            "take_picture_label": "Take picture",
+            "camera_label": "Enable camera",
+            "mic_label": "Enable mic",
+            "accepted_formats": [
+              "image/*",
+              "audio/*",
+              "video/*",
+              ".pdf",
+              ".txt",
+              ".md",
+              ".json",
+              ".csv"
+            ],
+            "show_accepted_formats": true
+          },
+          "stop": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "continue": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "send": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "mic": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "mic_send": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          }
+        }
+      },
+      "above_pill": {
+        "enabled": true,
+        "description": "Rows above the chat pill. Five-row plan: row 0 = activity; rows 1-4 are reserved slots (empty rows render nothing â€” drop controls into a row to activate it).",
+        "rows": [
+          {
+            "left": [],
+            "center": [
+              "activity"
+            ],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [
+              "local_changes"
+            ],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          }
+        ],
+        "controls": {
+          "local_changes": {
+            "enabled": true,
+            "width": "600px",
+            "max_lines": 3
+          }
+        }
+      },
+      "below_pill": {
+        "enabled": true,
+        "rows": [
+          {
+            "right": [
+              "changes",
+              "mode",
+              "model_changer",
+              "abilities",
+              "browser_notifications"
+            ]
+          }
+        ],
+        "controls": {
+          "abilities": {
+            "container_size": "28px"
+          },
+          "changes": {
+            "container_size": "28px",
+            "admin_only": true
+          },
+          "target": {
+            "container_size": "28px"
+          },
+          "mode": {
+            "container_size": "28px",
+            "square": false
+          },
+          "model_changer": {
+            "container_size": "28px",
+            "square": false
+          },
+          "browser_notifications": {
+            "container_size": "28px",
+            "element_size": "16px"
+          }
+        }
+      }
+    },
+    "idle_footer": {
+      "description": "Simplified footer shown when the textarea is empty and unfocused. Single row (left/center/right), same width as active footer, no stats, chips, or below.",
+      "margin_bottom": "24px",
+      "chat_pill": {
+        "pill_width": "500px",
+        "pill_radius": "41px",
+        "rows": [
+          {
+            "left": {
+              "controls": [
+                "attach"
+              ],
+              "align": "center",
+              "padding": "20px 0 20px 20px"
+            },
+            "center": {
+              "controls": [
+                "textarea"
+              ],
+              "align": "center",
+              "padding": "0"
+            },
+            "right": {
+              "controls": [
+                "stop",
+                "continue",
+                "mic_send"
+              ],
+              "align": "center",
+              "padding": "20px 20px 20px 0"
+            }
+          }
+        ],
+        "controls": {
+          "textarea": {
+            "min_height": "62px",
+            "font_size": "16px",
+            "max_height": "62px",
+            "padding": "20px 8px 20px 8px"
+          },
+          "stop": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "continue": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "mic_send": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "mic": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "send": {
+            "enabled": true,
+            "element_size": "36px",
+            "container_size": "42px"
+          },
+          "attach": {
+            "enabled": true,
+            "locked": false,
+            "locked_message": "Register to attach files and unlock the full app.",
+            "locked_cta": "Register",
+            "element_size": "36px",
+            "container_size": "42px",
+            "attach_label": "Attach files",
+            "take_picture_label": "Take picture",
+            "camera_label": "Enable camera",
+            "mic_label": "Enable mic",
+            "accepted_formats": [
+              "image/*",
+              "audio/*",
+              "video/*",
+              ".pdf",
+              ".txt",
+              ".md",
+              ".json",
+              ".csv"
+            ],
+            "show_accepted_formats": true
+          }
+        }
+      },
+      "above_pill": {
+        "enabled": true,
+        "description": "Rows above the chat pill. Five-row plan: row 0 = activity; rows 1-4 are reserved slots (empty rows render nothing \u00e2\u20ac\u201d drop controls into a row to activate it).",
+        "rows": [
+          {
+            "left": [],
+            "center": [
+              "activity"
+            ],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [
+              "local_changes"
+            ],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          },
+          {
+            "left": [],
+            "center": [],
+            "right": []
+          }
+        ],
+        "controls": {
+          "local_changes": {
+            "enabled": true,
+            "width": "600px",
+            "max_lines": 3
+          }
+        }
+      },
+      "below_pill": {
+        "enabled": false
+      }
+    },
+    "fade": {
+      "description": "Vertical fade mask on the message scroller. The top edge fades transcript content below the header; bottom remains a pixel-height fade to protect the composer edge.",
+      "top": 24,
+      "bottom": 160
+    },
+    "pill_fade": {
+      "description": "Vertical fade mask on the pill textarea when content overflows. top/bottom are pixel heights for each fade band. bottom_offset shifts the bottom band closer to the edge (same thickness).",
+      "top": 8,
+      "bottom": 0,
+      "bottom_offset": 0
+    },
+    "show_tool_calls": true,
+    "show_activity_preview": false,
+    "classify_main_messages": true,
+    "fold_main_messages": false,
+    "mirror_activity_in_transcript": false,
+    "mark_read_on_visit": false,
+    "messages": {
+      "description": "Default user-facing copy. A surface's messages object may replace any individual string.",
+      "welcome_bubble": "Welcome to WebAgent",
+      "new_session_bubble": "New session. Start typing below.",
+      "switched_agent_bubble": "Switched agent. New session started.",
+      "pill_placeholder": "Chat",
+      "session_deleted_notice": "Session not found \u00e2\u20ac\u201d it was deleted.",
+      "title": "Chat with us",
+      "subtitle": "",
+      "greeting": "Hi! How can I help you today?"
+    }
+  },
+  "chat_desktop": {
+    "description": "Desktop side-panel overrides. Leave values absent to use chat_common.",
+    "user_turn_anchor": {
+      "landing_gap_px": 62
+    },
+    "transcript_overscroll": {
+      "max_stretch_px": 10
+    },
+    "transcript_tail_clearance": {
+      "gap_px": 124
+    },
+    "messages": {},
+    "chat_header": {
+      "rows": [
+        {
+          "left": [],
+          "center": [
+            "agent_name"
+          ],
+          "right": [
+            "minimize"
+          ]
+        },
+        {
+          "left": [
+            "session_prev",
+            "session_next"
+          ],
+          "center": [
+            "session_dropdown"
+          ],
+          "right": [
+            "new_session"
+          ]
+        },
+        {
+          "left": [],
+          "center": [
+            "sub_agent_tabs"
+          ],
+          "right": []
+        }
+      ],
+      "controls": {
+        "minimize": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "new_session": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "session_prev": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "session_next": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "sub_agent_tabs": {
+          "enabled": true,
+          "square": false
+        },
+        "agent_name": {
+          "min_width": "80px",
+          "max_width": "200px"
+        },
+        "session_dropdown": {
+          "min_width": "150px"
+        }
+      }
+    },
+    "debug": {
+      "description": "Development-only diagnostics. Set enabled to true to expose debug-only run errors and raw diagnostics to this chat surface.",
+      "enabled": false,
+      "borders": false
+    },
+    "fade": {
+      "top": 24,
+      "bottom": 200
+    },
+    "pill_fade": {
+      "top": 0,
+      "bottom": 0
+    }
+  },
+  "chat_mobile": {
+    "description": "Mobile side-panel overrides. Leave values absent to use chat_common.",
+    "transcript_overscroll": {
+      "max_stretch_px": 10
+    },
+    "content_max_width": "100%",
+    "messages": {},
+    "chat_header": {
+      "max_width": "100%",
+      "rows": [
+        {
+          "left": [
+            "new_session"
+          ],
+          "center": [
+            "session_dropdown"
+          ],
+          "right": []
+        },
+        {
+          "left": [],
+          "center": [
+            "sub_agent_tabs"
+          ],
+          "right": []
+        }
+      ],
+      "controls": {
+        "changes": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "new_session": {
+          "element_size": "20px",
+          "container_size": "32px"
+        },
+        "sub_agent_tabs": {
+          "enabled": true,
+          "square": false
+        },
+        "session_dropdown": {
+          "min_width": "0"
+        }
+      }
+    },
+    "fade": {
+      "top": 0,
+      "bottom": 120
+    },
+    "pill_fade": {
+      "top": 8,
+      "bottom": 0,
+      "bottom_offset": 0
+    }
+  },
+  "chat_widget": {
+    "description": "Floating and embeddable widget overrides. This profile shares chat_common unless an override is listed here.",
+    "transcript_overscroll": {
+      "max_stretch_px": 10
+    },
+    "messages": {
+      "description": "Widget-specific copy overrides, including the anonymous composer prompt.",
+      "pill_placeholder": "Type your message"
+    },
+    "chat_header": {
+      "rows": [
+        {
+          "left": [],
+          "center": [
+            "icon",
+            "title",
+            "status",
+            "dot"
+          ],
+          "right": [
+            "minimize",
+            "close"
+          ]
+        }
+      ],
+      "controls": {
+        "icon": {
+          "container_size": "28px"
+        },
+        "title": {
+          "container_size": "28px"
+        },
+        "status": {
+          "container_size": "28px"
+        },
+        "dot": {
+          "container_size": "28px"
+        },
+        "minimize": {
+          "container_size": "28px"
+        },
+        "close": {
+          "container_size": "28px"
+        }
+      }
+    },
+    "fade": {
+      "top": 0,
+      "bottom": 80
+    },
+    "pill_fade": {
+      "top": 6,
+      "bottom": 0,
+      "bottom_offset": 0
+    },
+    "launcher": {
+      "description": "Appearance and placement of the website embed launcher.",
+      "position": "right",
+      "accent": "#4f46e5",
+      "icon": "bot",
+      "corner_buttons": {
+        "description": "Hover-activated corner buttons on the launcher. Each button can be individually enabled/disabled and retooled.",
+        "enabled": true,
+        "hover_delay_ms": 200,
+        "top_left": {
+          "enabled": true,
+          "type": "sessions",
+          "icon": "list",
+          "tooltip": "Show sessions"
+        },
+        "top_right": {
+          "enabled": true,
+          "type": "new_session",
+          "icon": "plus",
+          "tooltip": "New session"
+        },
+        "bottom_left": {
+          "enabled": true,
+          "type": "element_pickup",
+          "icon": "crosshair",
+          "tooltip": "Toggle element pickup \u00e2\u20ac\u201d agent sees what the dot points at"
+        },
+        "bottom_right": {
+          "enabled": true,
+          "type": "open_all",
+          "icon": "maximize-2",
+          "tooltip": "Open all minimized"
+        }
+      }
+    }
+  },
+  "controls_library": {
+    "description": "Reference catalog of every available chat control. NOT consumed by UI code \u00e2\u20ac\u201d exists solely so users can see what controls exist and what each is for.",
+    "controls": {
+      "agent_name": {
+        "display_name": "Agent Name",
+        "description": "Current agent name with agent-switcher dropdown",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "bot"
+      },
+      "session_dropdown": {
+        "display_name": "Session Dropdown",
+        "description": "Session selector with chevron, label, and dropdown menu",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "list"
+      },
+      "new_session": {
+        "display_name": "New Session",
+        "description": "Create a new chat session",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "plus"
+      },
+      "session_prev": {
+        "display_name": "Previous Session",
+        "description": "Navigate to the previous pinned session",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "arrow-big-left"
+      },
+      "session_next": {
+        "display_name": "Next Session",
+        "description": "Navigate to the next pinned session",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "arrow-big-right"
+      },
+      "changes": {
+        "display_name": "Session Changes",
+        "description": "Toggle the file changes panel for the current session",
+        "targets": [
+          "header",
+          "footer",
+          "below_pill"
+        ],
+        "icon": "files"
+      },
+      "local_changes": {
+        "display_name": "Local Changes",
+        "description": "The working-tree panel above the pill (the new design): changed file paths with added/removed line counts, plus a commit button (top right) that commits exactly those files with a note. Hidden until the 'changes' chip below the pill toggles it open; the chip's count badge signals there is something to see",
+        "targets": [
+          "above_pill"
+        ],
+        "icon": "files"
+      },
+      "refresh": {
+        "display_name": "Refresh Transcript",
+        "description": "Refresh the chat transcript",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "refresh-cw"
+      },
+      "delete_session": {
+        "display_name": "Delete Session",
+        "description": "Delete the current session",
+        "targets": [
+          "header",
+          "footer"
+        ],
+        "icon": "trash-2"
+      },
+      "sub_agent_tabs": {
+        "display_name": "Session Tabs",
+        "description": "Recency-ordered tabs for session resources such as browsers, plans, checklists, pages, and sub-agents",
+        "targets": [
+          "header"
+        ],
+        "icon": "layers"
+      },
+      "abilities": {
+        "display_name": "Abilities",
+        "description": "Toggle abilities on/off for the current chat",
+        "targets": [
+          "header",
+          "footer",
+          "below_pill"
+        ],
+        "icon": "blocks"
+      },
+      "target": {
+        "display_name": "Target Device",
+        "description": "Choose which device runs the next message",
+        "targets": [
+          "header",
+          "footer",
+          "below_pill"
+        ],
+        "icon": "monitor"
+      },
+      "mode": {
+        "display_name": "Execution Mode",
+        "description": "Toggle execution mode: Ask \u00e2\u2020\u2019 Plan \u00e2\u2020\u2019 Auto",
+        "targets": [
+          "header",
+          "footer",
+          "below_pill"
+        ],
+        "icon": "toggle-left"
+      },
+      "model_changer": {
+        "display_name": "Model Changer",
+        "description": "Cycle through available models with chevron buttons",
+        "targets": [
+          "below_pill"
+        ],
+        "icon": "cpu"
+      },
+      "storage_mode": {
+        "display_name": "Storage Mode",
+        "description": "Toggle between browser-backed (IndexedDB) and server-backed storage",
+        "targets": [
+          "below_pill"
+        ],
+        "icon": "database"
+      },
+      "textarea": {
+        "display_name": "Message Input",
+        "description": "Multi-line message input that fills its pill zone",
+        "targets": [
+          "pill"
+        ],
+        "icon": "text-cursor-input"
+      },
+      "stats": {
+        "display_name": "Usage Stats",
+        "description": "Configurable usage stat chips (tokens, context, cost) \u2014 see controls.stats.visible",
+        "targets": [
+          "pill"
+        ],
+        "icon": "chart-no-axes-column"
+      },
+      "mic": {
+        "display_name": "Microphone Button",
+        "description": "Always-visible voice input button",
+        "targets": [
+          "pill"
+        ],
+        "icon": "mic"
+      },
+      "send": {
+        "display_name": "Send Button",
+        "description": "Send the current message",
+        "targets": [
+          "pill"
+        ],
+        "icon": "send"
+      },
+      "mic_send": {
+        "display_name": "Microphone / Send Button",
+        "description": "Switching control: microphone while empty, send when the input has text",
+        "targets": [
+          "pill"
+        ],
+        "icon": "mic"
+      },
+      "voice": {
+        "display_name": "Voice Input (Legacy)",
+        "description": "Legacy alias for mic; retained for version 2 configurations",
+        "targets": [
+          "pill"
+        ],
+        "icon": "mic"
+      },
+      "attach": {
+        "display_name": "Attach Files",
+        "description": "Attach files to the current message. accepted_formats (array of MIME wildcards / extensions, e.g. [\"image/*\", \".pdf\", \".md\"]) sets the allowed list; show_accepted_formats (bool) toggles the popover hint.",
+        "targets": [
+          "pill"
+        ],
+        "icon": "plus"
+      },
+      "stop": {
+        "display_name": "Stop Button",
+        "description": "Stop the current generation",
+        "targets": [
+          "pill",
+          "above_pill"
+        ],
+        "icon": "square"
+      },
+      "continue": {
+        "display_name": "Continue Button",
+        "description": "Send 'continue' to resume the agent",
+        "targets": [
+          "pill",
+          "above_pill"
+        ],
+        "icon": "play"
+      },
+      "activity": {
+        "display_name": "Activity Indicator",
+        "description": "Tool-call activity chip with expandable panel",
+        "targets": [
+          "above_pill"
+        ],
+        "icon": "activity"
+      },
+      "icon": {
+        "display_name": "Agent Icon",
+        "description": "Agent avatar/icon (widget/embed use)",
+        "targets": [
+          "header"
+        ],
+        "icon": "bot"
+      },
+      "title": {
+        "display_name": "Chat Title",
+        "description": "Chat title text (widget/embed use)",
+        "targets": [
+          "header"
+        ],
+        "icon": "type"
+      },
+      "status": {
+        "display_name": "Status Indicator",
+        "description": "Connection/agent status (widget/embed use)",
+        "targets": [
+          "header"
+        ],
+        "icon": "circle"
+      },
+      "dot": {
+        "display_name": "Status Dot",
+        "description": "Small status indicator dot (widget/embed use)",
+        "targets": [
+          "header"
+        ],
+        "icon": "circle"
+      },
+      "close": {
+        "display_name": "Close Button",
+        "description": "Close the chat panel (widget/embed use)",
+        "targets": [
+          "header"
+        ],
+        "icon": "x"
+      },
+      "minimize": {
+        "display_name": "Minimize Button",
+        "description": "Minimize the chat widget",
+        "targets": [
+          "header"
+        ],
+        "icon": "minus"
+      }
+    }
+  }
+}

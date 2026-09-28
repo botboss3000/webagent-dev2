@@ -1,0 +1,8 @@
+{
+  "id": "usage",
+  "label": "Usage Data",
+  "icon": "chart-no-axes-combined",
+  "description": "Review accounts, activity, and credits.",
+  "group": "app-pages",
+  "runtime": "users"
+}

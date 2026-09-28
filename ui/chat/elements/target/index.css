@@ -1,0 +1,25 @@
+/* ── Target device button — sets which device runs the next turn ────────
+   Sibling of mode button. Resting = subtle monitor icon; active = brand-tinted
+   with the chosen device's label.                                            */
+.chat-target-btn {
+    display: inline-flex; align-items: center; justify-content: center; align-self: center;
+    background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+    border: var(--border-width) solid transparent;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    color: var(--fg-2); font-size: 13px; font-weight: 600;
+    width: 28px; height: 28px; border-radius: 14px; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+    line-height: 1.5; user-select: none; -webkit-user-select: none; font-family: inherit;
+  }
+.chat-target-btn:hover { border-color: rgba(var(--brand-rgb), 0.25); color: var(--fg-1); }
+.chat-target-btn svg { width: 20px; height: 20px; }
+.chat-target-btn .chat-target-label {
+    display: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+.chat-target-btn.targeting {
+    color: var(--brand); border-color: rgba(var(--brand-rgb), 0.5);
+    background: color-mix(in oklab, var(--brand) 12%, var(--chat-pill-bg, transparent));
+    width: auto; gap: 6px; padding: 5px 16px;
+  }
+.chat-target-btn.targeting .chat-target-label { display: inline; }

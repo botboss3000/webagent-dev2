@@ -1,0 +1,392 @@
+<!-- Toolbar
+     ---- HARMONY: this toolbar's bin logic (back button, title/subtitle swap,
+     ---- restore button, and the morphing recycle↔trash button) mirrors
+     ---- sessions.html and automations.html. Any change to the bin states or
+     ---- right-side actions here must be copied to those two (and vice versa).
+     ---- Grep HARMONY-AGENTS-BIN / HARMONY-SESSIONS-BIN to find the call sites.
+     ---- NOTE — divergence: the Agents page dropped its icon Select-all / Clear
+     ---- buttons (bulk selection still works via each card's checkbox) and its
+     ---- toolbar is now a vertical action stack beside the carousel strip.
+     ---- Sessions and Automations are tables whose top-left header cell already
+     ---- toggles all rows, so they deliberately DROP the toolbar select buttons. -->
+<!-- The right-side actions drive the recycling bin. On the Agents page the recycle
+     button moves checked agents to the bin (or, with nothing checked, opens the
+     bin). In the bin a Restore button shows, and the recycle button permanently
+     deletes the checked agents. -->
+<!-- Card grid -->
+<div id="agents-grid" class="agents-phantom">
+  <!-- RETURN-TO-AGENTS-HEADER (sister of the recycling-bin header — keep cohesive)
+       This toolbar is shared between the normal Agents view, the recycling bin, and
+       the Clones view. The right-side toolbar is reserved for Back (bin/clones)
+       and Restore (bin) actions. -->
+  <div class="agents-top-row">
+  <!-- PHANTOM FIRST PAINT — static skeleton, shipped INSIDE the partial so the
+       tab is never blank between opening and agents.js's first render (the entry
+       module is a large dynamic import). It mirrors the CURRENT layout: the top
+       row, a horizontal CAROUSEL strip of 120px agent squares (exactly two here;
+       the JS skeleton also paints exactly two), and — below it, in the detail
+       area — the NORMAL sub-page skeleton (shimmering title bar + content card)
+       that every tab body paints while its module loads (the
+       .agent-detail-body:empty rules in agents.css), reusing the real
+       .agents-squares-wrap / .agents-squares / .agent-skeleton layout classes so
+       the swap to the JS skeleton is zero-layout-shift. The RETIRED merged
+       Overview (strip + the account-wide sessions table under it) is deliberately
+       not painted any more: its table-shaped skeleton made the page open on what
+       looked like a data table, so #sessions-section stays hidden for the whole
+       phantom state (its base rule in sessions.css) and is re-shown by the real
+       CSS once JS mounts it into the All Agents / agent card Sessions tab. The
+       .agents-phantom markers on #agents-grid and #sessions-section still gate
+       that state before JS runs; _syncMergedLayout strips them at takeover.
+       Purely decorative: aria-hidden, pointer-events:none, no data-* attributes,
+       no click wiring; _renderSkeleton and _renderList rebuild the grid wholesale
+       on first paint, so the phantom can never leak into the live page.
+       Styling: the .agents-phantom block in agents.css.
+       REMOVE-WHEN: the Agents page is dropped from the main page catalog. -->
+  <div class="agents-squares-wrap">
+    <button type="button" class="agents-carousel-chev left" aria-label="Scroll agents left" tabindex="-1">&#10094;</button>
+    <button type="button" class="agents-carousel-chev right" aria-label="Scroll agents right" tabindex="-1">&#10095;</button>
+    <div class="agents-squares">
+      <div class="agent-row">
+        <div class="agent-skeleton">
+          <div class="sk-icon sk-shimmer"></div>
+          <div class="sk-lines">
+            <div class="sk-line sk-shimmer" style="width:78%"></div>
+            <div class="sk-line sk-shimmer" style="width:42%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="agent-row">
+        <div class="agent-skeleton">
+          <div class="sk-icon sk-shimmer"></div>
+          <div class="sk-lines">
+            <div class="sk-line sk-shimmer" style="width:62%"></div>
+            <div class="sk-line sk-shimmer" style="width:35%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+    <!-- The toolbar is a VERTICAL stack of actions pinned to the RIGHT of the
+         carousel strip, in the same row (the "Agents" heading is gone). -->
+    <div id="agents-toolbar">
+      <div id="agents-toolbar-left">
+        <button type="button" id="agents-back-btn" title="Back to Agents" style="display:none;">
+          <i data-lucide="arrow-left" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
+      <div id="agents-toolbar-actions">
+        <button type="button" id="agents-restore-btn" class="agents-tb-btn agents-tb-restore" title="Restore selected agents" style="display:none;">
+          <i data-lucide="archive-restore" style="width:15px;height:15px;"></i><span>Restore</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <!-- NORMAL sub-page skeleton for the detail area — see the PHANTOM FIRST PAINT
+       note above. Same shimmering title bar + content card every tab body paints
+       while its module loads (Abilities / Agent Loop / Prompts / Config …), NOT a
+       sessions data table. Geometry is mirrored by the .agents-phantom-bar /
+       .agents-phantom-card rules in agents.css; the fill comes from the shared
+       sk-shimmer primitive (ui/shared/css/app3.css). Wiped with the rest of the
+       grid on the first real render. -->
+  <div class="agents-phantom-detail" aria-hidden="true">
+    <div class="agents-phantom-bar sk-shimmer"></div>
+    <div class="agents-phantom-card sk-shimmer"></div>
+  </div>
+</div>
+
+<!-- The page-level "Ask WebAgent…" footer pill was removed. Its hybrid
+     replacement (live ability search + chat-to-WebAgent) now lives above the
+     ability table inside each agent's Abilities tab — see buildAbilitySearchPill
+     in ui/shared/js/dom-utils.js. -->
+
+<!-- Per-agent and All Agents inline panels are generated dynamically by agents.js. -->
+
+<!-- ── Shared Sessions section ────────────────────────────────────────────────
+     The Sessions page (ui/main-panel/agents/sessions/) is embedded BELOW the agents
+     carousel and is moved into the All Agents Sessions tab. When an agent card
+     opens, its Sessions tab moves this same DOM node into the card and filters it to that agent. The sessions engine
+     (sessions-page.js) is driven by startAgents() → startSessions(). Keep this
+     markup and its IDs in sync with ui/main-panel/agents/sessions/sessions.html. -->
+<div id="sessions-section" class="agents-phantom">
+  <!-- Control staging area. Stateful title-bar controls remain hidden here so
+       footer controls can preserve their listeners and current search text. -->
+  <div id="sessions-toolbar" hidden>
+    <div id="sessions-header-actions" class="sessions-header-actions">
+      <i id="sessions-loading-spinner" data-lucide="loader-2" class="sessions-toolbar-spinner" style="width:13px;height:13px;display:none;"></i>
+      <span id="sessions-loading-status" class="sessions-loading-status" aria-live="polite"></span>
+      <button type="button" id="sessions-search-trigger" class="sessions-header-icon" title="Search sessions" aria-label="Search sessions" aria-expanded="false" aria-controls="sessions-search-panel">
+        <i data-lucide="search" style="width:15px;height:15px;"></i>
+      </button>
+      <button type="button" id="sessions-more-trigger" class="sessions-header-icon" title="More session options" aria-label="More session options" aria-expanded="false" aria-controls="sessions-more-panel">
+        <i data-lucide="more-vertical" style="width:16px;height:16px;"></i>
+      </button>
+      <div id="sessions-search-panel" class="sessions-header-popover sessions-search-popover" hidden>
+        <button type="button" id="sessions-search-mode-btn" class="sessions-search-mode-btn" data-mode="content" title="Search mode: Title + Content">T+C</button>
+        <div class="sessions-search-wrap">
+          <i data-lucide="search" class="sessions-search-icon" style="width:14px;height:14px;"></i>
+          <input type="text" id="sessions-search-input" class="sessions-search-input" placeholder="Search sessions" spellcheck="false" autocomplete="off">
+          <span id="sessions-msg-scanning" class="sessions-msg-scanning" title="Searching messages…"></span>
+          <button type="button" id="sessions-search-clear" class="sessions-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">
+            <i data-lucide="x" style="width:13px;height:13px;"></i>
+          </button>
+        </div>
+      </div>
+      <div id="sessions-more-panel" class="sessions-header-popover sessions-more-popover" hidden>
+        <button type="button" id="sessions-refresh-btn" class="sessions-popover-item"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i><span>Refresh</span></button>
+        <div class="sessions-popover-separator"></div>
+        <button type="button" class="sessions-popover-item sessions-view-option" data-view="sessions"><i data-lucide="message-square" style="width:15px;height:15px;"></i><span>Active Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+        <button type="button" class="sessions-popover-item sessions-view-option" data-view="recycle-bin"><i data-lucide="recycle" style="width:15px;height:15px;"></i><span>Recycled Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+        <button type="button" class="sessions-popover-item sessions-view-option" data-view="both"><i data-lucide="layers" style="width:15px;height:15px;"></i><span>All Sessions</span><i data-lucide="check" class="sessions-view-check" style="width:14px;height:14px;"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <aside id="sessions-selection-panel" class="sessions-selection-panel" hidden aria-label="Selected session actions">
+    <div id="sessions-selection-panel-header" class="sessions-selection-panel-header">
+      <span id="sessions-selection-count">0 sessions selected</span>
+      <i data-lucide="grip-horizontal" aria-hidden="true"></i>
+    </div>
+    <div class="sessions-selection-panel-actions">
+      <button type="button" id="sessions-undo-btn" class="sessions-selection-panel-btn" data-state="trash" title="Undo recycling selected sessions" aria-label="Undo recycling selected sessions" hidden><i data-lucide="undo-2"></i></button>
+      <button type="button" id="sessions-trash-btn" class="sessions-selection-panel-btn sessions-tb-trash" data-state="trash" title="Move selected to the recycling bin" aria-label="Delete selected sessions"><i data-lucide="trash-2"></i></button>
+      <button type="button" id="sessions-clear-selection-btn" class="sessions-selection-panel-btn" title="Clear session selection"><i data-lucide="x"></i><span>Clear</span></button>
+    </div>
+  </aside>
+
+  <!-- Scrollable table area -->
+  <div id="sessions-table-wrap">
+    <div id="sessions-table-inner">
+      <table id="sessions-table">
+        <thead id="sessions-table-head">
+          <!-- Built dynamically from column config -->
+        </thead>
+        <tbody id="sessions-table-body">
+          <!-- PHANTOM FIRST PAINT (sessions) — skeleton rows using the REAL
+               sessions skeleton markup (.sessions-skeleton-row + .sess-sk — the
+               same classes sessions-page.js's _renderSkeletonRows emits).
+               SESSIONS-SKELETON (breadcrumb): the sessions table paints a
+               DETERMINISTIC loading state — exactly SIX rows, every content cell
+               one 60%-wide shimmer bar — matching _renderSkeletonRows in
+               sessions-page.js. This deliberately diverges from the ragged 6–15 row /
+               30–100% draw used by the session-dropdown menu skeleton; those two stay
+               in step on CLASS NAMES only, not on counts or widths.
+               Purely decorative (aria-hidden, pointer-events:none via the
+               skeleton-row CSS). The sessions engine detects these rows at
+               takeover and replaces them with the same six-row shape; _renderTable
+               replaces tbody wholesale when real rows arrive — the phantom can
+               never leak into the live table.
+               REMOVE-WHEN: the Agents page is dropped from the main page catalog. -->
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          <tr class="sessions-skeleton-row" aria-hidden="true">
+            <td class="col-check"></td>
+            <td class="col-title"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-links"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-msgs"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_in"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-tokens_out"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-cost"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+            <td class="col-duration"><span class="sess-sk sk-shimmer" style="width:60%"></span></td>
+          </tr>
+          </tbody>
+      </table>
+    </div>
+    <div id="sessions-empty" class="sessions-empty" style="display:none;">
+      <div class="sessions-empty-icon"><i data-lucide="message-square" style="width:28px;height:28px;"></i></div>
+      <div class="sessions-empty-text">No sessions yet</div>
+      <div class="sessions-empty-hint">Start a conversation with an agent to see it here</div>
+    </div>
+    <div id="sessions-loading" class="sessions-loading" style="display:none;">
+      <i data-lucide="loader-2" style="width:18px;height:18px;" class="lucide-spin"></i>
+      <span>Loading sessions…</span>
+    </div>
+  </div>
+  <footer id="sessions-footer" class="session-manage-row sessions-footer" aria-label="Session management">
+    <button type="button" class="session-manage-checkbox-toggle sessions-footer-gutter-toggle" data-sessions-footer-gutter title="Hide selection column" aria-label="Hide selection column" aria-pressed="true"><i data-lucide="square" style="width:15px;height:15px;"></i></button>
+    <!-- SESSION-GUTTER-CHECK-ALL — select-all/clear-all twin of the gutter
+         toggle. Only visible while the selection column is open; painted by
+         _syncToggleButtons()/_syncFooterCheckAll() in
+         sessions/js/sessions-page.js. Duplicated in #agents-sessions-footer-dock
+         below and in ui/main-panel/agents/sessions/sessions.html — keep all
+         three in sync. -->
+    <button type="button" class="session-manage-checkbox-toggle sessions-footer-check-all" data-sessions-footer-checkall title="Select all sessions" aria-label="Select all sessions" aria-pressed="false" hidden><i data-lucide="check-square" style="width:15px;height:15px;"></i></button>
+    <!-- SESSION-FOOTER-FILTERS — the footer carries no search FIELD of its own:
+         the shared page-chat launcher drives the table's engine input directly
+         (hiddenSearchSelector in ui/shared/js/agents-page-chat-widget.js). Only
+         the controls the launcher does not own stay here — the Title/T+C mode
+         chip and the FLAG filter. Duplicated in #agents-sessions-footer-dock
+         below and in ui/main-panel/agents/sessions/sessions.html; keep all
+         three in sync. -->
+    <span class="session-manage-search">
+      <button type="button" class="session-manage-search-mode" data-sessions-footer-mode title="Search mode: Title">Title</button>
+      <button type="button" class="session-manage-flag-filter" data-sessions-footer-flag data-state="off" title="Show only sessions with a flag" aria-pressed="false">FLAG</button>
+    </span>
+    <span class="session-manage-actions">
+      <button type="button" class="session-manage-bin" data-sessions-footer-view="recycle-bin" title="Recycled sessions" aria-label="Recycled sessions"><i data-lucide="recycle" style="width:15px;height:15px;"></i></button>
+      <button type="button" class="session-manage-eye" data-sessions-footer-view="both" title="All sessions" aria-label="All sessions"><i data-lucide="eye-off" style="width:15px;height:15px;"></i></button>
+    </span>
+    <!-- SESSION-STORAGE-METER — session storage used vs available. Trailing
+         element of the row — keep it last when editing this row — but it sits
+         in the footer's LEFT-aligned control strip rather than against the
+         right edge. Markup is duplicated in #agents-sessions-footer-dock below
+         and in ui/main-panel/agents/sessions/sessions.html; keep all three in
+         sync. Values are painted by _renderStorageUsage() in
+         sessions/js/sessions-page.js from GET /api/v1/db/storage-usage. -->
+    <span class="session-manage-storage" data-sessions-footer-storage role="group" aria-label="Session storage usage">
+      <span class="session-storage-track" aria-hidden="true"><span class="session-storage-fill" data-storage-fill></span></span>
+    </span>
+  </footer>
+</div>
+
+<!-- A page-level dock for the All Agents Sessions tab. Unlike the shared
+     #sessions-footer inside the movable Sessions section, this sibling of the
+     scroll grid is never constrained by the grid's scrolling content. -->
+<footer id="agents-sessions-footer-dock" class="session-manage-row sessions-footer" aria-label="Session management">
+  <button type="button" class="session-manage-checkbox-toggle sessions-footer-gutter-toggle" data-sessions-footer-gutter title="Hide selection column" aria-label="Hide selection column" aria-pressed="true"><i data-lucide="square" style="width:15px;height:15px;"></i></button>
+  <!-- SESSION-GUTTER-CHECK-ALL — select-all/clear-all twin of the gutter toggle;
+       keep in sync with the copies above and in sessions/sessions.html. -->
+  <button type="button" class="session-manage-checkbox-toggle sessions-footer-check-all" data-sessions-footer-checkall title="Select all sessions" aria-label="Select all sessions" aria-pressed="false" hidden><i data-lucide="check-square" style="width:15px;height:15px;"></i></button>
+  <!-- SESSION-FOOTER-FILTERS — no search FIELD here; see the note on
+       #sessions-footer above. Keep in sync with it and with
+       ui/main-panel/agents/sessions/sessions.html. -->
+  <span class="session-manage-search">
+    <button type="button" class="session-manage-search-mode" data-sessions-footer-mode title="Search mode: Title">Title</button>
+    <button type="button" class="session-manage-flag-filter" data-sessions-footer-flag data-state="off" title="Show only sessions with a flag" aria-pressed="false">FLAG</button>
+  </span>
+  <span class="session-manage-actions">
+    <button type="button" class="session-manage-bin" data-sessions-footer-view="recycle-bin" title="Recycled sessions" aria-label="Recycled sessions"><i data-lucide="recycle" style="width:15px;height:15px;"></i></button>
+    <button type="button" class="session-manage-eye" data-sessions-footer-view="both" title="All sessions" aria-label="All sessions"><i data-lucide="eye-off" style="width:15px;height:15px;"></i></button>
+  </span>
+  <!-- SESSION-STORAGE-METER — bar only; trailing element of the left-aligned
+       control strip — keep it last. Keep in sync with #sessions-footer above
+       and with ui/main-panel/agents/sessions/sessions.html. -->
+  <span class="session-manage-storage" data-sessions-footer-storage role="group" aria-label="Session storage usage">
+    <span class="session-storage-track" aria-hidden="true"><span class="session-storage-fill" data-storage-fill></span></span>
+  </span>
+</footer>
+
+<!-- ── Shared Automations section ─────────────────────────────────────────────
+     The Automations dashboard (ui/main-panel/agents/automations/automations.html)
+     is embedded in the Agents page and moved into the All Agents card's
+     Automations tab (next to Sessions). The automations engine
+     (ui/main-panel/agents/automations/js/automations.js) is started by the
+     card's tab handler in js/view.js (_renderAllAgentsCard) — NOT by tabs.js,
+     since the Automations main-panel tab no longer exists. Keep this markup and
+     its IDs in sync with ui/main-panel/agents/automations/automations.html. -->
+<div id="automations-section">
+  <div id="automations-toolbar">
+    <div id="automations-toolbar-left">
+      <button type="button" id="automations-back-btn" title="Back to Automations" style="display:none;">
+        <i data-lucide="arrow-left" style="width:16px;height:16px;"></i>
+      </button>
+      <span id="automations-toolbar-title">Automations</span>
+      <span id="automations-toolbar-sub"> &middot; scheduled tasks &middot; event triggers &middot; worker spawns &middot; webhooks</span>
+    </div>
+    <div id="automations-toolbar-actions">
+      <select id="automations-filter-agent" class="auto-filter-select" title="Filter by agent">
+        <option value="">All agents</option>
+      </select>
+      <button type="button" id="automations-refresh-btn" class="auto-tb-btn auto-tb-icon" title="Refresh">
+        <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
+      </button>
+      <button type="button" id="automations-completed-btn" class="auto-tb-btn auto-tb-completed" title="View completed automations">
+        <i data-lucide="history" style="width:14px;height:14px;"></i><span>Completed</span><span id="automations-completed-count" class="auto-tb-count" style="display:none;">0</span>
+      </button>
+      <button type="button" id="automations-restore-btn" class="auto-tb-btn auto-tb-restore" title="Restore selected" style="display:none;">
+        <i data-lucide="archive-restore" style="width:15px;height:15px;"></i><span>Restore</span>
+      </button>
+      <!-- HARMONY: trash+bin migration mirrors agents-tb-trash / sessions-tb-trash.
+           Nothing selected → green recycle icon opens the bin. In the bin the trash
+           permanently deletes; the Restore button brings rows back. -->
+      <button type="button" id="automations-trash-btn" class="auto-tb-trash" data-state="trash" title="Open recycling bin">
+        <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- Scrollable table area -->
+  <div id="automations-table-wrap">
+    <div id="automations-table-inner">
+      <table id="automations-table">
+        <thead>
+          <tr>
+            <th class="col-check">
+              <span id="automations-check-all" class="auto-check-cell" title="Select all"> </span>
+            </th>
+            <th class="col-agent col-resizable">Agent</th>
+            <th class="col-name col-resizable">Automation</th>
+            <th class="col-status">Status</th>
+            <th class="col-type col-resizable">Type</th>
+            <th class="col-trigger col-resizable">Trigger</th>
+            <th class="col-output col-resizable">Output</th>
+            <th class="col-last col-resizable">Last</th>
+            <th class="col-next col-resizable">Next</th>
+            <th class="col-count col-resizable">Count</th>
+            <th class="col-device col-resizable">Run on</th>
+            <th class="col-enabled">Enabled</th>
+          </tr>
+        </thead>
+        <tbody id="automations-table-body">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+      <div id="automations-empty" class="auto-empty" style="display:none;">
+        <div class="auto-empty-icon"><i data-lucide="settings-2" style="width:28px;height:28px;"></i></div>
+        <div class="auto-empty-text">No automations yet</div>
+        <div class="auto-empty-hint">Create scheduled tasks or event triggers in any agent to see them here</div>
+      </div>
+      <div id="automations-loading" class="auto-loading">
+        <div class="auto-loading-spinner"></div>
+        <span>Loading automations…</span>
+      </div>
+    </div>
+  </div>
+</div>

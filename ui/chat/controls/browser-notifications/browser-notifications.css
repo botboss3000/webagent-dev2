@@ -1,0 +1,4 @@
+/* Browser notification preference control in the active footer utility row. */
+.browser-notifications-control.is-active {
+  color: var(--color-success, #22c55e);
+}

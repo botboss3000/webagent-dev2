@@ -1,0 +1,8 @@
+{
+  "webhook_base_url": "",
+  "plugins": {
+    "telegram": {
+      "enabled": true
+    }
+  }
+}

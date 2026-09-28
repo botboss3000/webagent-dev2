@@ -1,0 +1,8 @@
+{
+  "id": "agent-loop",
+  "order": 40,
+  "iconName": "refresh-cw",
+  "title": "Agent Loop",
+  "description": "Inspect and test the agent's reasoning loop.",
+  "entry": "./page.js"
+}

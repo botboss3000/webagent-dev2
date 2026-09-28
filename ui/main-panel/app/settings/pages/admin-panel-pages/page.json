@@ -1,0 +1,24 @@
+{
+  "id": "admin-panel-pages",
+  "label": "Admin Panel Pages",
+  "icon": "panel-left",
+  "description": "Arrange, rename, and re-icon the views inside Admin Tools.",
+  "keywords": [
+    "admin",
+    "tools",
+    "views",
+    "tabs",
+    "catalog",
+    "settings",
+    "pages",
+    "name",
+    "icon",
+    "order"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "admin-panel-pages",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

@@ -1,0 +1,11 @@
+# Host Upsert Dns Record
+
+Use `host_upsert_dns_record` only when it is the exact action the request calls for. This belongs to the Host Management ability.
+
+Follow the tool schema that arrives with this file. Supply every required field,
+inspect the returned result before taking a dependent action, and surface any
+reported warning, limitation, or refusal accurately rather than retrying the
+same failed request unchanged.
+
+For ability-wide selection rules, safety boundaries, and cross-tool workflows,
+follow `host_management.skill.md` alongside this tool skill.

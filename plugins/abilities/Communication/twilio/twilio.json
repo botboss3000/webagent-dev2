@@ -1,0 +1,12 @@
+{
+  "display_name": "Twilio",
+  "kind": "placeholder",
+  "icon": "phone-call",
+  "color": "#26A5E4",
+  "description": "SMS and voice via Twilio.",
+  "note": "Paid — per-message / per-minute Twilio fees.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 6
+}

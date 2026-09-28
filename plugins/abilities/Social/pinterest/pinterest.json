@@ -1,0 +1,12 @@
+{
+  "display_name": "Pinterest",
+  "kind": "oauth",
+  "icon": "pin",
+  "color": "#bb9af7",
+  "description": "Pinterest pin management.",
+  "note": "Free OAuth — a Pinterest app (trial access, then standard approval).",
+  "simple": false,
+  "placeholder": false,
+  "tools": [],
+  "order": 5
+}

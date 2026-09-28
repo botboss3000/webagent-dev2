@@ -1,0 +1,250 @@
+/* ── Chat Local Changes — compact working-tree band above the pill ───────── */
+/* Mirrors the session changes panel rows (.chat-change-row/path/stat are
+   shared styles in ui/shared/css/app1.css). Renders as a slim glass chip in
+   the above_pill row; hides itself (and its whole row) when empty.
+   Width and max visible lines are configurable via chat_ui.json →
+   active_footer.above_pill.controls.local_changes (width / max_lines), which
+   the element applies as --lc-width / --lc-max-lines. A resized list height is
+   applied per session as --lc-list-height. */
+
+.chat-local-changes {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: var(--lc-width, 200px);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+  border: var(--border-width) solid color-mix(in oklab, currentColor 12%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+          backdrop-filter: blur(12px) saturate(140%);
+  color: inherit;
+  pointer-events: auto;
+}
+.chat-local-changes[hidden] { display: none; }
+
+/* ── Top grab bar ───────────────────────────────────────────────────────────
+   A slim handle on the panel's top edge. Drag UP to grow the visible file list
+   and DOWN to shrink it; click the handle to hide or show the panel. */
+.chat-local-changes-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 100%;
+  height: 14px;
+  margin: -6px -8px 2px;      /* tuck onto the panel's top edge */
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: ns-resize;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-local-changes-grip-line {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--fg-4);
+  opacity: 0.35;
+  transition: opacity 0.15s ease, width 0.2s ease, background 0.15s ease;
+}
+.chat-local-changes-grip:hover .chat-local-changes-grip-line,
+.chat-local-changes-grip:focus-visible .chat-local-changes-grip-line {
+  opacity: 0.75;
+  width: 40px;
+  background: var(--fg-2);
+}
+/* ── Minimized state: the panel body completely disappears; only the grab
+   bar remains, floating above the composer pill like the footer handle. ── */
+.chat-local-changes.minimized {
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  transition: width 0.25s ease, padding 0.25s ease, opacity 0.2s ease;
+}
+.chat-local-changes.minimized > :not(.chat-local-changes-grip) { display: none !important; }
+.chat-local-changes.minimized .chat-local-changes-grip {
+  width: 48px;
+  height: 20px;
+  margin: 0;
+}
+/* Gentle breathe on the grip while minimized, hinting it can be dragged back */
+@keyframes localChangesGripPulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+}
+.chat-local-changes.minimized .chat-local-changes-grip-line {
+  animation: localChangesGripPulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-local-changes.minimized .chat-local-changes-grip-line {
+    animation: none;
+  }
+}
+
+/* ── Head: file count on the left, commit button pinned top right ── */
+.chat-local-changes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.chat-local-changes-count {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-3, inherit);
+  opacity: 0.75;
+}
+.chat-local-changes-commit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-3, inherit);
+  cursor: pointer;
+}
+.chat-local-changes-commit:hover {
+  color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.08);
+}
+.chat-local-changes-commit[hidden] { display: none; }
+
+/* ── File rows — at most --lc-max-lines rows visible, then scroll ── */
+.chat-local-changes-list {
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  /* Contain the inner scroll: when the list hits its edge, the gesture must
+     not chain into a document scroll — on iOS a page scroll dismisses the
+     keyboard, and this panel is meant to stay usable mid-typing. */
+  overscroll-behavior: contain;
+  height: var(--lc-list-height, auto);
+  max-height: var(--lc-list-height, calc(var(--lc-max-lines, 3) * 1.45em));
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  /* No visible scrollbar — the band scrolls on wheel/touch only */
+  scrollbar-width: none;
+}
+.chat-local-changes-list::-webkit-scrollbar { display: none; }
+
+/* Centered rows, stat glued next to the filename (the shared app1.css rules
+   push the stat right with flex:1 on the path — override within this band). */
+.chat-local-changes-list .chat-change-row {
+  justify-content: center;
+}
+.chat-local-changes-list .chat-change-path {
+  flex: 0 1 auto;
+  font-size: 11px;
+}
+.chat-local-changes-list .chat-change-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.chat-change-lifecycle {
+  color: var(--fg-3);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.chat-change-lifecycle-validated,
+.chat-change-lifecycle-checked-in { color: var(--success); }
+.chat-change-lifecycle-read { color: var(--fg-2); }
+.chat-change-lifecycle-read-required,
+.chat-change-lifecycle-checked-out-elsewhere { color: var(--warning); }
+.chat-change-lifecycle-stale,
+.chat-change-lifecycle-conflict { color: var(--warning); }
+.chat-change-lifecycle-violation { color: var(--danger); }
+.chat-change-line-stats { white-space: nowrap; }
+.chat-local-changes-list .chat-change-row.violation .chat-change-path { color: var(--danger); }
+
+.chat-change-manual-checkin {
+  padding: 1px 5px;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--warning);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.chat-change-manual-checkin:hover, .chat-change-manual-checkin:focus-visible {
+  border-color: var(--warning);
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
+}
+.chat-change-manual-checkin:disabled { opacity: 0.55; cursor: default; }
+
+
+/* ── Commit note form (revealed by the commit button) ── */
+.chat-local-changes-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.chat-local-changes-form[hidden] { display: none; }
+.chat-local-changes-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: var(--border-width) solid color-mix(in oklab, currentColor 12%, transparent);
+  background: color-mix(in oklab, var(--bg-elev) 60%, transparent);
+  color: inherit;
+  outline: none;
+}
+.chat-local-changes-note:focus { border-color: var(--brand); }
+.chat-local-changes-note::placeholder { color: var(--fg-4, inherit); }
+.chat-local-changes-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg-3, inherit);
+  cursor: pointer;
+}
+.chat-local-changes-send:hover {
+  color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.08);
+}
+.chat-local-changes-send:disabled { opacity: 0.45; cursor: default; }
+
+/* ── One-line result/error feedback under the form ── */
+.chat-local-changes-status {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--fg-3, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-local-changes-status.error { color: var(--danger, inherit); }
+.chat-local-changes-status[hidden] { display: none; }
+
+/* The zone system keeps the row alive because the element exists — when the
+   element is hidden, drop the whole row (and its flex gap) so nothing shows. */
+.chat-header-row:has(.chat-local-changes[hidden]) { display: none; }

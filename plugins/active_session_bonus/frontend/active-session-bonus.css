@@ -1,0 +1,4 @@
+.active-session-bonus-label { display:block; margin-top:3px; font-size:11px; line-height:1.25; color:var(--fg-2); }
+.active-session-bonus-label[data-status="offered"] { color:var(--accent); }
+.active-session-bonus-label[data-status="claimed"] { color:var(--success, var(--accent)); }
+.active-session-bonus-toast { position:fixed; z-index:10001; right:18px; bottom:76px; max-width:min(360px, calc(100vw - 36px)); padding:10px 13px; border:1px solid var(--border); border-radius:9px; background:var(--surface-1, var(--bg)); color:var(--fg); box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:13px; }

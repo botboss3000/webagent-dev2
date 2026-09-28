@@ -1,0 +1,30 @@
+<template data-slot="#settings-page-slot-entitlements">
+<div class="settings-page" id="settings-page-entitlements" data-pa-page="app_settings" hidden>
+  <section class="ent-page" data-pa-area="experience-tiers" aria-labelledby="ent-title">
+    <header class="ent-page-head">
+      <div>
+        <h2 id="ent-title">Model rosters</h2>
+        <p>Build and publish the model catalogs that app user policies can select.</p>
+      </div>
+    </header>
+
+    <div id="ent-tier-picker" class="ent-tier-picker" hidden>
+      <label for="ent-tier-select">Tiers:</label>
+      <select id="ent-tier-select" class="ent-select" aria-label="Tiers"></select>
+    </div>
+    <div id="ent-status" class="ent-status" role="status" aria-live="polite"></div>
+    <div class="ent-workspace">
+      <aside class="ent-sidebar" aria-label="Saved entitlement records">
+        <div class="ent-sidebar-head">
+          <strong id="ent-list-title">Model rosters</strong>
+          <button type="button" id="ent-create" class="ac-btn ac-btn-primary">New roster</button>
+        </div>
+        <div id="ent-record-list" class="ent-record-list"></div>
+      </aside>
+      <div id="ent-editor" class="ent-editor">
+        <div class="ent-empty">Select a model roster, or create a new one.</div>
+      </div>
+    </div>
+  </section>
+</div>
+</template>

@@ -1,0 +1,9 @@
+{
+  "id": "bullet-grid",
+  "name": "Bullet grid",
+  "description": "An evenly-spaced grid of dots that ripples away from the cursor and brightens as you move — calm when still.",
+  "icon": "grid-3x3",
+  "status": "stable",
+  "order": 20,
+  "themes": ["light", "dark"]
+}

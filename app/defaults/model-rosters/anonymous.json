@@ -1,0 +1,11 @@
+{
+  "id": "roster-anonymous",
+  "slug": "roster-anonymous",
+  "name": "Anonymous platform models",
+  "description": "Platform-funded models available to anonymous visitors.",
+  "entries": [],
+  "default_entry_id": null,
+  "status": "published",
+  "revision": 1,
+  "source": "system-seed"
+}

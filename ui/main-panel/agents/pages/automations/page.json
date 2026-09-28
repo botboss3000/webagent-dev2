@@ -1,0 +1,8 @@
+{
+  "id": "automations",
+  "order": 80,
+  "iconName": "zap",
+  "title": "Automations",
+  "description": "Scheduled tasks that run across your agents.",
+  "entry": "./page.js"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "automation-engine",
+  "label": "Automation Engine",
+  "icon": "clock",
+  "description": "The platform engine that fires automations \u2014 the scheduler and the event sources.",
+  "keywords": [
+    "scheduler",
+    "cron",
+    "timers",
+    "event",
+    "sources",
+    "runtime",
+    "deliveries",
+    "jobs"
+  ],
+  "group": "agent",
+  "runtime": "settings",
+  "page": "automation-engine",
+  "anchor": "",
+  "paPage": "agent_settings",
+  "html": "page.html"
+}

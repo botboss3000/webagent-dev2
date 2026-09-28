@@ -1,0 +1,183 @@
+{
+  "version": 2,
+  "id": "agents",
+  "title": "Agents",
+  "description": "Every Agents subpage, one folder each.",
+  "directory": {
+    "title": "Config",
+    "description": "Open any Agents page for the selected agent.",
+    "groups": [
+      { "id": "core", "label": "Core configuration", "order": 10 },
+      { "id": "behavior", "label": "Behavior", "order": 20 },
+      { "id": "advanced", "label": "Advanced configuration", "order": 30 },
+      { "id": "workspace", "label": "Agent workspace", "order": 40 }
+    ]
+  },
+  "pages": [
+    {
+      "id": "identity",
+      "kind": "config-topic",
+      "directoryGroup": "core",
+      "order": 10,
+      "iconName": "badge",
+      "title": "Identity and design",
+      "tabLabel": "Identity",
+      "description": "Name, icon, template details, and chat appearance.",
+      "entry": "./identity/page.js"
+    },
+    {
+      "id": "model",
+      "kind": "config-topic",
+      "directoryGroup": "core",
+      "order": 20,
+      "iconName": "cpu",
+      "title": "Model",
+      "tabLabel": "Model",
+      "description": "Choose the model and tune its response behavior.",
+      "entry": "./model/page.js"
+    },
+    {
+      "id": "deploy",
+      "kind": "config-topic",
+      "directoryGroup": "core",
+      "order": 30,
+      "iconName": "share-2",
+      "title": "Deploy & Share",
+      "tabLabel": "Deploy",
+      "description": "Control access, sharing, and website embedding.",
+      "entry": "./deploy/page.js"
+    },
+    {
+      "id": "voice",
+      "kind": "config-topic",
+      "directoryGroup": "behavior",
+      "order": 40,
+      "iconName": "audio-lines",
+      "title": "Voice Conversation",
+      "tabLabel": "Voice",
+      "description": "Configure voice input and spoken responses.",
+      "entry": "./voice/page.js"
+    },
+    {
+      "id": "modes",
+      "kind": "config-topic",
+      "directoryGroup": "behavior",
+      "order": 50,
+      "iconName": "messages-square",
+      "title": "Modes",
+      "tabLabel": "Modes",
+      "description": "Set the agent’s available execution modes and defaults.",
+      "entry": "./modes/page.js"
+    },
+    {
+      "id": "manager",
+      "kind": "config-topic",
+      "directoryGroup": "advanced",
+      "order": 60,
+      "iconName": "workflow",
+      "title": "Manager Loop",
+      "tabLabel": "Manager",
+      "description": "Configure supervision, review, and delivery safeguards.",
+      "entry": "./manager/page.js"
+    },
+    {
+      "id": "runtime",
+      "kind": "config-topic",
+      "directoryGroup": "advanced",
+      "order": 70,
+      "iconName": "sliders-horizontal",
+      "title": "Runtime",
+      "tabLabel": "Runtime",
+      "description": "Set execution limits, context, and operational behavior.",
+      "entry": "./runtime/page.js"
+    },
+    {
+      "id": "sessions",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 80,
+      "iconName": "message-square",
+      "title": "Sessions",
+      "tabLabel": "Sessions",
+      "description": "Conversation threads and history for the selected agent.",
+      "entry": "./sessions/page.js"
+    },
+    {
+      "id": "config",
+      "kind": "directory",
+      "directoryGroup": "workspace",
+      "order": 90,
+      "iconName": "settings",
+      "title": "Config",
+      "tabLabel": "Config",
+      "description": "Directory of every Agents page for the selected agent.",
+      "entry": "./config/page.js"
+    },
+    {
+      "id": "prompts",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 100,
+      "iconName": "file-text",
+      "title": "Prompts",
+      "tabLabel": "Prompts",
+      "description": "Edit the agent's prompt slots and skills.",
+      "entry": "./prompts/page.js"
+    },
+    {
+      "id": "agent-loop",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 110,
+      "iconName": "refresh-cw",
+      "title": "Agent Loop",
+      "tabLabel": "Agent Loop",
+      "description": "Inspect and test the agent's reasoning loop.",
+      "entry": "./agent-loop/page.js"
+    },
+    {
+      "id": "abilities",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 120,
+      "iconName": "plug",
+      "title": "Abilities",
+      "tabLabel": "Abilities",
+      "description": "Enable abilities and connections for the agent.",
+      "entry": "./abilities/page.js"
+    },
+    {
+      "id": "members",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 130,
+      "iconName": "users",
+      "title": "Members",
+      "tabLabel": "Members",
+      "description": "Manage who can access the agent and their level.",
+      "entry": "./members/page.js"
+    },
+    {
+      "id": "monetization",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 140,
+      "iconName": "credit-card",
+      "title": "Monetization",
+      "tabLabel": "Monetization",
+      "description": "Set up billing and pricing for the agent.",
+      "entry": "./monetization/page.js"
+    },
+    {
+      "id": "automations",
+      "kind": "agent-page",
+      "directoryGroup": "workspace",
+      "order": 150,
+      "iconName": "zap",
+      "title": "Automations",
+      "tabLabel": "Automations",
+      "description": "Scheduled tasks that run across your agents.",
+      "entry": "./automations/page.js"
+    }
+  ]
+}

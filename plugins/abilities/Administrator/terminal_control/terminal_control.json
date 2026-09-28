@@ -1,0 +1,33 @@
+{
+  "display_name": "Terminal Control",
+  "kind": "ability",
+  "icon": "terminal",
+  "color": "#f7768e",
+  "description": "Lets the agent open and drive interactive terminal programs (REPLs, CLIs) — effectively shell access, so grant per agent with care.",
+  "skill_summary": "How to drive interactive, keystroke-driven terminal programs (coding agents, REPLs, SSH, TUI installers) with the open→read→send→wait→read loop. Load when you must operate a program that takes over the terminal; for one-shot non-interactive commands use run_command instead.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "tools": [
+    "terminal_open",
+    "terminal_read",
+    "terminal_send",
+    "terminal_wait",
+    "terminal_list",
+    "terminal_close"
+  ],
+  "config": {
+    "bias": {
+      "key": "terminal_caution",
+      "label": "Caution driving terminals",
+      "default": "balanced",
+      "levels": {
+        "cautious": "Before opening a terminal, sending any command/keystroke that changes state, or closing a session, tell the user exactly what you are about to run and wait for their go-ahead. Read the screen and narrate before every send; never queue blind keystrokes.",
+        "balanced": "Drive terminals to fulfil the user's request, reading the screen before each send. Pause to confirm only before irreversible or risky commands (deleting, overwriting, pushing, installing system-wide) or when the screen state is unclear.",
+        "trusted": "Operate terminal programs end-to-end without pausing for routine commands; only stop for clearly destructive or irreversible operations. Still read before sending so you answer the right prompt."
+      }
+    }
+  },
+  "order": 4
+}

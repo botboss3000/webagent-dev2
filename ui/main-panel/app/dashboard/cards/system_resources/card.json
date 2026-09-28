@@ -1,0 +1,15 @@
+{
+  "_comment": "Host-wide CPU, memory, swap, disk and uptime. Network scope is reported by the backend because Docker normally exposes only the container network namespace.",
+  "id": "system_resources",
+  "label": "System resources",
+  "icon": "monitor-cog",
+  "w": 6,
+  "h": 5,
+  "order": 12,
+  "sections": [
+    "system_resources"
+  ],
+  "section": "system_resources",
+  "server": "server.py",
+  "aiHint": "Live host CPU, load, physical memory, swap, disk, uptime, temperature, network throughput, active chat runs, and server Chromium sessions."
+}

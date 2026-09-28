@@ -1,0 +1,17 @@
+{
+  "display_name": "Program Screenshot",
+  "kind": "ability",
+  "icon": "camera",
+  "color": "#bb9af7",
+  "description": "Screenshot any program window and get a text description of everything visible on screen. Opens the program first if it isn't running.",
+  "skill_summary": "How to screenshot a running program (or start it first) and get a detailed text description via a vision model. Load when the user says 'screenshot <app>' or asks what's showing in a program.",
+  "skill_mode": "selectable",
+  "note": null,
+  "simple": true,
+  "placeholder": false,
+  "default_enabled": true,
+  "tools": [
+    "program_screenshot"
+  ],
+  "order": 50
+}

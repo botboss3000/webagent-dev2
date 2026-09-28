@@ -1,0 +1,23 @@
+{
+  "id": "github",
+  "display_name": "GitHub",
+  "status": "stable",
+  "brand_color": "#24292f",
+  "text_color": "#ffffff",
+  "border": false,
+  "icon": "github",
+  "authorize_url": "https://github.com/login/oauth/authorize",
+  "token_url": "https://github.com/login/oauth/access_token",
+  "userinfo_url": "https://api.github.com/user",
+  "scopes": ["read:user", "user:email"],
+  "scope_sep": " ",
+  "authorize_extra": {},
+  "profile_map": { "external_id": "id", "email": "email", "name": "name", "avatar": "avatar_url" },
+  "credential_fields": [
+    { "key": "client_id", "label": "Client ID", "secret": false, "tip": "In GitHub → Settings → Developer settings → OAuth Apps → New OAuth App. After you register it, copy the Client ID shown on the app's page." },
+    { "key": "client_secret", "label": "Client Secret", "secret": true, "tip": "On the same OAuth App page click \"Generate a new client secret\" and copy it immediately — GitHub shows the secret only once." }
+  ],
+  "requires": ["GitHub OAuth App: Client ID + Client Secret"],
+  "setup_url": "https://github.com/settings/developers",
+  "setup_hint": "Register a new OAuth App and set its \"Authorization callback URL\" to the exact Redirect URI shown below."
+}

@@ -1,0 +1,39 @@
+/* ── Mode button — toggle execution mode ───────────────────────────────
+   Sits in the footer row. Styled identically to .chat-continue-btn for
+   visual consistency.                                                      */
+.chat-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
+    border: var(--border-width) solid transparent;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    color: var(--fg-2);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 16px;
+    height: 28px;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    line-height: 1.5;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: inherit;
+  }
+.chat-mode-btn:hover {
+    border-color: rgba(var(--brand-rgb), 0.25);
+    color: var(--fg-1);
+  }
+.chat-mode-btn:active {
+    border-color: rgba(var(--brand-rgb), 0.35);
+  }
+body.light-mode .chat-mode-btn {
+    background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent));
+    color: var(--fg-2);
+  }
+body.light-mode .chat-mode-btn:hover {
+    border-color: rgba(var(--brand-rgb), 0.25);
+    color: var(--fg-1);
+  }

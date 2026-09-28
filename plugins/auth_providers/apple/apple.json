@@ -1,0 +1,27 @@
+{
+  "id": "apple",
+  "display_name": "Apple",
+  "status": "beta",
+  "brand_color": "#000000",
+  "text_color": "#ffffff",
+  "border": false,
+  "icon": "apple",
+  "authorize_url": "https://appleid.apple.com/auth/authorize",
+  "token_url": "https://appleid.apple.com/auth/token",
+  "userinfo_url": "",
+  "scopes": ["name", "email"],
+  "scope_sep": " ",
+  "response_mode": "form_post",
+  "authorize_extra": { "response_mode": "form_post" },
+  "profile_map": { "external_id": "sub", "email": "email", "name": "name", "avatar": "" },
+  "client_id_field": "service_id",
+  "credential_fields": [
+    { "key": "service_id", "label": "Services ID (client_id)", "secret": false, "tip": "In Apple Developer → Certificates, Identifiers & Profiles → Identifiers → Services IDs, create one and enable \"Sign in with Apple\". Use its identifier (e.g. com.yourco.app.web) here." },
+    { "key": "team_id", "label": "Team ID", "secret": false, "tip": "Your 10-character Apple Developer Team ID — shown at the top-right of the Apple Developer account page under Membership details." },
+    { "key": "key_id", "label": "Key ID", "secret": false, "tip": "In Apple Developer → Keys, create a key with \"Sign in with Apple\" enabled. The Key ID is shown on the key's page." },
+    { "key": "private_key", "label": "Private Key (.p8 contents)", "secret": true, "tip": "Open the .p8 file you downloaded when creating the Sign-in-with-Apple key and paste its entire contents, including the BEGIN and END lines. Apple lets you download this file only once." }
+  ],
+  "requires": ["Apple Services ID, Team ID, Key ID and a .p8 Sign-in-with-Apple private key"],
+  "setup_url": "https://developer.apple.com/account/resources/identifiers/list/serviceId",
+  "setup_hint": "Create a Services ID, enable Sign in with Apple, add this app's domain and the exact Return URL (Redirect URI) below, then create a Sign-in-with-Apple key and paste its Key ID + .p8 contents."
+}

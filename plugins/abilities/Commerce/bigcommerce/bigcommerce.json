@@ -1,0 +1,20 @@
+{
+  "display_name": "BigCommerce",
+  "kind": "ability",
+  "icon": "store",
+  "color": "#e0af68",
+  "description": "Query BigCommerce products and orders and create hosted carts and checkout URLs.",
+  "note": "Connect with a store hash and API account access token.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["bigcommerce_list_products", "bigcommerce_get_product", "bigcommerce_list_orders", "bigcommerce_create_checkout"],
+  "order": 3,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["store_hash", "access_token"],
+    "fields": [
+      {"key": "store_hash", "label": "Store hash", "type": "text", "placeholder": "abc123"},
+      {"key": "access_token", "label": "Access token", "type": "password", "secret": true, "placeholder": "BigCommerce API token"}
+    ]
+  }
+}

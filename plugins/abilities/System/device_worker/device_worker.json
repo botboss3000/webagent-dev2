@@ -1,0 +1,14 @@
+{
+  "display_name": "Multi-Device Worker",
+  "kind": "ability",
+  "icon": "monitor-smartphone",
+  "color": "#bb9af7",
+  "description": "Lets this machine take part in multi-device control — heartbeating its presence and claiming remote-control jobs addressed to it. Turn off to keep this machine out of the device pool. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 15,
+  "tools": [],
+  "_note": "Wired-in per-instance service (app/devices.start_device_worker). main.py gates the call on ability_app_enabled('device_worker'). Descriptor-only by design."
+}

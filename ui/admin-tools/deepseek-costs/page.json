@@ -1,0 +1,12 @@
+{
+  "id": "deepseek-costs",
+  "label": "DeepSeek Costs",
+  "icon": "calculator",
+  "order": 36,
+  "html": "deepseek-costs.html",
+  "mount": "#files-deepseek-costs-main",
+  "entry": "ui/admin-tools/deepseek-costs/deepseek-costs.js",
+  "start": "startView",
+  "stop": "stopView",
+  "router": "server.py"
+}

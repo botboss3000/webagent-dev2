@@ -1,0 +1,14 @@
+{
+  "display_name": "Session Namer",
+  "kind": "app_function",
+  "icon": "text-cursor-input",
+  "color": "#7aa2f7",
+  "description": "Background app service — auto-titles a chat ONCE from its first few user messages using a tiny LLM call, then locks the name so it never changes again. Runs after every turn on its own; the agent never invokes it. Turn it off to leave chats on their default 'New chat' name (or to save the small per-chat naming cost).",
+  "note": "Runs automatically after each turn — a background app function, not an agent tool. Its on/off lives in App Settings ▸ App Functions.",
+  "simple": true,
+  "placeholder": false,
+  "default_enabled": true,
+  "app_function": true,
+  "tools": [],
+  "order": 1
+}

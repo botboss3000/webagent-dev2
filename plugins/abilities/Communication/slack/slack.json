@@ -1,0 +1,12 @@
+{
+  "display_name": "Slack",
+  "kind": "placeholder",
+  "icon": "slack",
+  "color": "#26A5E4",
+  "description": "Send messages and read channels via Slack.",
+  "note": "Free OAuth app — Slack is free for basic workspaces.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 3
+}

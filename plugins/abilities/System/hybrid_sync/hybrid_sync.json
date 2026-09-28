@@ -1,0 +1,14 @@
+{
+  "display_name": "Hybrid Database Sync",
+  "kind": "ability",
+  "icon": "arrow-left-right",
+  "color": "#e0af68",
+  "description": "Keeps this machine's local database in step with the shared remote database. Only active in hybrid local-first mode; harmless otherwise. Turn off to pause syncing. Applies after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 14,
+  "tools": [],
+  "_note": "Wired-in per-process service (app/db/sync SyncEngine, started in main.py before the leader block). main.py ANDs the hybrid-active condition with ability_app_enabled('hybrid_sync'). Descriptor-only by design."
+}

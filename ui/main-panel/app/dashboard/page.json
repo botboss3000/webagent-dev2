@@ -1,0 +1,6 @@
+{
+  "id": "dashboard-instance-tab",
+  "label": "Dashboard",
+  "icon": "layout-dashboard",
+  "hidden": true
+}

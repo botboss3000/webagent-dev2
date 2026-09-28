@@ -1,0 +1,63 @@
+<template data-slot="#settings-page-slot-browser-session-management">
+<div class="settings-page" id="settings-page-browser-session-management" data-pa-page="app_settings" hidden>
+  <div class="ac-category-group" data-pa-area="browser_session_management">
+    <div class="ac-category-summary">
+      <i data-lucide="monitor-cog" class="lucide-icon ac-ico-16 ac-fg-accent"></i>
+      <span class="ac-category-title">Browser Session Management</span>
+    </div>
+    <div class="ac-category-body">
+      <div class="ac-hint ac-mb8">
+        Controls server-owned headless Chromium sessions. Idle sessions are swapped into the durable browser-session store (cookies, local storage, and last URL), then restored on demand without keeping Chromium alive. User-owned local Chrome windows and browser-extension sessions are never killed by this policy.
+      </div>
+      <div class="ac-list">
+        <div class="ac-ability-row">
+          <span class="ac-ability-icon"><i data-lucide="layers-3" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Maximum concurrent browser sessions</div>
+            <div class="ac-ability-desc">App-wide cap for live headless Chromium sessions. When full, the least-recently-used inactive session is saved and closed. Active sessions are protected.</div>
+          </div>
+          <span class="ac-config-control">
+            <input id="ac-browser-max-sessions" class="ac-input" type="number" min="1" max="20" step="1" value="3" aria-label="Maximum concurrent browser sessions">
+          </span>
+        </div>
+        <div class="ac-ability-row">
+          <span class="ac-ability-icon"><i data-lucide="timer-off" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Timeout after last activity</div>
+            <div class="ac-ability-desc">An unwatched, inactive headless session is saved and closed after this long. Agent actions and an open Browser view reset or pause the idle clock.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-browser-idle-timeout" class="ac-input ac-config-sel" aria-label="Browser idle timeout">
+              <option value="60">1 minute</option>
+              <option value="300">5 minutes (default)</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+              <option value="3600">1 hour</option>
+            </select>
+          </span>
+        </div>
+        <div class="ac-ability-row">
+          <span class="ac-ability-icon"><i data-lucide="sparkles" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Close idle sessions automatically</div>
+            <div class="ac-ability-desc">Run the idle cleanup policy in the background. The concurrency cap remains enforced even when automatic cleanup is off.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-browser-idle-enabled" class="conn-toggle" checked>
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+      </div>
+      <div class="ac-kv-tag-wrap-mt14">
+        <button id="ac-browser-policy-save" class="ac-btn ac-btn-primary">Save policy</button>
+        <button id="ac-browser-reap-idle" class="ac-btn">Close idle now</button>
+        <button id="ac-browser-status-refresh" class="ac-btn">Refresh usage</button>
+      </div>
+      <div id="ac-browser-policy-status" class="ac-hint ac-mt10" role="status">Loading browser usage…</div>
+    </div>
+  </div>
+</div>
+</template>

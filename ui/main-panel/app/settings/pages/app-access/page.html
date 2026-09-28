@@ -1,0 +1,47 @@
+<template data-slot="#settings-page-slot-app-access">
+<div class="settings-page" id="settings-page-app-access" data-pa-page="data_settings" hidden>
+<div class="ac-category-group" id="ac-access-card" data-pa-area="app_access">
+    <div class="ac-category-summary" class="ac-cursor-default">
+      <i data-lucide="key-round" class="lucide-icon" class="ac-ico-16 ac-fg-accent"></i>
+      <span class="ac-category-title">App Access</span>
+    </div>
+    <div class="ac-category-body">
+      <!-- ONE `.ac-list` tree (the ability-tree look): a "Sign in with"
+           sub-head that reads like an ability-group header (icon + title +
+           live count), then the provider rows — each an individual
+           ability-style row (icon + name + substate + Enabled switch +
+           expandable keys body), rendered by social-auth.js. The list draws
+           every hairline divider, so the providers read as one continuous
+           tree. -->
+      <div class="ac-list ac-access-list" id="ac-access-list" aria-label="How people can sign in to this instance">
+
+        <!-- ── Sign in options ── an EXPANDABLE group-header row for the social
+             providers below: a LEFT chevron + icon + title + a live "N on" count
+             (set by social-auth.js), the same anatomy as an ability-group head.
+             Clicking the bar expands/collapses the provider list (#ac-social-list),
+             which is collapsed by default. Wired by _wireSocialHead in app-access.js;
+             the collapse + left-chevron-rotate rules live in app3.css. -->
+        <div class="ac-ability-row ac-access-subhead" id="ac-social-head" role="button" tabindex="0" aria-expanded="false">
+          <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="ac-ability-icon"><i data-lucide="log-in" class="lucide-icon" class="ac-ico-16 ac-fg-muted"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Sign in options</div>
+            <div class="ac-ability-desc">One-click social login (Google, GitHub, …). New accounts follow the access policy on the Instances → Users tab.</div>
+          </div>
+          <span class="ac-category-count" id="ac-social-count"></span>
+        </div>
+
+        <!-- ── Provider rows ── each an individual ability-style row, rendered by
+             social-auth.js. Direct child of the list so the header/first-provider
+             hairline is drawn by the list; provider↔provider hairlines come from
+             the `#ac-social-list > * + *` rule (app3.css). -->
+        <div id="ac-social-list">
+          <div class="ac-table-empty" class="ac-p14">Loading providers…</div>
+        </div>
+
+      </div><!-- /.ac-list -->
+
+    </div><!-- /.ac-category-body -->
+  </div>
+</div>
+</template>

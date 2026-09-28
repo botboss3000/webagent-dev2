@@ -1,0 +1,8 @@
+{
+  "id": "prompts",
+  "order": 30,
+  "iconName": "file-text",
+  "title": "Prompts",
+  "description": "Edit the agent's prompt slots and skills.",
+  "entry": "./page.js"
+}

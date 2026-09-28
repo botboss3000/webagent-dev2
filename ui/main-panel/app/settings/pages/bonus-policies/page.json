@@ -1,0 +1,22 @@
+{
+  "id": "bonus-policies",
+  "label": "Bonus Policies",
+  "icon": "badge-dollar-sign",
+  "description": "Configure per-flag Active Session Bonus timers, maximum amounts, and required resolution actions.",
+  "keywords": [
+    "bonus",
+    "credits",
+    "reward",
+    "needs input",
+    "offer",
+    "decay",
+    "wallet",
+    "policy"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "bonus-policies",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

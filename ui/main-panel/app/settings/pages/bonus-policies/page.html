@@ -1,0 +1,31 @@
+<template data-slot="#settings-page-slot-bonus-policies">
+  <div class="settings-page" id="settings-page-bonus-policies" data-pa-page="app_settings" hidden>
+    <section class="ent-page" data-pa-area="bonus-policies" aria-labelledby="bonus-policies-title">
+      <header class="ent-page-head">
+        <div>
+          <h2 id="bonus-policies-title">Bonus Policies</h2>
+          <p>Configure one Active Session Bonus policy for every closing-message notification flag. The flag list is controlled in Gates; this page only configures matching bonus behavior.</p>
+        </div>
+      </header>
+      <div class="ac-category-group">
+        <div class="ac-category-summary ac-cursor-default">
+          <i data-lucide="badge-dollar-sign" class="lucide-icon ac-ico-16 ac-fg-accent"></i>
+          <span class="ac-category-title">Notification flag policies</span>
+        </div>
+        <div class="ac-category-body">
+          <p class="ac-hint" id="bonus-policies-hint">Loading current closing-message flags…</p>
+          <div class="ac-list" id="bonus-policies-list" aria-label="Notification flag bonus policies"></div>
+        </div>
+      </div>
+      <div class="ac-category-group">
+        <div class="ac-category-summary ac-cursor-default">
+          <i data-lucide="shield-check" class="lucide-icon ac-ico-16 ac-fg-muted"></i>
+          <span class="ac-category-title">How settlement works</span>
+        </div>
+        <div class="ac-category-body">
+          <p class="ac-hint">Open and reset marks only the matching owned session read, then settles. Continue requires a real reply. Complete requires a real reply and a newer completed task. Existing offers retain the policy they were issued with.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>

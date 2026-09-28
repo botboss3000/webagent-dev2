@@ -1,0 +1,12 @@
+{
+  "display_name": "GitHub",
+  "kind": "placeholder",
+  "icon": "github",
+  "color": "#7aa2f7",
+  "description": "Repos, issues, and pull requests.",
+  "note": "Free — OAuth app or GitHub App for repos, issues, and PRs.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 1
+}

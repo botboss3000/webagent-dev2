@@ -1,0 +1,23 @@
+{
+  "id": "google",
+  "display_name": "Google",
+  "status": "stable",
+  "brand_color": "#ffffff",
+  "text_color": "#1f1f1f",
+  "border": true,
+  "icon": "google",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+  "token_url": "https://oauth2.googleapis.com/token",
+  "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+  "scopes": ["openid", "email", "profile"],
+  "scope_sep": " ",
+  "authorize_extra": { "access_type": "online", "prompt": "select_account" },
+  "profile_map": { "external_id": "sub", "email": "email", "name": "name", "avatar": "picture" },
+  "credential_fields": [
+    { "key": "client_id", "label": "Client ID", "secret": false, "tip": "In Google Cloud Console → APIs & Services → Credentials, click Create Credentials → OAuth client ID (Application type: Web application). The Client ID ends in .apps.googleusercontent.com." },
+    { "key": "client_secret", "label": "Client Secret", "secret": true, "tip": "On the same OAuth client in Google Cloud Console, open the client and copy its Client Secret. Keep it private — treat it like a password." }
+  ],
+  "requires": ["Google OAuth 2.0 Client ID + Secret"],
+  "setup_url": "https://console.cloud.google.com/apis/credentials",
+  "setup_hint": "Create an OAuth 2.0 Client ID (type: Web application) and paste the exact Redirect URI shown below into its \"Authorized redirect URIs\"."
+}

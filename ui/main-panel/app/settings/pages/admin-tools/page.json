@@ -1,0 +1,8 @@
+{
+  "id": "admin-tools",
+  "label": "Admin Tools",
+  "icon": "wrench",
+  "description": "Administrative tools and diagnostics.",
+  "group": "app-pages",
+  "runtime": "admin"
+}

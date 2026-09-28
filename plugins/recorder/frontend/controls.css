@@ -1,0 +1,173 @@
+/* ── Optional recorder controls (migrated from app1.css) ── */
+  .render-recorder-control {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .render-recorder-control[hidden] { display: none; }
+  #render-recorder-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--fg-3);
+    padding: 6px 7px;
+    margin: 0;
+    border-radius: 8px;
+    transition: color 0.15s, background 0.15s;
+    user-select: none;
+  }
+  #render-recorder-toggle > * { pointer-events: none; }
+  #render-recorder-toggle:hover {
+    background: rgba(var(--danger-rgb), 0.08);
+    color: var(--danger);
+  }
+  #render-recorder-toggle.active {
+    background: rgba(var(--danger-rgb), 0.08);
+    color: var(--danger);
+  }
+  .render-recorder-switch {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--bg-tint-2);
+    border: var(--border-width) solid var(--border-strong);
+    transition: background 0.16s, border-color 0.16s;
+  }
+  .render-recorder-switch > span {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--fg-3);
+    box-shadow: 0 1px 3px rgba(var(--shadow-rgb), 0.3);
+    transition: transform 0.16s, background 0.16s;
+  }
+  #render-recorder-toggle.active .render-recorder-switch {
+    background: rgba(var(--danger-rgb), 0.28);
+    border-color: var(--danger);
+  }
+  #render-recorder-toggle.active .render-recorder-switch > span {
+    transform: translateX(14px);
+    background: var(--danger);
+  }
+  .render-recorder-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  #render-recorder-toggle:disabled { cursor: wait; opacity: 0.62; }
+
+  .render-recorder-popover {
+    position: absolute;
+    z-index: 1200;
+    top: calc(100% + 7px);
+    right: 0;
+    width: min(300px, calc(100vw - 16px));
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 11px 12px;
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-elev);
+    box-shadow: var(--shadow-rest);
+    color: var(--fg-2);
+    font-size: 11px;
+    line-height: 1.4;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 0.14s, visibility 0.14s, transform 0.14s;
+  }
+  .render-recorder-control.is-panel-open .render-recorder-popover {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  .render-recorder-popover-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--fg-1);
+  }
+  .render-recorder-status-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--fg-4);
+  }
+  .render-recorder-control.is-recording .render-recorder-status-dot {
+    background: var(--danger);
+    box-shadow: 0 0 0 4px rgba(var(--danger-rgb), 0.12);
+    animation: recorder-live-pulse 1.2s ease-in-out infinite;
+  }
+  .render-recorder-countdown {
+    margin-left: auto;
+    color: var(--danger);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+  .render-recorder-status-detail,
+  .render-recorder-status-limits { display: block; }
+  .render-recorder-status-limits { color: var(--fg-4); }
+  @keyframes recorder-live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+  @media (max-width: 520px) {
+    .render-recorder-popover { width: min(280px, calc(100vw - 12px)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .render-recorder-control.is-recording .render-recorder-status-dot { animation: none; }
+  }
+
+/* Optional recorder controls; no application layout depends on this sheet. */
+.render-recorder-action {
+  color:var(--fg-2); background:var(--bg-elev); border:1px solid var(--border-strong);
+  border-radius:8px; padding:6px 8px; cursor:pointer; font:inherit;
+}
+.render-recorder-action[hidden] { display:none; }
+.render-recorder-action:hover { color:var(--fg-1); background:var(--bg); }
+.render-recorder-action:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.render-recorder-control { gap:4px; }
+.render-recorder-control .render-recorder-popover { pointer-events:auto; }
+.render-recorder-control[data-capture-state="degraded"] .render-recorder-status-title { color:var(--danger); }
+[data-recorder-dialog] { background:var(--bg-elev);color:var(--fg-1);border:1px solid var(--border-strong);
+  border-radius:12px;padding:20px;width:min(420px,90vw);box-shadow:var(--shadow-rest); }
+[data-recorder-dialog]::backdrop { background:rgba(0,0,0,.4); }
+[data-recorder-dialog] textarea { box-sizing:border-box;display:block;width:100%;margin:12px 0;
+  background:var(--bg);color:var(--fg-1);border:1px solid var(--border-strong);border-radius:8px;padding:10px;font:inherit; }
+
+/* RECORDER-POPOVER: label opens the two-second panel independently of Stop. */
+button.render-recorder-label {
+  border:0;background:none;color:var(--fg-3);font:inherit;font-size:13px;
+  font-weight:600;cursor:pointer;padding:6px 0 6px 7px;border-radius:8px;
+}
+button.render-recorder-label:focus-visible {outline:2px solid var(--accent);outline-offset:2px;}
+.render-recorder-control.is-recording button.render-recorder-label {color:var(--danger);}
+
+/* RECORDER-ARMING: configuration is persistent-open; automatic status is brief. */
+.render-recorder-setting {display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-top:4px;}
+.render-recorder-setting input {accent-color:var(--accent);}
+.render-recorder-buffer-status {color:var(--fg-3);}
+.render-recorder-finishing {color:var(--fg-2);border-top:1px solid var(--border-strong);padding-top:6px;}
+.render-recorder-finishing[hidden] {display:none;}

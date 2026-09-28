@@ -1,0 +1,19 @@
+{
+  "display_name": "Stripe",
+  "kind": "ability",
+  "icon": "credit-card",
+  "color": "#635bff",
+  "description": "Query Stripe products and checkout sessions and create hosted Checkout pages.",
+  "note": "Uses a restricted or secret API key; Stripe transaction fees still apply.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["stripe_list_products", "stripe_get_checkout_session", "stripe_create_checkout"],
+  "order": 8,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["secret_key"],
+    "fields": [
+      {"key": "secret_key", "label": "Secret or restricted key", "type": "password", "secret": true, "placeholder": "sk_test_… or rk_test_…"}
+    ]
+  }
+}

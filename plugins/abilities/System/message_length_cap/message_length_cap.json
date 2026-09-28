@@ -1,0 +1,28 @@
+{
+  "display_name": "Message Length Cap",
+  "kind": "ability",
+  "icon": "scissors",
+  "color": "#7aa2f7",
+  "description": "Truncates user messages exceeding the configured character limit and prepends a system notice so both sides know content was cut. When OFF, messages pass through uncapped. One enforcement point covers normal chat and genui dispatches.",
+  "note": null,
+  "simple": false,
+  "placeholder": false,
+  "default_enabled": true,
+  "app_function": true,
+  "tools": [],
+  "config": {
+    "settings": [
+      {
+        "key": "max_length",
+        "label": "Maximum message length (characters)",
+        "type": "number",
+        "default": 8000,
+        "min": 500,
+        "max": 50000,
+        "step": 100,
+        "hint": "Messages exceeding this length are truncated with a system notice prepended so the agent and user know content was cut. The default is 8,000 characters."
+      }
+    ]
+  },
+  "order": 20
+}

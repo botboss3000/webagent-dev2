@@ -1,0 +1,12 @@
+{
+  "display_name": "GitLab",
+  "kind": "placeholder",
+  "icon": "git-branch",
+  "color": "#7aa2f7",
+  "description": "Repos, issues, and pipelines.",
+  "note": "Free OAuth — repos, issues, and pipelines.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 2
+}

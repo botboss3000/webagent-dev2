@@ -1,0 +1,43 @@
+<div id="files-restricted-overlay" style="display:none;">
+  <div class="files-restricted-card">
+    <div class="files-restricted-icon"><i data-lucide="lock" style="width:32px;height:32px;"></i></div>
+    <div class="files-restricted-title">Restricted Access</div>
+    <div class="files-restricted-desc">Admin Tools is only available for admin users.</div>
+    <div class="files-restricted-desc files-restricted-diag" id="files-restricted-diag"></div>
+  </div>
+</div>
+<div id="admin-tools" class="admin-tools">
+  <!-- Sidebar: a persistent left strip with view-switch icons, plus a
+       panel to its right showing the active view (Explorer / Source
+       control / Data Management / Terminal launchers). The collapse toggle
+       in the strip flips between split (strip + panel) and strip
+       (icon column only). -->
+  <aside id="files-sidebar" class="files-sidebar" data-view="explorer" data-state="split">
+    <!-- Persistent left strip: always visible. The narrow icon column is
+         BUILT from the admin page catalog by __buildAdminStrip (see
+         header-build.js) — one .files-strip-view button per drop-in
+         ui/admin-tools/<view>/page.json, in the admin's chosen order. Drop a
+         new view folder in and its icon appears here with no edit to this file.
+         Collapsing the panel is now a per-view control in each panel's header
+         (.files-panel-collapse-btn), not a shared strip button. -->
+    <div class="files-sidebar-strip" aria-label="Sidebar strip">
+      <!-- view-switch icons injected by __buildAdminStrip(window.__pagesCatalog.admin) -->
+    </div>
+
+    <!-- Sub-page sidebar panels (Explorer / Git / Data Management / Terminal /
+         Interactions / Runtime Loop) are injected here by the partial
+         loader from ui/admin-tools/*.html. -->
+  </aside>
+
+  <!-- Resize handle between sidebar and editor -->
+  <div id="files-resize-handle" class="files-resize-handle" title="Drag to resize"></div>
+
+  <!-- Toggle button to show sidebar when collapsed -->
+  <button id="files-sidebar-toggle" class="files-sidebar-toggle" title="Toggle sidebar">
+    <i data-lucide="panel-left" class="lucide-icon"></i>
+  </button>
+
+  <!-- Sub-page main areas (file editor / git / terminal / interactions /
+       runtime-loop / settings / data management) are injected here by the
+       partial loader from ui/admin-tools/*.html. -->
+</div>

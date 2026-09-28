@@ -1,0 +1,154 @@
+/* Website widget host for the real chat panel. The iframe renders the same
+   #chat-panel DOM and modules as the app; this sheet only removes the surrounding
+   application shell and supplies widget-frame chrome. */
+html.chat-portal,
+html.chat-portal body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+
+html.chat-portal #main-header,
+html.chat-portal #main-panel,
+html.chat-portal #chat-resize-handle,
+html.chat-portal #app-restricted-overlay,
+html.chat-portal #cursor-glow,
+html.chat-portal #session-notification-container,
+html.chat-portal .chat-launcher,
+html.chat-portal .webagent-launcher,
+html.chat-portal #chat-widget-layer {
+  display: none !important;
+}
+
+/* The full shell also owns optional overlays (debug console, onboarding,
+   recorders, notifications). Portal mode exposes one existing subtree only. */
+html.chat-portal body > :not(#stage) {
+  display: none !important;
+}
+
+html.chat-portal #stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+}
+
+html.chat-portal #chat-panel {
+  display: flex !important;
+  flex-direction: column;
+  width: 100% !important;
+  height: 100%;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 0;
+  background: var(--bg-1);
+}
+
+html.chat-portal #chat-header {
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+html.chat-portal .chat-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+html.chat-portal .chat-status {
+  color: var(--fg-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+html.chat-portal .chat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--fg-4);
+  animation: none !important;
+}
+
+html.chat-portal .chat-dot.running { background: var(--accent); }
+html.chat-portal .chat-dot.done { background: var(--success); }
+html.chat-portal .chat-dot.error { background: var(--danger); }
+
+html.chat-portal .chat-header-close,
+html.chat-portal .chat-header-minimize {
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+
+html.chat-portal .chat-header-close:hover,
+html.chat-portal .chat-header-minimize:hover {
+  color: var(--fg-1);
+  background: var(--bg-tint);
+}
+
+/* A panel authored for 500px pills must still fit a narrower resized iframe. */
+html.chat-portal #chat-input-area,
+html.chat-portal #chat-input-row {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+html.chat-portal #chat-input-area { flex: 0 0 auto; }
+
+html.chat-portal #chat-messages,
+html.chat-portal #chat-messages-inner {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+html.chat-portal #chat-messages { flex: 1 1 auto; }
+
+html.chat-portal .chat-bubble {
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+html.chat-portal .chat-pill-layout-row,
+html.chat-portal .chat-pill-layout-zone,
+html.chat-portal .chat-pill-zone-carousel,
+html.chat-portal .chat-pill-zone-carousel-strip {
+  min-width: 0;
+}
+
+/* The app-wide "borders off" appearance preference intentionally removes
+   neutral borders with --border-width: 0. A website visitor still needs a
+   persistent boundary around the widget composer, including before a turn
+   starts; the thinking glow must not be the only visible outline. */
+html.chat-portal #chat-input-row.chat-pill {
+  border: 1px solid var(--border) !important;
+}
+html.chat-portal #chat-input-row.chat-pill:focus-within {
+  border-color: var(--brand) !important;
+}
+
+html.chat-portal #chat-input {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}

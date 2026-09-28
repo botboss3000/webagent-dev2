@@ -1,0 +1,8 @@
+{
+  "id": "sessions",
+  "order": 10,
+  "iconName": "message-square",
+  "title": "Sessions",
+  "description": "Conversation threads and history for the selected agent.",
+  "entry": "./page.js"
+}

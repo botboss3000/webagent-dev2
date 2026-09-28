@@ -1,0 +1,11 @@
+{
+  "id": "interactions",
+  "label": "Interactions",
+  "icon": "square-menu",
+  "order": 5,
+  "html": "interactions.html",
+  "mount": "#files-interactions-main",
+  "entry": "ui/admin-tools/interactions/interactions-view.js",
+  "start": "startView",
+  "stop": "stopView"
+}

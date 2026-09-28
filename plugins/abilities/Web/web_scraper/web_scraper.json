@@ -1,0 +1,59 @@
+{
+  "display_name": "Web Scraper",
+  "kind": "ability",
+  "icon": "scan-search",
+  "color": "#7aa2f7",
+  "description": "Bring-your-own scraping provider (Apify, RapidAPI, or any custom HTTP endpoint) for structured web extraction on sites with no public API.",
+  "status": "beta",
+  "note": "Needs a scraper API key",
+  "skill_summary": "How to extract STRUCTURED data (titles, prices, listings, tables) from a no-API or JS-heavy/bot-blocking site using the bring-your-own scraper provider — always via web_scrape_url / web_scrape_search, NEVER by looping web_search; and how to recognize and report the not_configured (no API key) state instead of hallucinating results. Load before any scrape/extract task.",
+  "skill_mode": "selectable",
+  "simple": false,
+  "placeholder": false,
+  "order": 3,
+  "tools": [
+    "web_scrape_search",
+    "web_scrape_url"
+  ],
+  "config": {
+    "bias": {
+      "key": "js_render_posture",
+      "default": "auto",
+      "levels": {
+        "never": "SCRAPER JS-RENDER POSTURE — Never: call the scrape tools with render_js=false. Use this for plain HTML sites; it's faster and cheaper. Only override if a page clearly returns nothing without JS.",
+        "auto": "",
+        "always": "SCRAPER JS-RENDER POSTURE — Always: call the scrape tools with render_js=true by default. The target sites are JavaScript-heavy (single-page apps / infinite scroll), so render the page before extracting even though it is slower and costs more provider credits."
+      }
+    },
+    "settings": [
+      {
+        "key": "js_render_posture",
+        "label": "JS rendering",
+        "type": "select",
+        "default": "auto",
+        "options": [
+          {"value": "never", "label": "Never — assume plain HTML (fast/cheap)"},
+          {"value": "auto", "label": "Auto (default) — agent decides per page"},
+          {"value": "always", "label": "Always — render JS (for SPAs; slower)"}
+        ],
+        "hint": "How readily this agent asks the scraper to render JavaScript before extracting. Always = best for single-page-apps / infinite-scroll sites but uses more provider credits; Never = fast/cheap for static HTML; Auto = today's per-page judgment. This rides along as a posture note in the agent's prompt — a nudge, not a hard rule."
+      }
+    ]
+  },
+  "credentials": {
+    "scope": "admin",
+    "requires": ["api_key"],
+    "fields": [
+      {"key": "provider", "label": "Provider", "type": "select",
+       "options": ["apify", "rapidapi", "custom_http"], "default": "apify"},
+      {"key": "api_key", "label": "API Key", "type": "password", "secret": true,
+       "placeholder": "API key / token"},
+      {"key": "endpoint", "label": "Endpoint", "type": "text",
+       "placeholder": "https://…  (required for custom_http)"},
+      {"key": "actor_id", "label": "Apify Actor ID", "type": "text",
+       "placeholder": "apify/web-scraper"},
+      {"key": "host", "label": "RapidAPI Host", "type": "text",
+       "placeholder": "example.p.rapidapi.com"}
+    ]
+  }
+}

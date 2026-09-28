@@ -1,0 +1,173 @@
+<!-- Web: in-app, AI-augmented browser.
+     Loaded by ui/shared/js/partial-loader.js into #tab-browser · logic: ui/main-panel/browser/js/browser.js ·
+     styles: ui/main-panel/browser/browser.css · streamed from app/api/browser_stream.py.
+
+The browser stage fills available panel space while the toolbar remains at the
+     bottom. The unified input shows the current URL at rest and classifies typed
+     text as either navigation or an agent message. Narrow layouts stack the input
+     above the browser controls. -->
+<div class="browser-page">
+
+  <!-- Full-height browser stage. Two renderers share it:
+         • .browser-frame  — the HTML proxy iframe (in-app / headless backend).
+         • .browser-mirror — a live pixel mirror (CDP screencast genui) used when
+           the session is driving the REAL browser on the user's device, and for
+           any page the iframe can't frame. Only one is visible at a time. -->
+  <div class="browser-stage">
+    <iframe class="browser-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="cross-origin-isolated"></iframe>
+    <genui class="browser-mirror" tabindex="0"></genui>
+    <!-- Loading state: shown by browser.js while a session that HAS a saved page
+         is reconnecting / restoring, so the user sees a spinner instead of the
+         "type a URL" hint. The hint (.browser-empty) is reserved for sessions
+         with genuinely nothing saved yet. Only one of the two ever shows. -->
+    <div class="browser-loading" style="display:none;" aria-label="Loading page" role="status">
+      <span class="browser-spinner" aria-hidden="true"></span>
+    </div>
+    <div class="browser-empty" style="display:none;">This is a shared browser. Type a URL in the bar below to start &mdash; the agent can see and act on this same page, and you can take over any time.</div>
+    <!-- CONNECTOR-NOTICE: shown only when this session's backend is "connector" —
+         the page lives in the user's OWN browser (via the extension), so there's
+         nothing to mirror here. Reuses .browser-empty styling. Toggled by
+         _showConnectorStage() in browser.js; any normal stage change hides it. -->
+    <div class="browser-empty browser-connector-notice" style="display:none;">This session is running in <b>your own browser</b> via the WebAgent extension. Watch the agent act in your browser window. Switch the control on the left back to <b>In-app</b> to use the shared browser here.</div>
+    <section class="extension-control-panel" style="display:none;" aria-label="Browser extension controls">
+      <div class="extension-control-head">
+        <div>
+          <div class="extension-control-kicker">Companion connector</div>
+          <h2>Chromium browser extension</h2>
+        </div>
+        <span class="extension-connection-state"><span class="extension-state-dot"></span><span class="extension-state-label">Offline</span></span>
+      </div>
+      <p class="extension-control-summary">Run browser actions in your signed-in Chromium browser while WebAgent keeps orchestration and policy on the server.</p>
+      <dl class="extension-device-details">
+        <div><dt>Browser</dt><dd data-extension-detail="browser">Not connected</dd></div>
+        <div><dt>Platform</dt><dd data-extension-detail="platform">—</dd></div>
+        <div><dt>Connector</dt><dd data-extension-detail="version">—</dd></div>
+        <div><dt>Last seen</dt><dd data-extension-detail="last-seen">—</dd></div>
+      </dl>
+      <div class="extension-settings" aria-label="Extension permissions and behavior">
+        <label><input type="checkbox" data-extension-setting="paused"> Pause agent control</label>
+        <label><input type="checkbox" data-extension-setting="auto_connect"> Reconnect automatically</label>
+        <label><input type="checkbox" data-extension-setting="allow_screenshots"> Allow screenshots</label>
+        <label><input type="checkbox" data-extension-setting="require_eval_approval"> Ask before JavaScript</label>
+      </div>
+      <div class="extension-control-actions">
+        <button type="button" class="browser-btn extension-pair-action"><i data-lucide="plug"></i><span>Pair extension</span></button>
+        <button type="button" class="browser-btn extension-refresh-action"><i data-lucide="refresh-cw"></i><span>Refresh</span></button>
+      </div>
+      <p class="extension-control-note">Stopping the extension here turns off automatic reconnection. Start it again from the extension toolbar.</p>
+    </section>
+  </div>
+
+  <!-- Toolbar: browser controls (left) + small chat pill (right), floating overlay.
+       SINGLE row on a wide panel, STACKS to two rows on a narrow one — see browser.css
+       .browser-toolbar (sister layout to ui/main-panel/genui/genui-toolbar.css). -->
+  <div class="browser-toolbar">
+
+    <!-- Browser-specific controls: back / forward / reload, plus the device
+         switcher, point-and-ask, per-tab share toggle, the session menu and the
+         live-status dot. The address bar is GONE — its job moved into the unified
+         chat pill below (UNIFIED-PILL), which rests showing the current URL. -->
+    <div class="browser-nav">
+      <div class="control-surface-switch" role="group" aria-label="Control surface">
+        <span class="control-surface-chip" data-surface-chip="browser">
+          <button class="browser-btn control-surface-btn" data-surface="browser" aria-pressed="false" title="Start and control the shared browser"><i data-lucide="globe"></i><span>Browser</span></button>
+          <button type="button" class="control-surface-stop" data-stop-surface="browser" aria-label="Stop Browser" title="Stop Browser"><i data-lucide="x"></i></button>
+        </span>
+        <span class="control-surface-chip" data-surface-chip="extension">
+          <button class="browser-btn control-surface-btn" data-surface="extension" aria-pressed="false" title="Control a Chromium browser through the companion extension"><i data-lucide="puzzle"></i><span>Extension</span></button>
+          <button type="button" class="control-surface-stop" data-stop-surface="extension" aria-label="Stop Extension" title="Stop Extension"><i data-lucide="x"></i></button>
+        </span>
+        <span class="control-surface-chip" data-surface-chip="desktop">
+          <button class="browser-btn control-surface-btn" data-surface="desktop" aria-pressed="false" title="View and control this server's desktop"><i data-lucide="monitor-up"></i><span>Desktop</span></button>
+          <button type="button" class="control-surface-stop" data-stop-surface="desktop" aria-label="Stop Desktop" title="Stop Desktop"><i data-lucide="x"></i></button>
+        </span>
+      </div>
+      <!-- Navigation icon buttons -->
+      <button class="browser-btn browser-nav-icon control-browser-only" data-act="back" title="Back" aria-label="Back">
+        <i data-lucide="arrow-left"></i>
+      </button>
+      <button class="browser-btn browser-nav-icon control-browser-only" data-act="forward" title="Forward" aria-label="Forward">
+        <i data-lucide="arrow-right"></i>
+      </button>
+      <button class="browser-btn browser-nav-icon control-browser-only" data-act="reload" title="Reload" aria-label="Reload">
+        <i data-lucide="rotate-cw"></i>
+      </button>
+
+      <!-- Backend switcher: CYCLES this session between the in-app browser, the
+           real browser on this machine ("On device"), and the user's OWN browser
+           driven through the WebAgent extension ("My browser"). Label + title are
+           set by cycleBackend() / updateDeviceUi() in browser.js. -->
+      <button class="browser-btn web-device browser-device control-browser-only" data-act="device" aria-pressed="false"
+              title="Switch how this session is driven: in-app, on device, or my browser (extension)">
+        <i data-lucide="monitor"></i>
+        <span class="browser-device-label">In-app</span>
+      </button>
+
+      <!-- Pair extension: open the one-time setup card that hands this browser's
+           server URL + a long-lived token to the WebAgent browser extension, so
+           "My browser" mode can connect. Opened by openPairModal() in browser.js;
+           needed because, outside 'open' access mode, the extension must present a
+           token and a non-technical user has no other way to get one. -->
+      <button class="browser-btn web-pair browser-pair control-browser-only" data-act="pair"
+              title="Set up the browser extension (My browser mode)">
+        <i data-lucide="plug"></i>
+      </button>
+
+      <!-- Point-and-ask: arm a mode where clicking a spot on the page marks it,
+           and the next chat message asks the agent about exactly that spot. -->
+      <button class="browser-btn web-point browser-point control-active-only" data-act="point" aria-pressed="false"
+              title="Point at something on the page to ask the agent about it">
+        <i data-lucide="crosshair"></i>
+      </button>
+
+      <!-- Per-tab share toggle: off = private, on = shared with the agent -->
+      <button class="browser-btn web-share browser-share control-browser-only" data-act="share" aria-pressed="false"
+              title="Share this tab with the agent">Private</button>
+
+      <!-- Session menu: trigger + popover, mirrors the chat-panel session dropdown -->
+      <div class="browser-sessions control-browser-only">
+        <button class="browser-btn web-sessions-toggle browser-session-trigger" data-act="sessions"
+                title="Switch browser session" aria-haspopup="true" aria-expanded="false">
+          <i data-lucide="layers" class="browser-session-trigger-icon"></i>
+          <span class="browser-session-trigger-label">Session</span>
+          <i data-lucide="chevron-down" class="browser-session-trigger-chev"></i>
+        </button>
+        <!-- Sessions popover — opens upward, styled like the chat session menu -->
+        <div class="browser-sessions-popover session-dropdown-menu" style="display:none;">
+          <div class="browser-sessions-list"></div>
+        </div>
+      </div>
+
+      <button class="browser-btn web-new-session browser-new-session control-browser-only" data-act="new-session" title="New browser session" aria-label="New browser session">
+        <i data-lucide="plus"></i>
+      </button>
+
+      <span class="browser-status" title="Live connection status">
+        <span class="browser-dot" aria-hidden="true"></span>
+        <span class="browser-status-text">idle</span>
+      </span>
+    </div>
+
+    <!-- UNIFIED-PILL — the page input doubles as the address bar and agent chat.
+         It shows the current URL at rest. browser.js turns URLs into navigation
+         actions and sends all other text to the active browser-session agent. -->
+    <div class="browser-prompt-bar">
+      <div class="browser-prompt-row chat-pill chat-pill-1line">
+        <textarea class="chat-pill-input web-prompt-input" rows="1" wrap="off"
+          placeholder="Enter a URL, or message the agent&hellip;"
+          spellcheck="true" maxlength="2000" autocomplete="off"></textarea>
+        <button type="button" class="chat-pill-voice web-voice" title="Record voice">
+          <i data-lucide="mic"></i>
+        </button>
+        <!-- web-send: icon + action swap live in browser.js — 'send' (→ agent) or
+             'globe' (→ navigate the page) depending on what's typed. -->
+        <button type="button" class="chat-pill-send web-send" title="Send to the agent">
+          <i data-lucide="send"></i>
+        </button>
+        <button type="button" class="chat-pill-attach web-attach" title="Attach files">
+          <i data-lucide="plus"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

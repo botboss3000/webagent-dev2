@@ -1,0 +1,17 @@
+{
+  "name": "webagent-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build:session-dropdown": "vite build --config frontend/vite.config.mjs",
+    "build:composer": "vite build --config frontend/vite-composer.config.mjs"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^7.1.7"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  }
+}

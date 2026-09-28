@@ -1,0 +1,7 @@
+{
+  "name": "System",
+  "icon": "cog",
+  "color": "#9aa5ce",
+  "desc": "Background app services that run for the app itself — not agent abilities. They are surfaced in App Settings ▸ App Functions.",
+  "order": 900
+}

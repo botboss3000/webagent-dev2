@@ -1,0 +1,19 @@
+{
+  "display_name": "eBay",
+  "kind": "oauth",
+  "icon": "tag",
+  "color": "#e0af68",
+  "description": "eBay marketplace listings, inventory, offers, and order management.",
+  "note": "Free API — an eBay developer account; the production keyset needs approval.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [
+    "ebay_search_items",
+    "ebay_get_item",
+    "ebay_list_my_active_listings",
+    "ebay_create_inventory_item",
+    "ebay_create_offer",
+    "ebay_end_offer"
+  ],
+  "order": 5
+}

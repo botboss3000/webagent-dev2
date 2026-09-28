@@ -1,0 +1,10 @@
+{
+  "name": "Communication",
+  "icon": "message-square",
+  "color": "#26A5E4",
+  "desc": "How agents send and receive messages. Enable a channel to make it available to your agents.",
+  "entitlement_group": "personal_integrations",
+  "risk_class": "write",
+  "action_class": "external_action",
+  "order": 5
+}

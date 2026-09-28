@@ -1,0 +1,60 @@
+<template data-slot="#main-panel">
+  <div id="app-config-container" hidden>
+    <!-- Settings — JSON-index-driven configuration area (app-pages.json).
+         Landing list (#settings-list, rendered from the index) + one page per
+         section (page partials injected into the #settings-page-slot-* slots by
+         the partial loader).
+
+         The container ids (#app-config-container / #app-config-content) are KEPT
+         from the old app-config shell on purpose: instances.js (this device
+         tile's Settings tab), instances.css and app3.css bind to them.
+
+         The unified search/chat pill (#ac-unified-pa-bar) that used to sit below
+         the scroller is GONE: the Settings area now uses the same floating
+         "Ask or Search" launcher as the Agents page
+         (ui/shared/js/settings-page-chat-widget.js), mounted by settings.js as a
+         sibling overlay. It drives this page's own search engine through the
+         _settingsSearchController function the module publishes below. -->
+
+    <!-- Page chrome shown while a single section page is open (back → list). -->
+    <div id="settings-topbar" class="settings-topbar" hidden>
+      <button type="button" id="settings-back-btn" class="settings-back-btn" title="Back to all settings">
+        <i data-lucide="arrow-left" class="lucide-icon ac-ico-16"></i>
+        <span>All settings</span>
+      </button>
+      <span id="settings-topbar-title" class="settings-topbar-title"></span>
+    </div>
+
+    <!-- Non-scrolling wrapper that sizes the rounded scroll-corner mask (see
+         #app-config-scroll-wrap in app3.css). The scroller keeps its side
+         margins inside it. -->
+    <div id="app-config-scroll-wrap">
+      <div id="app-config-content" class="rounded-scroll-corners">
+        <!-- Landing list (rendered from app-pages.json by settings.js) -->
+        <div id="settings-list" class="settings-list" aria-label="Settings sections"></div>
+        <!-- No-match state while searching -->
+        <div id="settings-search-empty" class="ac-search-empty" role="status" hidden></div>
+        <!-- Per-section page slots (10 pages; the 7 integration categories
+             render inside the Agent Tools page). -->
+        <div id="settings-page-slot-app-access"></div>
+        <div id="settings-page-slot-storage-routing"></div>
+        <div id="settings-page-slot-main-panel-pages"></div>
+        <div id="settings-page-slot-admin-panel-pages"></div>
+        <div id="settings-page-slot-app-functions"></div>
+        <div id="settings-page-slot-browser-session-management"></div>
+        <div id="settings-page-slot-design"></div>
+        <div id="settings-page-slot-models"></div>
+        <div id="settings-page-slot-user-policies"></div>
+        <div id="settings-page-slot-agent-tools"></div>
+        <div id="settings-page-slot-templates-prompts"></div>
+        <div id="settings-page-slot-automation-engine"></div>
+        <div id="settings-page-slot-bonus-policies"></div>
+        <div id="settings-page-slot-entitlements"></div>
+      </div>
+    </div><!-- /app-config-scroll-wrap -->
+
+    <!-- The unified search/chat pill that used to live here is gone; the shared
+         floating launcher (settings-page-chat-widget.js) replaces it. See the
+         container comment at the top of this template. -->
+  </div><!-- /app-config-container -->
+</template>

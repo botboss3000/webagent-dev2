@@ -1,0 +1,22 @@
+{
+  "id": "templates-prompts",
+  "label": "Templates and prompts",
+  "icon": "file-text",
+  "description": "The global system prompt and the on-disk agent prompt templates new agents are built from.",
+  "keywords": [
+    "global",
+    "system",
+    "prompt",
+    "template",
+    "seed",
+    "reseed",
+    "agent",
+    "tone"
+  ],
+  "group": "agent",
+  "runtime": "settings",
+  "page": "templates-prompts",
+  "anchor": "",
+  "paPage": "agent_settings",
+  "html": "page.html"
+}

@@ -1,0 +1,49 @@
+/* Embed-only frame geometry. Chat bubbles, composer, controls, spacing and icons
+   intentionally come from the same shared stylesheets/classes as the panel. */
+* { box-sizing: border-box; }
+html, body { width: 100%; max-width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg-1); color: var(--fg-1); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.ec-root { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 100%; height: 100%; overflow: hidden; background: var(--bg-1); }
+.ec-header { cursor: default; touch-action: auto; }
+.ec-header-text { display: contents; }
+.ec-messages { flex: 1 1 auto; width: 100%; min-height: 0; overflow-y: auto; padding: 12px 8px 40px 15px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start;
+  -webkit-mask-image: linear-gradient(to bottom, var(--chat-fade-top-stops, #000 0), #000 calc(100% - var(--chat-fade-bottom,0px)), transparent 100%);
+  mask-image: linear-gradient(to bottom, var(--chat-fade-top-stops, #000 0), #000 calc(100% - var(--chat-fade-bottom,0px)), transparent 100%); }
+.ec-messages::-webkit-scrollbar { width: 6px; }
+.ec-messages::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+.ec-messages > * { max-width: var(--chat-surface-max-width, 1000px); justify-self: center; width: 100%; }
+.ec-composer { flex: 0 0 auto; align-self: center; width: 100%; max-width: var(--chat-surface-max-width, 1000px); display: flex; flex-direction: column; gap: 0; padding: 2px 12px 8px; }
+.ec-root .ec-pill, .ec-root .ec-above-pill, .ec-root .ec-below-pill {
+  width: min(var(--chat-pill-current-width, var(--chat-pill-width, 500px)), 100%);
+  max-width: 100%;
+  min-width: 0;
+}
+.ec-agent-auth, .ec-agent-profile-admin { min-width: 0; overflow-wrap: anywhere; }
+.ec-agent-auth input, .ec-agent-profile-admin input, .ec-agent-profile-admin select { min-width: 0; max-width: 100%; }
+.ec-auth-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ec-auth-actions button,
+.ec-agent-profile-admin button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  color: var(--fg-1);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ec-auth-actions button[type="submit"] { background: var(--accent); border-color: var(--accent); color: var(--ec-accent-fg, #fff); }
+.ec-auth-actions button:hover,
+.ec-agent-profile-admin button:hover { border-color: var(--accent); }
+.ec-auth-actions button:focus-visible,
+.ec-agent-profile-admin button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ec-unavailable { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--fg-3); text-align: center; }
+.ec-footer { flex: 0 0 auto; padding: 7px 12px; border-top: var(--border-width) solid var(--border); color: var(--fg-3); font-size: 11px; text-align: center; }
+.ec-footer[hidden], [hidden] { display: none !important; }
+.ec-typing { display: inline-flex; align-items: center; gap: 4px; }
+.ec-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-3); animation: ec-bounce 1.2s infinite ease-in-out; }
+.ec-typing span:nth-child(2) { animation-delay: .15s; }
+.ec-typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes ec-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: .9; } }
+@media (prefers-reduced-motion: reduce) { .ec-typing span { animation: none; } }

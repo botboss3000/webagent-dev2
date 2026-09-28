@@ -1,0 +1,20 @@
+{
+  "id": "entitlements",
+  "label": "Model Rosters",
+  "icon": "layers-3",
+  "description": "Publish the model catalogs that app user policies can select.",
+  "keywords": [
+    "roster",
+    "model",
+    "provider",
+    "credential",
+    "catalog",
+    "publish"
+  ],
+  "group": "app",
+  "runtime": "settings",
+  "page": "entitlements",
+  "anchor": "",
+  "paPage": "app_settings",
+  "html": "page.html"
+}

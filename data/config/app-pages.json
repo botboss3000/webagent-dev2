@@ -1,0 +1,429 @@
+{
+  "version": 2,
+  "headerPageIds": [
+    "settings",
+    "dashboard",
+    "models",
+    "overview",
+    "file-manager",
+    "agent-tools",
+    "bonus-policies"
+  ],
+  "groups": [
+    {
+      "id": "app-pages",
+      "label": "App pages",
+      "icon": "panels-top-left",
+      "pageIds": [
+        "overview",
+        "dashboard",
+        "file-manager",
+        "admin-tools"
+      ]
+    },
+    {
+      "id": "data",
+      "label": "Data",
+      "icon": "database",
+      "pageIds": [
+        "app-access",
+        "storage-routing"
+      ]
+    },
+    {
+      "id": "app",
+      "label": "App",
+      "icon": "settings-2",
+      "pageIds": [
+        "main-panel-pages",
+        "admin-panel-pages",
+        "app-functions",
+        "browser-session-management",
+        "design",
+        "entitlements",
+        "bonus-policies"
+      ]
+    },
+    {
+      "id": "agent",
+      "label": "Agent",
+      "icon": "bot",
+      "pageIds": [
+        "models",
+        "user-policies",
+        "usage",
+        "agent-tools",
+        "templates-prompts",
+        "automation-engine"
+      ]
+    }
+  ],
+  "pages": {
+    "settings": {
+      "label": "Settings",
+      "icon": "settings-2",
+      "description": "Configure this WebAgent installation.",
+      "group": "settings",
+      "runtime": "settings"
+    },
+    "admin-panel-pages": {
+      "label": "Admin Panel Pages",
+      "icon": "panel-left",
+      "description": "Arrange, rename, and re-icon the views inside Admin Tools.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "admin-panel-pages",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "admin",
+        "tools",
+        "views",
+        "tabs",
+        "catalog",
+        "settings",
+        "pages",
+        "name",
+        "icon",
+        "order"
+      ]
+    },
+    "admin-tools": {
+      "label": "Admin Tools",
+      "icon": "wrench",
+      "description": "Administrative tools and diagnostics.",
+      "group": "app-pages",
+      "runtime": "admin",
+      "page": "admin-tools",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": []
+    },
+    "agent-tools": {
+      "label": "Agent tools & abilities",
+      "icon": "wrench",
+      "description": "Every ability, tool and integration an agent can run \u2014 the whole unified table.",
+      "group": "agent",
+      "runtime": "settings",
+      "page": "agent-tools",
+      "anchor": "",
+      "paPage": "agent_settings",
+      "keywords": [
+        "abilities",
+        "tools",
+        "permissions",
+        "web",
+        "search",
+        "image",
+        "visualizer",
+        "automation",
+        "browser",
+        "skills"
+      ]
+    },
+    "app-access": {
+      "label": "App Access",
+      "icon": "key-round",
+      "description": "Social sign-in options \u2014 how people get into this instance.",
+      "group": "data",
+      "runtime": "settings",
+      "page": "app-access",
+      "anchor": "",
+      "paPage": "data_settings",
+      "keywords": [
+        "signin",
+        "login",
+        "auth",
+        "authentication",
+        "oauth",
+        "google",
+        "github",
+        "microsoft",
+        "apple",
+        "providers",
+        "keys"
+      ]
+    },
+    "app-functions": {
+      "label": "App Functions",
+      "icon": "cog",
+      "description": "Background services the app runs on its own \u2014 session namer, context control, stream buffer and more.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "app-functions",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "services",
+        "background",
+        "session",
+        "namer",
+        "context",
+        "compaction",
+        "stream",
+        "buffer",
+        "quick",
+        "message",
+        "app control"
+      ]
+    },
+    "automation-engine": {
+      "label": "Automation Engine",
+      "icon": "clock",
+      "description": "The platform engine that fires automations \u2014 the scheduler and the event sources.",
+      "group": "agent",
+      "runtime": "settings",
+      "page": "automation-engine",
+      "anchor": "",
+      "paPage": "agent_settings",
+      "keywords": [
+        "scheduler",
+        "cron",
+        "timers",
+        "event",
+        "sources",
+        "runtime",
+        "deliveries",
+        "jobs"
+      ]
+    },
+    "bonus-policies": {
+      "label": "Bonus Policies",
+      "icon": "badge-dollar-sign",
+      "description": "Review Active Session Bonus offers, qualification safeguards, and the needs-input lifecycle.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "bonus-policies",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "bonus",
+        "credits",
+        "reward",
+        "needs input",
+        "offer",
+        "decay",
+        "wallet",
+        "policy"
+      ]
+    },
+    "browser-session-management": {
+      "label": "Browser Session Management",
+      "icon": "monitor-cog",
+      "description": "Cap server-owned headless browsers, close idle sessions, and inspect live browser usage.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "browser-session-management",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "browser",
+        "playwright",
+        "headless",
+        "sessions",
+        "concurrency",
+        "cap",
+        "idle",
+        "timeout",
+        "cleanup",
+        "chromium"
+      ]
+    },
+    "dashboard": {
+      "label": "Dashboard",
+      "icon": "layout-dashboard",
+      "description": "Operational metrics and health.",
+      "group": "app-pages",
+      "runtime": "dashboard",
+      "page": "dashboard",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": []
+    },
+    "design": {
+      "label": "Design",
+      "icon": "palette",
+      "description": "The whole app's look across both themes \u2014 palettes, fonts, borders, boot behaviour and chat layout.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "design",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "appearance",
+        "theme",
+        "color",
+        "colour",
+        "palette",
+        "background",
+        "font",
+        "border",
+        "welcome",
+        "boot",
+        "animation",
+        "tooltips",
+        "chat",
+        "position"
+      ]
+    },
+    "entitlements": {
+      "label": "Model Rosters",
+      "icon": "layers-3",
+      "description": "Publish the model catalogs that app user policies can select.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "entitlements",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "roster",
+        "model",
+        "provider",
+        "credential",
+        "catalog",
+        "publish"
+      ]
+    },
+    "file-manager": {
+      "label": "File Manager",
+      "icon": "folder-open",
+      "description": "Browse and manage this checkout.",
+      "group": "app-pages",
+      "runtime": "files",
+      "page": "file-manager",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": []
+    },
+    "main-panel-pages": {
+      "label": "Main Panel Pages",
+      "icon": "layout",
+      "description": "Arrange and rename the pages a visitor switches between in the main panel.",
+      "group": "app",
+      "runtime": "settings",
+      "page": "main-panel-pages",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "pages",
+        "tabs",
+        "dashboard",
+        "genui",
+        "browser",
+        "sessions",
+        "catalog",
+        "name",
+        "icon",
+        "order"
+      ]
+    },
+    "models": {
+      "label": "Model Catalog",
+      "icon": "cpu",
+      "description": "The LLM providers and models agents can use \u2014 provider connections, capability discovery, and the catalog agents inherit from.",
+      "group": "agent",
+      "runtime": "settings",
+      "page": "models",
+      "anchor": "",
+      "paPage": "agent_settings",
+      "keywords": [
+        "llm",
+        "provider",
+        "api",
+        "key",
+        "claude",
+        "openai",
+        "openrouter",
+        "ollama",
+        "default",
+        "model",
+        "token",
+        "embeddings"
+      ]
+    },
+    "overview": {
+      "label": "Overview",
+      "icon": "house",
+      "description": "Connection, server, and device details.",
+      "group": "app-pages",
+      "runtime": "overview",
+      "page": "overview",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": []
+    },
+    "storage-routing": {
+      "label": "Storage Routing",
+      "icon": "database",
+      "description": "Map each data function to its storage backend \u2014 Browser, Server or Remote.",
+      "group": "data",
+      "runtime": "settings",
+      "page": "storage-routing",
+      "anchor": "",
+      "paPage": "data_settings",
+      "keywords": [
+        "data",
+        "database",
+        "indexeddb",
+        "sqlite",
+        "postgres",
+        "byod",
+        "routing",
+        "backends"
+      ]
+    },
+    "templates-prompts": {
+      "label": "Templates and prompts",
+      "icon": "file-text",
+      "description": "The global system prompt and the on-disk agent prompt templates new agents are built from.",
+      "group": "agent",
+      "runtime": "settings",
+      "page": "templates-prompts",
+      "anchor": "",
+      "paPage": "agent_settings",
+      "keywords": [
+        "global",
+        "system",
+        "prompt",
+        "template",
+        "seed",
+        "reseed",
+        "agent",
+        "tone"
+      ]
+    },
+    "usage": {
+      "label": "Usage Data",
+      "icon": "chart-no-axes-combined",
+      "description": "Review accounts, activity, and credits.",
+      "group": "app-pages",
+      "runtime": "users",
+      "page": "usage",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": []
+    },
+    "user-policies": {
+      "label": "User Policies",
+      "icon": "shield-check",
+      "description": "Control app access and experience-tier capabilities, credit budgets, anonymous allowances, and global safety ceilings.",
+      "group": "agent",
+      "runtime": "settings",
+      "page": "user-policies",
+      "anchor": "",
+      "paPage": "app_settings",
+      "keywords": [
+        "users",
+        "policy",
+        "access",
+        "anonymous",
+        "guest",
+        "tiers",
+        "entitlements",
+        "quota",
+        "credits",
+        "limits"
+      ]
+    }
+  }
+}

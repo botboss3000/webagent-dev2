@@ -1,0 +1,23 @@
+{
+  "id": "microsoft",
+  "display_name": "Microsoft",
+  "status": "stable",
+  "brand_color": "#ffffff",
+  "text_color": "#1f1f1f",
+  "border": true,
+  "icon": "microsoft",
+  "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+  "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
+  "scopes": ["openid", "email", "profile"],
+  "scope_sep": " ",
+  "authorize_extra": { "response_mode": "query", "prompt": "select_account" },
+  "profile_map": { "external_id": "sub", "email": "email", "name": "name", "avatar": "picture" },
+  "credential_fields": [
+    { "key": "client_id", "label": "Application (client) ID", "secret": false, "tip": "In the Azure Portal → App registrations → your app → Overview, copy the \"Application (client) ID\"." },
+    { "key": "client_secret", "label": "Client Secret Value", "secret": true, "tip": "In your Azure app → Certificates & secrets → New client secret. Copy the secret's Value (not its Secret ID) right away — the Value is hidden once you leave the page." }
+  ],
+  "requires": ["Azure App Registration: Application (client) ID + a Client Secret"],
+  "setup_url": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+  "setup_hint": "Register an app (supported account types: any Microsoft account), add the exact Redirect URI below as a \"Web\" platform redirect, then create a client secret and paste its Value."
+}

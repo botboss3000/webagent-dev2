@@ -1,0 +1,14 @@
+{
+  "display_name": "Diagnostics Logs",
+  "kind": "ability",
+  "icon": "activity",
+  "color": "#bb9af7",
+  "description": "Background flight recorder that captures server warnings, errors, tracebacks, run outcomes and tool metrics for after-the-fact diagnosis. Logs self-prune (row + age caps) to keep storage bounded. All knobs are adjustable in app-settings.json — defaults in brackets: diagnostics_enabled [true], diagnostics_ring_size [4000 — in-memory live-feed records], diagnostics_retention_rows [200000 — max rows kept in logs.db], diagnostics_retention_hours [168 = 7 days — max age of durable rows], diagnostics_persist_level [info — minimum level written to logs.db], diagnostics_file_logging [true — per-source text files], diagnostics_log_dir [logs], diagnostics_log_max_bytes [5000000 = 5 MB — rotation size], diagnostics_log_backups [3 — rotated files kept per category]. Changes apply after a restart.",
+  "simple": true,
+  "app_function": true,
+  "default_enabled": true,
+  "status": "stable",
+  "order": 2,
+  "tools": [],
+  "_note": "App function, not an agent ability. Distinct from the agent-facing 'diagnostics' read ability. Its runtime is app/agent/diagnostics.py, whose recorder ANDs its enabled flag with app_function_enabled('diagnostics_recorder') at construction. Descriptor-only by design."
+}

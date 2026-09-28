@@ -1,0 +1,10 @@
+{
+  "id": "splash-page",
+  "label": "Welcome",
+  "icon": "sparkles",
+  "order": 0,
+  "entry": "ui/splash/splash-page/js/splash-page.js",
+  "start": "startSplash",
+  "css": ["splash-page.css"],
+  "html": "splash-page.html"
+}

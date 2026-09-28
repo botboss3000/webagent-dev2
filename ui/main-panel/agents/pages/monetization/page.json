@@ -1,0 +1,8 @@
+{
+  "id": "monetization",
+  "order": 70,
+  "iconName": "credit-card",
+  "title": "Monetization",
+  "description": "Set up billing and pricing for the agent.",
+  "entry": "./page.js"
+}

@@ -1,0 +1,17 @@
+{
+  "display_name": "Shopify",
+  "kind": "oauth",
+  "icon": "shopping-cart",
+  "color": "#e0af68",
+  "description": "Shopify storefront, product, inventory, and order management.",
+  "note": "Free API — connect a Shopify app installed on the store.",
+  "simple": false,
+  "placeholder": false,
+  "tools": [
+    "shopify_list_products",
+    "shopify_get_product",
+    "shopify_create_product",
+    "shopify_update_variant_inventory"
+  ],
+  "order": 1
+}

@@ -1,0 +1,8 @@
+{
+  "id": "config",
+  "order": 20,
+  "iconName": "settings",
+  "title": "Config",
+  "description": "Configure the selected agent (itself a JSON-driven directory of topic pages).",
+  "entry": "./page.js"
+}

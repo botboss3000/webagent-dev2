@@ -1,0 +1,21 @@
+{
+  "display_name": "Square",
+  "kind": "ability",
+  "icon": "square",
+  "color": "#e0af68",
+  "description": "Query a Square catalog and orders and create hosted payment links.",
+  "note": "Connect with a scoped Square access token and location ID.",
+  "simple": false,
+  "placeholder": false,
+  "tools": ["square_list_catalog", "square_get_inventory", "square_search_orders", "square_create_payment_link"],
+  "order": 4,
+  "credentials": {
+    "scope": "agent",
+    "requires": ["access_token", "location_id"],
+    "fields": [
+      {"key": "environment", "label": "Environment", "type": "select", "options": ["sandbox", "live"], "default": "sandbox"},
+      {"key": "access_token", "label": "Access token", "type": "password", "secret": true, "placeholder": "Square access token"},
+      {"key": "location_id", "label": "Location ID", "type": "text", "placeholder": "Square location ID"}
+    ]
+  }
+}

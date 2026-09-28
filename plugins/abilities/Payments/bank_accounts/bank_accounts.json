@@ -1,0 +1,12 @@
+{
+  "display_name": "Bank Accounts",
+  "kind": "placeholder",
+  "icon": "landmark",
+  "color": "#9ece6a",
+  "description": "Connect bank accounts via aggregator.",
+  "note": "Via an aggregator (e.g. Plaid) — usage-based pricing.",
+  "simple": false,
+  "placeholder": true,
+  "tools": [],
+  "order": 4
+}

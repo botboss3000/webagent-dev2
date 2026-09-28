@@ -1,0 +1,13 @@
+{
+  "id": "update",
+  "label": "Update",
+  "icon": "cloud-download",
+  "order": 100,
+  "html": "panel.html",
+  "mount": "#files-update-main",
+  "entry": "ui/admin-tools/update/update.js",
+  "start": "startView",
+  "stop": "stopView",
+  "css": ["update.css"],
+  "router": "server.py"
+}

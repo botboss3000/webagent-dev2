@@ -1,0 +1,16 @@
+{
+  "display_name": "Multi-Device Control",
+  "kind": "ability",
+  "icon": "monitor-smartphone",
+  "color": "#7aa2f7",
+  "description": "Hand a task to one of the user's other devices to run with its own local tools.",
+  "note": "Requires the devices to share one database. On a single instance there are no other devices to target.",
+  "simple": true,
+  "placeholder": false,
+  "order": 1,
+  "tools": ["list_my_devices", "run_on_device"],
+  "tool_metadata": {
+    "list_my_devices": {"stages": ["execute_tools"], "destructive": false},
+    "run_on_device": {"stages": ["execute_tools"], "destructive": true}
+  }
+}

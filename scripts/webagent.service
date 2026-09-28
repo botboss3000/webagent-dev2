@@ -1,0 +1,34 @@
+[Unit]
+Description=WebAgent FastAPI server
+After=network.target
+
+[Service]
+Type=simple
+# Edit these for your VM layout
+User=webagent
+Group=webagent
+WorkingDirectory=/opt/webagent
+EnvironmentFile=/opt/webagent/.env
+# Use the project's venv. Adjust path if you use uv/poetry/system Python.
+ExecStart=/opt/webagent/.venv/bin/uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --ws wsproto \
+    --timeout-keep-alive 300 \
+    --proxy-headers
+
+# Critical: auto-relaunch when /api/v1/restart exits the process
+Restart=always
+RestartSec=1
+
+# Capture stdout/stderr into journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=webagent
+
+# Hardening (optional, comment out if it blocks something you need)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

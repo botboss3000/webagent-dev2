@@ -1,0 +1,13 @@
+{
+  "id": "wiki",
+  "required_backend_capability": "page:wiki",
+  "label": "Wiki",
+  "icon": "book-open",
+  "order": 7,
+  "html": "wiki.html",
+  "mount": "#tab-wiki",
+  "entry": "ui/main-panel/wiki/js/wiki.js",
+  "start": "startWiki",
+  "stop": "stopWiki",
+  "css": ["wiki.css"]
+}

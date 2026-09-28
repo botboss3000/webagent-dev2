@@ -1,0 +1,232 @@
+<template data-slot="#settings-page-slot-design">
+<div class="settings-page" id="settings-page-design" data-pa-page="app_settings" hidden>
+<div class="ac-category-group" data-pa-area="design">
+    <div class="ac-category-summary" class="ac-cursor-default">
+      <i data-lucide="palette" class="lucide-icon" class="ac-ico-16 ac-fg-accent"></i>
+      <span class="ac-category-title">Design</span>
+      <!-- Quick LIVE theme switch (Light · Dark · System) — same per-browser
+           toggle as the user-menu dropdown, surfaced here so you can flip the
+           active theme while editing the two palettes below. Reuses the shared
+           `.theme-option` buttons so highlight stays synced with the dropdown;
+           wired in app-settings.js (_initThemeSwitch) via user-panel.js setTheme.
+           SISTER-CONTROL of the #user-dropdown theme-toggle-group in index.html. -->
+      <div class="ac-theme-switch" role="group" aria-label="Theme">
+        <button class="theme-option" data-theme="light" title="Light" aria-label="Light theme">
+          <i data-lucide="sun" class="lucide-icon" class="ac-ico-14"></i>
+        </button>
+        <button class="theme-option" data-theme="dark" title="Dark" aria-label="Dark theme">
+          <i data-lucide="moon" class="lucide-icon" class="ac-ico-14"></i>
+        </button>
+        <button class="theme-option" data-theme="system" title="System" aria-label="Follow system theme">
+          <i data-lucide="monitor" class="lucide-icon" class="ac-ico-14"></i>
+        </button>
+      </div>
+    </div>
+    <div class="ac-category-body">
+      <!-- ONE UNIFIED TABLE — the Startup/Boot config rows and the Appearance
+           theme rows live in a SINGLE `.ac-list` (#ac-design-list) so the whole
+           Design category reads as one continuous table, not split subsections.
+           STANDARD CONFIG ROWS — every setting is a flush `.ac-ability-row`
+           (icon + name + one-line description) with its control in a right-
+           aligned `.ac-config-control` slot: a `.conn-toggle` switch (the same
+           switch the ability tables use) for on/off settings, or an inline
+           `.ac-input.ac-config-sel` dropdown for a choice. No expandable bodies
+           here — the controls are simple enough to sit inline, so the whole
+           group reads as one uniform table (matches Appearance's border/font
+           rows below). Welcome screen saves app-wide (server,
+           via POST /admin/settings/app); Boot animation + Mobile boot save per
+           browser (localStorage). All four are wired in the sibling
+           app-settings.js — element ids unchanged. -->
+      <div class="ac-list" id="ac-design-list">
+
+        <!-- ── Appearance rows (theme palette · background · fonts & borders) ──
+             Appearance comes FIRST in the table; the Startup & Boot rows follow
+             below. Same `.ac-list` table — no separate container.
+             The whole app's look is two INDEPENDENT palettes (dark + light), shown
+             as two EXPANDABLE ability-rows (Light + Dark) that expand to reveal that
+             theme's one-click presets, the animated background, and the full palette
+             of colour swatches — injected by app-settings.js (_buildThemeCard) into
+             the row's .ac-ability-body. The three static rows after them are the
+             theme-independent knobs (border thickness + the two fonts), select +
+             green auto-save check on the right. Every control auto-saves per theme to
+             app settings, previews live in the admin's own window, and applies
+             app-wide for every visitor via the public /api/v1/auth/ui-config:
+               • palette + border + fonts → ui/shared/js/appearance.js
+               • background                → ui/background/_engine/manager.js
+             Border thickness applies to BOTH themes (Off = no borders). Extra
+             theme-independent knobs (roundness, shadow depth, UI scale, reduce
+             motion, cursor glow) are JSON-ONLY — edit data/config/app-settings.json. -->
+        <div class="ac-row" id="ac-theme-row-light" data-theme="light">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="sun" class="lucide-icon" class="ac-ico-18"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Light mode</div>
+              <div class="ac-ability-desc">Preset themes, the animated background and the full colour palette for light mode.</div>
+            </div>
+          </div>
+          <div class="ac-ability-body" id="ac-theme-body-light"></div>
+        </div>
+        <div class="ac-row" id="ac-theme-row-dark" data-theme="dark">
+          <div class="ac-ability-row">
+            <span class="ac-row-chevron ac-row-chevron--left"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <span class="ac-ability-icon"><i data-lucide="moon" class="lucide-icon" class="ac-ico-18"></i></span>
+            <div class="ac-ability-label">
+              <div class="ac-ability-name">Dark mode</div>
+              <div class="ac-ability-desc">Preset themes, the animated background and the full colour palette for dark mode.</div>
+            </div>
+          </div>
+          <div class="ac-ability-body" id="ac-theme-body-dark"></div>
+        </div>
+        <!-- Allow per-user themes — app-WIDE setting saved server-side
+             (allow_user_appearance in app-settings.json). When on, every signed-in user gets a
+             "My appearance" editor on their account page whose choices layer on
+             top of the theme above. Wired in app-settings.js (_initAllowUserAppearance);
+             state loaded in _loadAppSettings. -->
+        <div class="ac-ability-row" id="ac-allow-user-appearance-row">
+          <span class="ac-ability-icon"><i data-lucide="user-pen" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Allow per-user themes</div>
+            <div class="ac-ability-desc">Let each signed-in person set their own colours, background and fonts from their account page. Their choices layer on top of the theme above — anything they don't change still follows it. Off hides the editor and ignores any saved personal themes.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-allow-user-appearance" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+        <div class="ac-ability-row ac-row-static" id="ac-border-row">
+          <span class="ac-ability-icon"><i data-lucide="square-dashed" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Border thickness</div>
+            <div class="ac-ability-desc">Outline weight for cards, tables and dividers across both themes. Off removes every border.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-border-width" class="ac-input ac-config-sel">
+              <option value="0">Off — no borders</option>
+              <option value="1px">Thin</option>
+              <option value="2px">Medium</option>
+              <option value="3px">Thick</option>
+            </select>
+          </span>
+        </div>
+        <div class="ac-ability-row ac-row-static" id="ac-font-sans-row">
+          <span class="ac-ability-icon"><i data-lucide="type" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">App font</div>
+            <div class="ac-ability-desc">Typeface for all interface text, in both light and dark.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-font-sans" class="ac-input ac-config-sel">
+              <option value="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Inter (default)</option>
+              <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">System</option>
+              <option value="'Trebuchet MS', 'Segoe UI', Verdana, sans-serif">Rounded</option>
+              <option value="Georgia, 'Times New Roman', serif">Serif</option>
+            </select>
+          </span>
+        </div>
+        <div class="ac-ability-row ac-row-static" id="ac-font-mono-row">
+          <span class="ac-ability-icon"><i data-lucide="code" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Code font</div>
+            <div class="ac-ability-desc">Monospace typeface for code blocks, the terminal and logs.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-font-mono" class="ac-input ac-config-sel">
+              <option value="'JetBrains Mono', 'Fira Code', Menlo, ui-monospace, monospace">JetBrains Mono (default)</option>
+              <option value="ui-monospace, Menlo, Consolas, monospace">System mono</option>
+              <option value="'Courier New', Courier, monospace">Courier</option>
+            </select>
+          </span>
+        </div>
+
+        <!-- ── Startup & Boot rows (below Appearance, same table) ──
+             STANDARD CONFIG ROWS — each is a flush `.ac-ability-row` with its
+             control in a right-aligned `.ac-config-control` slot: a `.conn-toggle`
+             switch for on/off, or an inline `.ac-input.ac-config-sel` dropdown for a
+             choice. Welcome screen saves app-wide (server, via POST
+             /admin/settings/app); Boot animation + Mobile boot save per browser
+             (localStorage). All are wired in the sibling app-settings.js —
+             element ids unchanged. -->
+        <div class="ac-ability-row" id="ac-boot-splash-row">
+          <span class="ac-ability-icon"><i data-lucide="sparkles" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Welcome landing page</div>
+            <div class="ac-ability-desc">Show a public welcome page at your web address — new visitors see it first and click Enter to reach the app (the installed app opens straight to the workspace). Off: the app loads directly at the front door. Each person can still skip it for themselves from the page or their account.</div>
+          </div>
+          <span class="ac-config-control">
+            <label class="conn-toggle-wrap ac-ability-toggle-wrap">
+              <input type="checkbox" id="ac-boot-splash-enabled" class="conn-toggle">
+              <span class="conn-toggle-track"></span>
+            </label>
+          </span>
+        </div>
+        <div class="ac-ability-row" id="ac-boot-anim-row">
+          <span class="ac-ability-icon"><i data-lucide="play" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Boot animation</div>
+            <div class="ac-ability-desc">How the chat shrinks and the saved page appears when the app first loads. Saved per browser; applied on the next reload.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-boot-animation" class="ac-input ac-config-sel">
+              <option value="chat-slide-right">Chat slides right</option>
+              <option value="page-slide-in">Page slides in</option>
+              <option value="crossfade">Crossfade</option>
+            </select>
+          </span>
+        </div>
+        <!-- ── Chat panel layout rows (same Design table) ──
+             Two app-WIDE appearance keys saved via the merge-friendly POST
+             /admin/settings/app and served to every visitor through
+             /api/v1/auth/ui-config:
+               • Chat position    → injected as a #stage flex rule by appearance.js
+                                    (right = default; left reverses the desktop split)
+               • Chat at startup  → seeds the first-visit desktop default (read at
+                                    boot by index.html __chatVisibilityDefault); once
+                                    a visitor toggles the chat their own choice wins.
+               • Chat panel width → responsive desktop default in px or %; a user's
+                                    dragged browser-local pixel width still wins.
+             Wired in the sibling app-settings.js (_wireChatLayout); values loaded
+             in _loadAppearance. -->
+        <div class="ac-ability-row ac-row-static" id="ac-chat-position-row">
+          <span class="ac-ability-icon"><i data-lucide="panel-right" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Chat position</div>
+            <div class="ac-ability-desc">Which side the chat panel sits on, beside the main panel. Applies app-wide on wider screens.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-chat-position" class="ac-input ac-config-sel">
+              <option value="right">Right (default)</option>
+              <option value="left">Left</option>
+            </select>
+          </span>
+        </div>
+        <div class="ac-ability-row ac-row-static" id="ac-chat-panel-width-row">
+          <span class="ac-ability-icon"><i data-lucide="panel-right" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Chat panel width</div>
+            <div class="ac-ability-desc">Desktop default width in pixels or page percentage, for example 420px or 35%. A person who drags the divider keeps their own saved width.</div>
+          </div>
+          <span class="ac-config-control">
+            <input id="ac-chat-panel-width" class="ac-input" type="text" inputmode="decimal" pattern="(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:px|%)" title="Use a positive width in px or %, for example 420px or 35%." aria-label="Chat panel width" autocomplete="off">
+          </span>
+        </div>
+        <div class="ac-ability-row ac-row-static" id="ac-chat-default-visible-row">
+          <span class="ac-ability-icon"><i data-lucide="message-square" class="lucide-icon" class="ac-ico-18"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Chat at startup</div>
+            <div class="ac-ability-desc">Whether the chat panel is open the first time someone visits. Each person can still show or hide it themselves afterwards.</div>
+          </div>
+          <span class="ac-config-control">
+            <select id="ac-chat-default-visible" class="ac-input ac-config-sel">
+              <option value="visible">Visible (default)</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</template>

@@ -1,0 +1,4 @@
+{
+  "kind": "agent-config-topic",
+  "entry": "./page.js"
+}

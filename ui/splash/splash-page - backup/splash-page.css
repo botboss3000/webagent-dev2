@@ -1,0 +1,590 @@
+/* ============================================================================
+   Splash / Welcome screen — drop-in overlay plugin
+   ----------------------------------------------------------------------------
+   A first-run, full-screen welcome page shown over the whole app. Everything is
+   scoped under #splash-root so nothing leaks into the app. All colour comes from
+   the design-system tokens (var(--brand), var(--bg-*), rgba(var(--brand-rgb),a))
+   so it is correct in BOTH dark and light mode with no hard-coded brand hex.
+   Re-skinning the app re-skins this page too.
+
+   Self-contained: delete the ui/splash-page/ folder and this stylesheet, its
+   markup, its script and its assets all go together.
+   ========================================================================== */
+
+/* ── Root overlay ─────────────────────────────────────────────────────────── */
+#splash-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;            /* above the entire app */
+  font-family: var(--font-sans);
+  color: var(--fg-1);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  --sp-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+#splash-root.is-ready { opacity: 1; }
+#splash-root.is-leaving { opacity: 0; pointer-events: none; }
+
+/* The scroll container Lenis drives (kept off window so app scroll is untouched) */
+.splash-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.splash-scroll::-webkit-scrollbar { width: 10px; }
+.splash-scroll::-webkit-scrollbar-thumb {
+  background: rgba(var(--brand-rgb), 0.35);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.splash-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Background: opaque base + brand gradient mesh + drifting orbs ─────────── */
+.splash-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60vw 60vw at 12% -8%, rgba(var(--brand-rgb), 0.20), transparent 60%),
+    radial-gradient(55vw 55vw at 102% 12%, rgba(var(--purple-rgb), 0.18), transparent 58%),
+    radial-gradient(70vw 70vw at 80% 108%, rgba(var(--brand-rgb), 0.12), transparent 60%),
+    var(--bg-0);
+}
+.splash-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.5;
+  will-change: transform;
+  animation: sp-drift 26s ease-in-out infinite alternate;
+}
+.splash-orb.o1 { width: 42vw; height: 42vw; left: -8vw; top: 4vh;
+  background: radial-gradient(circle at 30% 30%, rgba(var(--brand-rgb), 0.55), transparent 70%); }
+.splash-orb.o2 { width: 36vw; height: 36vw; right: -6vw; top: 22vh;
+  background: radial-gradient(circle at 60% 40%, rgba(var(--purple-rgb), 0.5), transparent 70%);
+  animation-duration: 32s; }
+.splash-orb.o3 { width: 48vw; height: 48vw; left: 24vw; bottom: -16vh;
+  background: radial-gradient(circle at 50% 50%, rgba(var(--brand-rgb), 0.4), transparent 72%);
+  animation-duration: 38s; }
+@keyframes sp-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(4vw, -3vh, 0) scale(1.12); }
+}
+/* faint top/bottom vignette so text always reads */
+.splash-bg::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(var(--shadow-rgb), 0.25), transparent 18%, transparent 78%, rgba(var(--shadow-rgb), 0.3));
+}
+body.light-mode .splash-bg::after {
+  background: linear-gradient(180deg, rgba(var(--ink-rgb), 0.0), transparent 70%, rgba(var(--shadow-rgb), 0.08));
+}
+
+/* ── Top bar (sticky, glassy) ─────────────────────────────────────────────── */
+.splash-topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px clamp(20px, 4vw, 56px);
+  transition: background 0.4s ease, backdrop-filter 0.4s ease, border-color 0.4s ease;
+  border-bottom: 1px solid transparent;
+}
+.splash-topbar.is-stuck {
+  background: rgba(var(--shadow-rgb), 0.28);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-bottom-color: var(--border-soft);
+}
+body.light-mode .splash-topbar.is-stuck {
+  background: rgba(var(--ink-rgb), 0.55);
+}
+.splash-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--fg-1);
+}
+.splash-brand .sp-mark {
+  display: grid;
+  place-items: center;
+  width: 34px; height: 34px;
+  border-radius: var(--r-lg);
+  color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.12);
+  border: 1px solid rgba(var(--brand-rgb), 0.3);
+  box-shadow: inset 0 0 18px rgba(var(--brand-rgb), 0.15);
+}
+.splash-brand .sp-mark svg { width: 20px; height: 20px; }
+.splash-brand b { color: var(--brand); font-weight: 800; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.sp-btn {
+  --mxp: 0px; --myp: 0px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14.5px;
+  line-height: 1;
+  padding: 13px 22px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transform: translate3d(var(--mxp), var(--myp), 0);
+  transition: transform 0.25s var(--sp-ease), box-shadow 0.3s ease,
+              background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+.sp-btn svg { width: 17px; height: 17px; }
+.sp-btn .sp-arrow { transition: transform 0.3s var(--sp-ease); }
+.sp-btn:hover .sp-arrow { transform: translateX(4px); }
+
+.sp-btn-primary {
+  color: var(--bg-0);
+  background: linear-gradient(135deg, var(--brand-strong), var(--brand));
+  box-shadow: var(--shadow-glow);
+}
+.sp-btn-primary:hover {
+  box-shadow: 0 0 0 1px rgba(var(--brand-rgb), 0.4),
+              0 18px 44px -10px rgba(var(--brand-rgb), 0.6);
+}
+body.light-mode .sp-btn-primary { color: #fff; }
+
+.sp-btn-ghost {
+  color: var(--fg-1);
+  background: rgba(var(--ink-rgb), 0.06);
+  border-color: var(--border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.sp-btn-ghost:hover {
+  border-color: rgba(var(--brand-rgb), 0.55);
+  background: rgba(var(--brand-rgb), 0.1);
+  color: var(--brand-strong);
+}
+.sp-btn-lg { padding: 17px 30px; font-size: 16px; }
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+.splash-section { position: relative; z-index: 1; }
+.splash-hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 120px clamp(20px, 5vw, 40px) 80px;
+}
+.sp-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brand);
+  padding: 7px 15px;
+  border-radius: var(--r-pill);
+  background: rgba(var(--brand-rgb), 0.1);
+  border: 1px solid rgba(var(--brand-rgb), 0.28);
+  margin-bottom: 28px;
+}
+.sp-eyebrow svg { width: 15px; height: 15px; }
+.splash-hero h1 {
+  margin: 0;
+  font-size: clamp(2.6rem, 8vw, 6.2rem);
+  line-height: 0.98;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  max-width: 16ch;
+}
+.splash-hero h1 .sp-grad {
+  background: linear-gradient(110deg, var(--brand-strong), var(--purple));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* background-clip:text paints the gradient only inside the element's box, and
+     this heading's line-height (<1) makes that box SHORTER than the glyphs — so
+     the descender tails (the 'g' in "agents") fall outside the painted area and
+     read as cut off. The .sp-line overflow-room trick above can't help: there are
+     no descender pixels to clip, the gradient simply isn't drawn on them. Extend
+     the paint box down past the deepest descender, then cancel the height gain so
+     line spacing is unchanged. (0.18em ≫ the ~0.06em the tail actually pokes out.) */
+  padding-bottom: 0.18em;
+  margin-bottom: -0.18em;
+}
+.splash-hero .sp-lede {
+  margin: 30px auto 0;
+  max-width: 52ch;
+  font-size: clamp(1rem, 1.9vw, 1.3rem);
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+.sp-hero-actions {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 42px;
+}
+
+/* line-wipe reveal primitive.
+   The clip box (overflow:hidden) masks the slide-up. Because display headings
+   run a tight line-height (<1), glyph descenders (g/y/p tails) sit BELOW the
+   line box and would be clipped by that overflow — so pad the clip box at the
+   bottom to give descenders room, then pull the following line back up by the
+   same amount so line spacing is unchanged. The inner span starts fully below
+   the (now taller) box. Keep this room here so no caller has to re-fix it.
+   The room is GENEROUS on purpose (0.34em ≈ deepest descender at heavy weights
+   plus headroom for fallback fonts whose 'g'/'y' tails run deeper than Inter),
+   because the negative margin cancels it — extra room costs nothing visually. */
+.sp-line {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.34em;
+  margin-bottom: -0.34em;
+}
+.sp-line > span {
+  display: block;
+  transform: translateY(130%);
+  transition: transform 0.9s var(--sp-ease);
+}
+.is-in .sp-line > span { transform: translateY(0); }
+.is-in .sp-line:nth-child(2) > span { transition-delay: 0.08s; }
+.is-in .sp-line:nth-child(3) > span { transition-delay: 0.16s; }
+
+/* generic fade-up reveal */
+[data-reveal] .sp-fade {
+  opacity: 0;
+  transform: translateY(26px);
+  transition: opacity 0.8s ease, transform 0.8s var(--sp-ease);
+}
+[data-reveal].is-in .sp-fade { opacity: 1; transform: none; }
+[data-reveal].is-in .sp-fade.d1 { transition-delay: 0.12s; }
+[data-reveal].is-in .sp-fade.d2 { transition-delay: 0.22s; }
+[data-reveal].is-in .sp-fade.d3 { transition-delay: 0.32s; }
+[data-reveal].is-in .sp-fade.d4 { transition-delay: 0.42s; }
+
+/* scroll cue marquee */
+.sp-scrollcue {
+  position: absolute;
+  bottom: 30px; left: 0; right: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  opacity: 0.55;
+}
+.sp-scrollcue .sp-track {
+  display: inline-flex;
+  gap: 24px;
+  white-space: nowrap;
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  animation: sp-marquee 18s linear infinite;
+}
+.sp-scrollcue .sp-track span::after { content: "·"; margin-left: 24px; color: var(--brand); }
+@keyframes sp-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ── Feature sections ─────────────────────────────────────────────────────── */
+.splash-feature {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: clamp(32px, 6vw, 90px);
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: clamp(70px, 12vh, 150px) clamp(22px, 5vw, 48px);
+}
+.splash-feature.is-right .sf-copy { order: 2; }
+.sf-index {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  color: var(--brand);
+  opacity: 0.8;
+}
+.sf-copy h2 {
+  margin: 14px 0 0;
+  font-size: clamp(1.9rem, 4vw, 3.1rem);
+  line-height: 1.04;
+  font-weight: 800;
+  letter-spacing: -0.028em;
+}
+.sf-copy h2 em { font-style: normal; color: var(--brand); }
+.sf-copy p {
+  margin: 20px 0 0;
+  font-size: clamp(1rem, 1.4vw, 1.12rem);
+  line-height: 1.6;
+  color: var(--fg-2);
+  max-width: 46ch;
+}
+.sf-list { list-style: none; margin: 26px 0 0; padding: 0; display: grid; gap: 13px; }
+.sf-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  font-size: 0.97rem;
+  color: var(--fg-1);
+}
+.sf-list li .sp-tick {
+  flex: none;
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.16);
+}
+.sf-list li .sp-tick svg { width: 13px; height: 13px; }
+
+/* media frame — parallax + 3D tilt */
+.sf-media { perspective: 1200px; }
+.sf-frame {
+  --rx: 0deg; --ry: 0deg; --py: 0px;
+  position: relative;
+  border-radius: var(--r-2xl);
+  overflow: hidden;
+  border: var(--border-width) solid var(--border-strong);
+  background:
+    linear-gradient(135deg, rgba(var(--brand-rgb), 0.16), rgba(var(--purple-rgb), 0.1)),
+    var(--bg-elev);
+  box-shadow: var(--shadow-xl), 0 40px 80px -30px rgba(var(--brand-rgb), 0.35);
+  transform: translateY(var(--py)) rotateX(var(--rx)) rotateY(var(--ry));
+  transform-style: preserve-3d;
+  transition: transform 0.2s ease-out, box-shadow 0.4s ease;
+  aspect-ratio: 16 / 10;
+}
+.sf-frame::before {            /* window chrome dots */
+  content: "";
+  position: absolute; top: 13px; left: 16px;
+  width: 44px; height: 8px;
+  border-radius: var(--r-pill);
+  background:
+    radial-gradient(circle 4px at 4px 4px, rgba(var(--danger-rgb), 0.9) 60%, transparent 62%),
+    radial-gradient(circle 4px at 20px 4px, rgba(var(--warning-rgb), 0.9) 60%, transparent 62%),
+    radial-gradient(circle 4px at 36px 4px, rgba(var(--success-rgb), 0.9) 60%, transparent 62%);
+  z-index: 3;
+  opacity: 0.85;
+}
+.sf-frame::after {            /* moving sheen */
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(var(--ink-rgb), 0.12) 48%, transparent 60%);
+  transform: translateX(-120%);
+  transition: transform 0.9s var(--sp-ease);
+  z-index: 4; pointer-events: none;
+}
+.sf-frame:hover::after { transform: translateX(120%); }
+.sf-frame img {
+  position: absolute;
+  inset: 26px 0 0 0;
+  width: 100%;
+  height: calc(100% - 26px);
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+.sf-frame.is-empty img { opacity: 0; }   /* graceful: gradient shows if image missing */
+.sf-frame .sf-empty-label {
+  position: absolute; inset: 26px 0 0 0;
+  display: none;
+  place-items: center;
+  font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg-3);
+}
+.sf-frame.is-empty .sf-empty-label { display: grid; }
+
+/* ── Pinned showcase (signature scroll cross-fade) ────────────────────────── */
+.splash-pin { position: relative; height: 320vh; }   /* tall scroll track */
+.splash-pin .sp-pin-inner {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+  padding: 0 clamp(22px, 5vw, 48px);
+  overflow: hidden;
+}
+.sp-pin-head { text-align: center; max-width: 40ch; }
+.sp-pin-head h2 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.6vw, 2.8rem);
+  font-weight: 800;
+  letter-spacing: -0.028em;
+}
+.sp-pin-head p { margin: 12px 0 0; color: var(--fg-2); font-size: 1.05rem; }
+.sp-pin-stage {
+  position: relative;
+  width: min(900px, 88vw);
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-3xl);
+  border: var(--border-width) solid var(--border-strong);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-modal), 0 50px 90px -30px rgba(var(--brand-rgb), 0.4);
+  overflow: hidden;
+}
+.sp-pin-stage .sp-pin-shot {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: top center;
+  opacity: 0;
+  transform: scale(1.06);
+  transition: opacity 0.6s ease, transform 0.9s var(--sp-ease);
+}
+.sp-pin-stage .sp-pin-shot.is-active { opacity: 1; transform: scale(1); }
+.sp-pin-dots { display: flex; gap: 9px; }
+.sp-pin-dots i {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--fg-4);
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+.sp-pin-dots i.is-active { background: var(--brand); transform: scale(1.45); }
+
+/* ── Card grid ────────────────────────────────────────────────────────────── */
+.splash-grid-wrap { max-width: 1180px; margin: 0 auto; padding: clamp(70px, 10vh, 130px) clamp(22px, 5vw, 48px); }
+.splash-grid-wrap .sp-section-head { text-align: center; margin-bottom: 54px; }
+.sp-section-head h2 {
+  margin: 0; font-size: clamp(1.8rem, 4vw, 3rem);
+  font-weight: 800; letter-spacing: -0.028em;
+}
+.sp-section-head p { margin: 14px auto 0; max-width: 46ch; color: var(--fg-2); font-size: 1.05rem; }
+.splash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+.sp-card {
+  --mx: 50%; --my: 50%;
+  position: relative;
+  padding: 26px 24px;
+  border-radius: var(--r-2xl);
+  background: rgba(var(--ink-rgb), 0.04);
+  border: var(--border-width) solid var(--border);
+  overflow: hidden;
+  transition: transform 0.35s var(--sp-ease), border-color 0.35s ease, box-shadow 0.35s ease;
+}
+body.light-mode .sp-card { background: rgba(var(--ink-rgb), 0.5); }
+.sp-card::before {            /* cursor spotlight */
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(220px circle at var(--mx) var(--my), rgba(var(--brand-rgb), 0.16), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+.sp-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(var(--brand-rgb), 0.5);
+  box-shadow: var(--shadow-lg);
+}
+.sp-card:hover::before { opacity: 1; }
+.sp-card .sp-card-ic {
+  display: grid; place-items: center;
+  width: 44px; height: 44px;
+  border-radius: var(--r-lg);
+  color: var(--brand);
+  background: rgba(var(--brand-rgb), 0.12);
+  border: 1px solid rgba(var(--brand-rgb), 0.25);
+  margin-bottom: 18px;
+}
+.sp-card .sp-card-ic svg { width: 22px; height: 22px; }
+.sp-card h3 { margin: 0 0 8px; font-size: 1.12rem; font-weight: 700; letter-spacing: -0.01em; }
+.sp-card p { margin: 0; font-size: 0.95rem; line-height: 1.55; color: var(--fg-2); }
+
+/* ── Final CTA ────────────────────────────────────────────────────────────── */
+.splash-cta {
+  text-align: center;
+  padding: clamp(80px, 14vh, 170px) clamp(22px, 5vw, 48px) 70px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.splash-cta h2 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.6rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+.splash-cta h2 .sp-grad {
+  background: linear-gradient(110deg, var(--brand-strong), var(--purple));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  /* same descender clip as the hero (the 'y' in "you are") — extend the gradient
+     paint box past the tail, neutral margin keeps the inline flow unchanged. */
+  padding-bottom: 0.18em;
+  margin-bottom: -0.18em;
+}
+.splash-cta p { margin: 20px auto 0; max-width: 48ch; color: var(--fg-2); font-size: 1.1rem; }
+.splash-cta .sp-cta-btn { margin-top: 38px; }
+.sp-dontshow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  font-size: 0.92rem;
+  color: var(--fg-2);
+  cursor: pointer;
+  user-select: none;
+}
+.sp-dontshow input { position: absolute; opacity: 0; pointer-events: none; }
+.sp-dontshow .sp-box {
+  display: grid; place-items: center;
+  width: 20px; height: 20px;
+  border-radius: var(--r-sm);
+  border: var(--border-width) solid var(--border-strong);
+  background: rgba(var(--ink-rgb), 0.05);
+  color: var(--bg-0);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.sp-dontshow .sp-box svg { width: 13px; height: 13px; opacity: 0; transform: scale(0.6); transition: opacity 0.2s ease, transform 0.2s ease; }
+.sp-dontshow input:checked + .sp-box { background: var(--brand); border-color: var(--brand); }
+.sp-dontshow input:checked + .sp-box svg { opacity: 1; transform: scale(1); }
+body.light-mode .sp-dontshow .sp-box { color: #fff; }
+.sp-dontshow input:focus-visible + .sp-box { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.splash-foot {
+  text-align: center;
+  padding: 26px;
+  font-size: 13px;
+  color: var(--fg-3);
+  border-top: var(--border-width) solid var(--border-soft);
+}
+.splash-foot b { color: var(--brand); }
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .splash-feature { grid-template-columns: 1fr; gap: 30px; }
+  .splash-feature.is-right .sf-copy { order: 0; }
+  .sf-media { order: -1; }
+  .splash-pin { height: 280vh; }
+}
+
+/* ── Reduced motion: everything instant, no inertia/parallax/tilt ─────────── */
+@media (prefers-reduced-motion: reduce) {
+  #splash-root, #splash-root * {
+    animation: none !important;
+    transition: opacity 0.2s ease !important;
+  }
+  .sp-line > span,
+  [data-reveal] .sp-fade { transform: none !important; opacity: 1 !important; }
+  .sf-frame { transform: none !important; }
+  .sp-pin-stage .sp-pin-shot.is-active { transform: none !important; }
+}

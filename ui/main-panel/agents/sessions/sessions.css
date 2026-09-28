@@ -1,0 +1,1736 @@
+/* ── Sessions Panel ──────────────────────────────────────────────── */
+/* ---- HARMONY: toolbar action styles (sessions-tb-btn, sessions-tb-trash,
+       sessions-tb-restore) mirror the agents page's
+       agents-tb-* rules in ui/main-panel/agents/agents.css. Keep them in sync. */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / var(--accent) / var(--accent-hover) for
+   the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+#sessions-section {
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+  position: relative;
+  /* Single source of truth for the page's side inset — the one edge margin from
+     the panel edge to content. Feeds BOTH the toolbar and the scrollable table
+     area so they share the exact same margin and can never drift apart (same
+     approach as the agents page's --agents-content-inset and App Settings'
+     --ac-content-inset). Zero = edge-to-edge layout with no side gutter. */
+  --sessions-content-inset: 0;
+}
+/* Mobile / narrow screens: the side inset is 0 everywhere (flat edge-to-edge
+   layout), so no override is needed. 800px matches the app-wide breakpoint. */
+
+/* ── Selection column visibility ─────────────────────────────────────
+   The footer checkbox button is the sole show/hide control. Its state drives
+   --sticky-offset so the sticky selection column slides cleanly out of view. */
+#sessions-table thead th.col-check,
+#sessions-table tbody td.col-check {
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: translateX(var(--sticky-offset, 0px));
+}
+
+/* ── Table-heading controls ─────────────────────────────────────────
+   The former toolbar is now only a hidden staging node. Its stateful controls
+   are moved into the generated Title heading by sessions-page.js, placing the
+   table directly below the agent tabs. */
+#sessions-toolbar[hidden] { display: none !important; }
+
+.sessions-title-heading {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+#sessions-heading {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+/* Title skeleton — during a loading transition the heading element ITSELF
+   becomes a shimmer bar (see _setHeadingSkeleton in sessions-page.js), so the
+   previous view's label ("All Agent's Sessions") can never sit above freshly
+   painted skeleton rows. The animated fill is the shared .sk-shimmer. */
+#sessions-heading.sessions-heading-skeleton {
+  display: inline-block;
+  width: 118px;
+  height: 11px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  color: transparent;
+  text-indent: -9999px;
+  overflow: hidden;
+}
+.sessions-header-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.sessions-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.sessions-header-icon:hover,
+.sessions-header-icon.active,
+.sessions-header-icon[aria-expanded="true"] {
+  background: rgba(var(--ink-rgb), 0.09);
+  color: var(--fg-1);
+}
+.sessions-header-popover {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 40;
+  padding: 6px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  box-shadow: 0 12px 30px rgba(var(--shadow-rgb), 0.24);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.sessions-header-popover[hidden] { display: none !important; }
+.sessions-search-popover {
+  display: flex;
+  align-items: center;
+  min-width: 276px;
+}
+.sessions-search-popover .sessions-search-mode-btn { margin-left: 0; }
+.sessions-search-popover .sessions-search-wrap { margin-left: 6px; }
+.sessions-more-popover {
+  display: flex;
+  flex-direction: column;
+  width: 210px;
+}
+.sessions-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+.sessions-popover-item:hover { background: rgba(var(--ink-rgb), 0.08); color: var(--fg-1); }
+.sessions-popover-item:disabled { opacity: .45; cursor: default; }
+.sessions-popover-item > span { flex: 1; }
+.sessions-view-check { margin-left: auto; opacity: 0; color: var(--accent); }
+.sessions-view-option.active { color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+.sessions-view-option.active .sessions-view-check { opacity: 1; }
+.sessions-popover-separator { height: 1px; margin: 5px 3px; background: var(--border); }
+.sessions-selection-actions { display: flex; flex-direction: column; }
+.sessions-selection-actions[hidden] { display: none !important; }
+.sessions-selection-actions .sessions-tb-trash {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+}
+.sessions-selection-actions .sessions-tb-restore { border: 0; }
+#sessions-table thead th.col-title { overflow: visible; }
+
+/* ── Legacy toolbar control primitives (also used inside the popovers) ── */
+#sessions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--sessions-content-inset) 12px;
+  flex-shrink: 0;
+}
+#sessions-toolbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* ── View switcher button (Sessions · All · Bin) ────────────────────
+   ONE glass-chip button styled identically to the search-mode chip
+   (T+C/Title) in the same toolbar — the two share every selector below
+   (.sessions-search-mode-btn, .sessions-view-btn). Clicking cycles the
+   active view filter: Sessions → All → Bin → Sessions. All/Bin show the
+   accent "alternate mode" tint (.alt-mode), mirroring how the search chip
+   tints in Title mode. */
+.sessions-view-btn {
+  margin-left: 0;   /* the search chip's 3px offset isn't wanted at the row start */
+}
+#sessions-toolbar-left .sessions-view-btn {
+  margin-left: 0;   /* beats the shared .sessions-search-mode-btn margin-left below */
+}
+.sessions-toolbar-spinner {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--fg-3);
+  animation: lucide-spin 1s linear infinite;
+}
+
+#sessions-toolbar-actions {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.sessions-tb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  font-size: 12px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: rgba(var(--ink-rgb),0.04); color: var(--fg-1); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.sessions-tb-btn:hover { background: rgba(var(--ink-rgb),0.12); border-color: rgba(var(--ink-rgb),0.30); }
+.sessions-tb-btn:disabled { opacity: 0.4; cursor: default; }
+.sessions-tb-btn > * { pointer-events: none; }
+.sessions-tb-restore { color: var(--success); border-color: rgba(var(--success-rgb),0.30); }
+.sessions-tb-restore:hover { background: rgba(var(--success-rgb),0.14); border-color: rgba(var(--success-rgb),0.5); }
+
+/* Header refresh button — icon-only square (same footprint as the trash
+   button), sitting directly left of the search bar. */
+.sessions-tb-refresh {
+  width: 28px; height: 28px; padding: 0;
+  justify-content: center;
+}
+.sessions-tb-refresh i,
+.sessions-tb-refresh svg { flex-shrink: 0; }
+
+/* Header search trigger — icon-only square (same footprint as refresh),
+   the collapsed stand-in for the T+C/Title chip + search field. Clicking
+   it expands #sessions-search-area (see the "Collapsible search" block
+   further down). */
+.sessions-tb-search {
+  width: 28px; height: 28px; padding: 0;
+  justify-content: center;
+}
+.sessions-tb-search i,
+.sessions-tb-search svg { flex-shrink: 0; }
+
+/* Header trash button — reuses the shared trash→hazard→spin states */
+.sessions-tb-trash {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid rgba(var(--danger-rgb),0.22); border-radius: 7px;
+  background: rgba(var(--danger-rgb),0.05); color: var(--danger); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.sessions-tb-trash:hover { background: rgba(var(--danger-rgb),0.14); border-color: rgba(var(--danger-rgb),0.45); }
+.sessions-tb-trash.warning { color: var(--warning); border-color: rgba(var(--warning-rgb),0.5); background: rgba(var(--warning-rgb),0.12); }
+.sessions-tb-trash.warning:hover { background: rgba(var(--warning-rgb),0.2); color: var(--warning); }
+.sessions-tb-trash:disabled { opacity: 0.4; cursor: default; }
+.sessions-tb-trash > * { pointer-events: none; }
+
+/* Light mode: only the neutral text tone differs (fg-1 → fg-2); the accent /
+   status hues + neutral tints now come from the per-theme tokens above, so no
+   per-colour override is needed here. */
+body.light-mode .sessions-tb-btn { color: var(--fg-2); border-color: rgba(var(--ink-rgb),0.18); }
+
+/* ── Scrollable table area ── */
+#sessions-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 0 var(--sessions-content-inset) 16px 0;
+  touch-action: pan-x pinch-zoom;
+}
+#sessions-table-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+#sessions-table-wrap::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, var(--bg-tint)); border-radius: 3px; }
+#sessions-table-wrap::-webkit-scrollbar-track { background: transparent; }
+
+/* The footer reuses the chat session dropdown's .session-manage-row chrome.
+   Only its flex role is local to the Sessions page shell. */
+.sessions-footer {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/* SESSION-FOOTER-FILTERS — with the footer's own search field gone (see the sync
+   note on the footer markup in agents.html / sessions.html) the row is a single
+   LEFT-aligned control strip: the mode + FLAG chips, every icon button and the
+   storage meter all sit together on the left, nothing grows, and no item is
+   pushed to the right edge. The meter is still the row's LAST (right-most)
+   child, but it keeps its base margin-left:8px instead of margin-left:auto, so
+   it stays in the left cluster and the slack falls to its right. Scoped to
+   .sessions-footer so the chat session dropdown — which shares this chrome —
+   keeps its own centred search field. */
+.sessions-footer .session-manage-search { flex: 0 0 auto; }
+.sessions-footer .session-manage-actions { margin-left: 0; }
+
+/* Footer actions reuse the chat dropdown's controls; these rules only provide
+   text-button spacing and the disabled state needed by the table selection flow. */
+.sessions-footer .session-row-kebab,
+.sessions-footer .session-manage-delete-selected {
+  gap: 4px;
+}
+.sessions-footer .session-manage-delete-selected:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.sessions-footer-action-label { white-space: nowrap; }
+.sessions-footer-gutter-toggle {
+  flex: 0 0 auto;
+  margin: 0 8px 0 2px;
+}
+/* SESSION-GUTTER-CHECK-ALL — the select-all/clear-all twin of the gutter
+   toggle, sitting beside it in the footer's left cluster. JS paints it visible
+   only while the selection column is open ([hidden] is set/removed by
+   _syncToggleButtons), and its pressed tint reuses the shared
+   .session-manage-checkbox-toggle[data-state="on"] rule. The [hidden] rule is
+   restated here because the base control sets display:inline-flex, which would
+   otherwise beat the UA stylesheet's [hidden] display:none. */
+.sessions-footer-check-all {
+  flex: 0 0 auto;
+  margin: 0 8px 0 0;
+}
+.sessions-footer-check-all[hidden] { display: none; }
+
+/* ── Session storage meter (footer) ───────────────────────────────────
+   SESSION-STORAGE-METER: session storage used vs available, painted from
+   GET /api/v1/db/storage-usage by _renderStorageUsage() in
+   sessions/js/sessions-page.js. The visible meter is the bar alone — the
+   exact figures live in the group's title / aria-label so the footer stays
+   quiet. The markup ships in ALL THREE footer copies (agents.html
+   #sessions-footer + #agents-sessions-footer-dock, and sessions/sessions.html),
+   so these rules key off the shared [data-sessions-footer-storage] hook —
+   never a single footer id. The meter is the row's TRAILING element in every
+   copy — keep it last — but no longer lands on the right edge: it sits in the
+   footer's LEFT-aligned control strip (see SESSION-FOOTER-FILTERS above) via
+   its base margin-left:8px, so the slack falls to its right. Its right margin
+   stays 0 for that reason — the 8px separation sits on the left, against the
+   actions. */
+.session-manage-storage {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin-left: 8px;
+  margin-right: 0;
+  color: var(--fg-3);
+  cursor: default;
+}
+.session-storage-track {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-tint-2);
+  overflow: hidden;
+}
+.session-storage-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width .25s ease, background-color .2s ease;
+}
+/* Pressure states mirror the quota worker's intentions: tool outputs first,
+   then whole session families — amber warns, red means cleanup is near. */
+.session-manage-storage[data-storage-state="warn"] .session-storage-fill { background: var(--warning); }
+.session-manage-storage[data-storage-state="full"] .session-storage-fill { background: var(--danger); }
+.session-manage-storage[data-storage-state="unknown"] .session-storage-track { opacity: .45; }
+/* Narrow footers: the search field keeps priority, so the meter drops to its
+   shortest useful read. 800px is the app-wide breakpoint; 700px narrows the
+   bar once the row is genuinely tight. */
+@media (max-width: 700px) {
+  .session-storage-track { width: 30px; }
+}
+/* The Agents tab docks this same footer inside its own narrow column (~416px at
+   desktop), where the 700px viewport breakpoint above never fires even though
+   the row is genuinely tight — the search field and its FLAG chip were
+   overflowing onto the meter. Give the docked / agent-filtered footer the same
+   compact treatment, keyed off the shared storage hook like the rest of this
+   block rather than a single footer id. */
+#tab-agents.agents-sessions-footer-docked [data-sessions-footer-storage] .session-storage-track,
+#tab-agents:has(#sessions-section.sessions-agent-filtered) [data-sessions-footer-storage] .session-storage-track {
+  width: 30px;
+}
+
+#sessions-table-inner {
+  min-width: 850px;
+  padding-left: var(--sessions-content-inset);
+}
+/* When the selection column is hidden, collapse the inner's left inset too,
+   so the translated sticky cells slide fully out of view. */
+#sessions-table-wrap.gutter-closed #sessions-table-inner {
+  padding-left: 0;
+}
+
+/* ── Table ── */
+#sessions-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 12px;
+  table-layout: fixed;
+}
+#sessions-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-1);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-4);
+  padding: 8px 6px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: var(--border-width) solid var(--border);
+  user-select: none;
+}
+#sessions-table thead th.col-cost { text-align: right; }
+#sessions-table thead th.col-tokens-in,
+#sessions-table thead th.col-tokens-out,
+#sessions-table thead th.col-msgs,
+#sessions-table thead th.col-duration {
+  text-align: right;
+}
+#sessions-table thead th.col-check {
+  width: 32px;
+  min-width: 32px;
+  padding: 8px 0 8px 6px;
+}
+/* Gutter closed: collapse the checkbox column so the Title column
+   slides to the left edge. The cells still exist (sticky, translated
+   left out of view) but no longer consume table width. */
+#sessions-table-wrap.gutter-closed #sessions-table .col-check {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+#sessions-table thead th.col-updated {
+  width: 100px;
+  text-align: right;
+}
+
+/* ── Resizable column handle ── */
+.col-resizable {
+  position: relative;
+}
+.col-resizable::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  background: transparent;
+}
+.col-resizable:last-child::after { display: none; }
+.col-resizable.resizing::after {
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+/* ── Sortable column headers ── */
+.col-sortable {
+  cursor: pointer;
+}
+.col-sortable:hover {
+  color: var(--fg-1);
+}
+.col-sortable .sort-arrow {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 9px;
+  opacity: 0.4;
+  vertical-align: middle;
+  line-height: 1;
+}
+.col-sortable.sorted-asc .sort-arrow,
+.col-sortable.sorted-desc .sort-arrow {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ── Checkbox cell ── */
+.sessions-check-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;   /* 26 + 2px border = 28px — fits the fixed 30px row */
+  height: 26px;
+  /* Center the box vertically in the cell: default baseline alignment
+     would sit it at the top of the 30px line box. */
+  vertical-align: middle;
+  border-radius: 5px;
+  border: var(--border-width) solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: background .1s, border-color .1s;
+  color: transparent;
+}
+.sessions-check-cell:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.sessions-check-cell.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Child rows (spawns / optimizer Closer) — indented under their parent ── */
+#sessions-table tbody tr.sessions-child-row td.col-title {
+  color: var(--fg-3);
+}
+.sess-child-role-icon {
+  color: var(--accent);
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+/* Title cells use the chat session dropdown's .session-row primitives.
+   These rules are table-only geometry overrides; typography, truncation,
+   icons, pin state, and time styling all come from the shared component. */
+.sess-title-row {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  cursor: inherit;
+}
+
+/* DESIGN SYNC CONTRACT: Recency → More is flush in the table and dropdown.
+   Cancel the shared row's 6px gap here. The group holds the More kebab alone —
+   Delete session lives in the ⋯ panel on both surfaces — so there is no second
+   trailing control left to space against. */
+.sess-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: -6px;
+}
+/* DESIGN SYNC CONTRACT: The shared .session-row-title-label owns ellipsis
+   truncation for both the dropdown and this table. Keep this outer container
+   unclipped so the label, not the title cell edge, renders the visible "…". */
+.sess-title-text {
+  min-width: 0;
+  overflow: visible;
+}
+
+/* Every avatar uses the same 18px slot, so title content starts on one grid.
+   A pinned session gets only a yellow warning halo; the underlying glyph
+   retains its normal icon color and transparent background. */
+.sess-title-agent-slot {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  margin-left: 4px;
+  border-radius: 50%;
+}
+/* The shared helper can emit larger intrinsic SVG attributes; keep the title
+   column's visible avatar aligned with the dropdown at 18px. */
+.sess-title-agent-slot svg,
+.sess-title-agent-slot i {
+  width: 18px !important;
+  height: 18px !important;
+}
+.sess-title-agent-warning {
+  box-shadow: 0 0 0 1.25px var(--warning),
+              0 0 4px rgba(var(--warning-rgb), 0.55);
+}
+/* Parent-session avatars are the family disclosure control. Reset the button
+   chrome so the icon keeps the shared title-row geometry. */
+.sess-title-agent-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.sess-title-agent-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sess-title-agent-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Live time-ago group: table-specific click-to-flash behavior around the
+   dropdown's shared .session-row-time primitive. */
+/* DESIGN SYNC CONTRACT: Title → Recency is flush in the table and dropdown.
+   Cancel the base row's 6px gap; Recency's shared cell itself has 0px sides. */
+.sess-title-time-wrap {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: -6px;
+}
+/* Needs input is paired with its counter using the same 4px gap as the chat
+   dropdown. The title row supplies a 6px flex gap, so retain 4px net spacing
+   by cancelling only 2px when the counter follows the chip. */
+.session-needs-input-chip + .sess-title-time-wrap {
+  margin-left: -2px;
+}
+.sess-title-time[data-ts] { cursor: pointer; }
+.sess-title-time[data-ts]:hover {
+  color: var(--fg-2);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+/* Time-ago tint mirrors the row's run-status chip (same palette, same class
+   names): complete=green, running=blue, interrupted/error=red,
+   stopped/needs_manual_resume=amber; unmapped or missing status falls back to
+   the neutral base grey above. */
+.sess-title-time-wrap.complete .sess-title-time           { color: var(--success); }
+.sess-title-time-wrap.running .sess-title-time            { color: var(--accent); }
+/* Needs input deliberately overrides completed-green so its counter matches the flag. */
+.sess-title-time-wrap.needs-input-counter .sess-title-time { color: var(--warning); }
+/* …and the counter takes the FLAG's OWN tone, so the chip and its counter read as
+   ONE flag: a complete unread counts down green, an error red, and the grey
+   read-but-unfinished flag keeps a grey counter instead of the amber default.
+   sessions-page.js sets flag-tone-* on this wrapper from the resolved flag
+   (sessionAttentionFlag / flagTone); placed after the run-status tints above so
+   the flag wins. SYNC: the chat dropdown's counter
+   (app1.css `.session-needs-input-counter.flag-tone-*`) uses the same palette. */
+.sess-title-time-wrap.needs-input-counter.flag-tone-success .sess-title-time { color: var(--success); }
+.sess-title-time-wrap.needs-input-counter.flag-tone-danger .sess-title-time  { color: var(--danger); }
+.sess-title-time-wrap.needs-input-counter.flag-tone-info .sess-title-time    { color: var(--accent); }
+.sess-title-time-wrap.needs-input-counter.flag-tone-neutral .sess-title-time { color: var(--fg-3); }
+/* A stopped run (kill switch / user stop) shows its "time since stopped" in
+   neutral grey — stopped is not an error. True errors stay red. */
+.sess-title-time-wrap.interrupted .sess-title-time        { color: var(--fg-4); }
+.sess-title-time-wrap.error .sess-title-time              { color: var(--danger); }
+.sess-title-time-wrap.stopped .sess-title-time,
+.sess-title-time-wrap.needs_manual_resume .sess-title-time { color: var(--warning); }
+/* Read awareness, mirroring the chat session dropdown's .session-status-read: a
+   finished run the user has already read keeps its completion timestamp but
+   drops the green/error attention hue for a muted grey. Placed after the tint
+   rules so it wins the cascade; the needs-input amber counter above is never
+   muted (readCls is suppressed when the run needs input). */
+.sess-title-time-wrap.read .sess-title-time { color: var(--fg-4); }
+/* Transient status label — hidden by default, flashed in for 1s on click
+   ("Completed 8m ago"). Slides in beside the time, then collapses away. */
+.sess-title-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  white-space: nowrap;
+  opacity: 0;
+  max-width: 0;
+  overflow: hidden;
+  transition: opacity .12s ease, max-width .15s ease, margin-right .15s ease;
+}
+.sess-title-status.flash {
+  opacity: 1;
+  max-width: 160px;
+  margin-right: 6px;
+}
+#sessions-table tbody tr {
+  height: 30px;   /* fixed row height — identical in compact and full mode (see td rule below) */
+  transition: background 0.1s;
+  cursor: pointer;   /* whole row is clickable → switches chat to this session */
+}
+/* Bin view: rows aren't loadable, so don't advertise them as clickable. */
+#sessions-table.bin-view tbody tr {
+  cursor: default;
+}
+/* Merged 'both' view: binned rows aren't loadable either — same rule applied
+   per-row (by data-origin) so live rows keep the pointer affordance. */
+#sessions-table tbody tr[data-origin="bin"] {
+  cursor: default;
+}
+/* Cross-catalog search results — rows surfaced from the OTHER catalog
+   (sessions ↔ recycle bin) while a search is active. Dimmed so it's clear they
+   live outside the current view. Bin-origin rows are never loadable; live rows
+   found while in the bin view are (keep the pointer affordance). */
+#sessions-table tbody tr.sess-cross-row td {
+  color: var(--fg-3);
+}
+#sessions-table tbody tr.sess-cross-row[data-origin="bin"] {
+  cursor: default;
+}
+#sessions-table.bin-view tbody tr.sess-cross-row[data-origin="active"] {
+  cursor: pointer;
+}
+/* Origin badge — which catalog a cross-catalog search row came from. */
+.sess-origin-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  height: 24px;    /* 24 + 2px border = 26px — fits the fixed 30px row */
+  padding: 0 7px;
+  line-height: 1;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--fg-3);
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+}
+.sess-origin-badge.bin {
+  color: var(--danger);
+  background: var(--danger-soft, rgba(var(--danger-rgb), 0.08));
+  border-color: var(--danger-mid, rgba(var(--danger-rgb), 0.25));
+  cursor: pointer;   /* clickable — two-click restore (see _onBinChipClick) */
+  transition: color .12s ease, background .12s ease, border-color .12s ease;
+}
+.sess-origin-badge.bin:hover {
+  color: var(--danger);
+  background: var(--danger-mid, rgba(var(--danger-rgb), 0.25));
+  border-color: var(--danger);
+}
+/* Armed ("Restore?") — restoring is a positive action, so the chip shifts to
+   the brand accent until the second click performs the restore. */
+.sess-origin-badge.bin.armed,
+.sess-origin-badge.bin.armed:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+/* Message-count chip — small round pill showing the number of matching
+   messages. Just the number, no label, no snippet. */
+.sess-msg-count-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  min-width: 24px;
+  height: 24px;    /* 24 + 2px border = 26px — fits the fixed 30px row */
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: var(--border-width) solid var(--accent-mid);
+}
+/* bin badge renders as "bin" in mixed case — keep the existing pill but trim
+   the horizontal space now that the label is shorter. */
+.sess-origin-badge.bin {
+  min-width: auto;
+  padding: 0 8px;
+}
+#sessions-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+#sessions-table tbody tr.selected {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+/* Current chat session remains softly highlighted, without a separate left
+   marker so it reads as a normal selected row rather than a navigation rail. */
+#sessions-table tbody tr.active-chat {
+  background: rgba(var(--brand-rgb), 0.08);
+}
+#sessions-table tbody tr.active-chat:hover {
+  background: rgba(var(--brand-rgb), 0.14);
+}
+#sessions-table tbody tr.active-chat td.col-check {
+  background: var(--bg-0);   /* keep opaque — see the hover rule above */
+  box-shadow: inset 0 0 0 999px rgba(var(--brand-rgb), 0.08);
+}
+#sessions-table tbody tr.active-chat:hover td.col-check {
+  background: var(--bg-0);
+  box-shadow: inset 0 0 0 999px rgba(var(--brand-rgb), 0.14);
+}
+#sessions-table tbody td {
+  /* Fixed 30px rows: the height lives on the cell (the tr height is a hint;
+     the row grows to the tallest cell). Vertical padding is removed and the
+     line-height matches the row so text fills it exactly. Every badge/pill
+     inside is constrained to ≤28px (see below) so no content can stretch a
+     row — compact and full mode render identical row heights. */
+  height: 30px;
+  padding: 0 6px;
+  line-height: 30px;
+  /* Match the Title column's standard table typography across every data column. */
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fg-2);
+  border-bottom: var(--border-width) solid var(--border-soft);
+  white-space: nowrap;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sessions-table tbody td.col-cost,
+#sessions-table tbody td.col-tokens-in,
+#sessions-table tbody td.col-tokens-out,
+#sessions-table tbody td.col-msgs,
+#sessions-table tbody td.col-duration,
+#sessions-table tbody td.col-updated {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* DESIGN SYNC CONTRACT: Title ends flush against Recency; the truncating
+   label owns the visible ellipsis rather than relying on cell padding. */
+#sessions-table tbody td.col-title {
+  max-width: 260px;
+  padding-right: 0;
+}
+#sessions-table tbody td.col-check {
+  width: 32px;
+  padding: 0;
+  line-height: 1;      /* keeps the 30px strut from pushing the box off-center vertically */
+  text-align: center;  /* centers the 26px checkbox in the 32px column (3px each side) */
+}
+
+/* ── Sticky left column (checkbox) ──
+   The checkbox column stays pinned when the table scrolls horizontally so the
+   user can always see and interact with the row checkbox. The gutter divider
+   sits at its right edge. The wrap has no left padding, so left:0 truly hits
+   the viewport edge. outline: none suppresses tr.selected's outline from
+   painting on top. */
+#sessions-table thead th.col-check {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  background: var(--bg-0);
+  border-right: 1px solid var(--border);
+  outline: none;
+}
+/* ── Table body ── */
+#sessions-table tbody td.col-check {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-0);
+  border-right: 1px solid var(--border);
+  outline: none;
+}
+/* Hover/selected state for sticky cells — the row hover can't penetrate
+   the explicit background, so we match it here. The fill MUST stay opaque:
+   these cells are sticky and sit above the scrollable columns, so a
+   translucent background would let the row text scrolling beneath show
+   through the gutter column. The tint is painted as an inset shadow over
+   the solid background — same look, no bleed. */
+#sessions-table tbody tr:hover td.col-check {
+  background: var(--bg-0);
+  box-shadow: inset 0 0 0 999px var(--accent-soft);
+}
+#sessions-table tbody tr.selected td.col-check {
+  background: var(--bg-0);
+  box-shadow: inset 0 0 0 999px var(--accent-soft);
+}
+
+/* ── Status badges ── */
+.sess-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  height: 24px;    /* 24 + 2px border = 26px — fits the fixed 30px row */
+  padding: 0 8px;
+  line-height: 1;
+  border-radius: 10px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+/* Semantic status hues from the palette (the per-theme -rgb triples adapt the
+   colour to light/dark automatically, so no body.light-mode override needed).
+   "stopped" + "needs_manual_resume" both read as warning — the badge label text
+   distinguishes them. "unknown" is a neutral fill. */
+.sess-status.complete {
+  background: rgba(var(--success-rgb),0.12);
+  color: var(--success);
+  border: 1px solid rgba(var(--success-rgb),0.25);
+}
+.sess-status.running {
+  background: rgba(var(--brand-rgb),0.12);
+  color: var(--accent);
+  border: 1px solid rgba(var(--brand-rgb),0.25);
+}
+/* A run stopped involuntarily is 'resuming' until the revival ladder gives up
+   (then it reads 'failed'). In-progress, so it shares the running hue rather
+   than the danger hue it would otherwise inherit as a stopped/error run. */
+.sess-status.resuming {
+  background: rgba(var(--brand-rgb),0.12);
+  color: var(--accent);
+  border: 1px solid rgba(var(--brand-rgb),0.25);
+}
+.sess-status.interrupted,
+.sess-status.error {
+  background: rgba(var(--danger-rgb),0.12);
+  color: var(--danger);
+  border: 1px solid rgba(var(--danger-rgb),0.25);
+}
+.sess-status.stopped,
+.sess-status.needs_manual_resume {
+  background: rgba(var(--warning-rgb),0.12);
+  color: var(--warning);
+  border: 1px solid rgba(var(--warning-rgb),0.25);
+}
+.sess-status.unknown {
+  background: rgba(var(--ink-rgb),0.08);
+  color: var(--fg-3);
+  border: 1px solid rgba(var(--ink-rgb),0.18);
+}
+
+/* ── Link badges (genui / browser page) ── */
+.col-links { width: 70px; }
+#sessions-table tbody td.col-links {
+  white-space: nowrap;
+  overflow: visible;
+}
+.sess-link-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;   /* 26 + 2px border = 28px — fits the fixed 30px row */
+  height: 26px;
+  border-radius: 6px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.sess-link-badge.genui {
+  color: var(--purple);
+  background: rgba(var(--purple-rgb), 0.12);
+  border: var(--border-width) solid rgba(var(--purple-rgb), 0.28);
+}
+.sess-link-badge.browser {
+  color: var(--accent);
+  background: rgba(var(--brand-rgb), 0.12);
+  border: var(--border-width) solid rgba(var(--brand-rgb), 0.28);
+}
+.sess-link-badge i { pointer-events: none; }
+.sess-link-none { color: var(--fg-4); }
+
+/* ── Agent badge in table ── */
+.sess-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-2);
+  height: 24px;    /* 24 + 2px border = 26px — fits the fixed 30px row */
+  padding: 0 8px;
+  line-height: 1;
+  background: var(--bg-2);
+  border-radius: 6px;
+  border: var(--border-width) solid var(--border-soft);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sess-agent-badge i,
+.sess-agent-badge svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* ── Empty state ── */
+.sessions-empty {
+  display: flex;
+  /* This is a sibling of the min-width table inner, so its width comes from
+     the visible scrollport instead of the table's wider data canvas. Keep it
+     pinned to that scrollport if the table has been scrolled horizontally. */
+  position: sticky;
+  left: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+.sessions-empty-icon {
+  color: var(--fg-4);
+  opacity: 0.3;
+  margin-bottom: 12px;
+}
+.sessions-empty-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-3);
+  margin-bottom: 4px;
+}
+.sessions-empty-hint {
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+/* ── Per-row loading (after a row is clicked, while its chat loads) ──
+   The clicked row gets a moving shimmer + a spinner in its title cell so it's
+   obvious which session is opening. Cleared once loadSessionChat resolves. */
+@keyframes sessions-row-shimmer {
+  0%   { background-position: -450px 0; }
+  100% { background-position:  450px 0; }
+}
+#sessions-table tbody tr.sessions-row-loading {
+  cursor: progress;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    var(--accent-soft) 0%,
+    rgba(var(--brand-rgb), 0.20) 50%,
+    var(--accent-soft) 100%);
+  background-size: 450px 100%;
+  animation: sessions-row-shimmer 1.1s linear infinite;
+}
+#sessions-table tbody tr.sessions-row-loading td {
+  color: var(--fg-4);
+}
+/* Loading keeps the title-cell content in place. The spinner occupies only
+   the existing 18px agent-avatar slot, preventing the title from flashing out. */
+.sess-title-agent-loading {
+  color: var(--accent);
+}
+.sess-row-spinner {
+  display: block;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid rgba(var(--brand-rgb), 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: lucide-spin 0.7s linear infinite;
+}
+
+/* ── Skeleton rows (first-load placeholder) ──
+   Phantom shimmer rows shown while the first fetch is in flight, so the table
+   has its column shape immediately instead of a lone spinner. `.sk-shimmer`
+   (the animated fill) is shared in ui/shared/css/app3.css. */
+#sessions-table tbody tr.sessions-skeleton-row {
+  cursor: default;
+  pointer-events: none;
+}
+.sess-sk {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  max-width: 140px;
+}
+/* SESSIONS-SKELETON (breadcrumb): every content cell in a session skeleton row
+   draws ONE uniform bar at 60% of its column width — no ragged per-row widths,
+   no 140px cap. Skeleton rows are always six (see _renderSkeletonRows in
+   sessions-page.js); the loading shape must not vary between loads. */
+#sessions-table tbody tr.sessions-skeleton-row .sess-sk {
+  max-width: none;
+  width: 60%;
+}
+
+/* ── Loading state ── */
+.sessions-loading {
+  display: flex;
+  position: sticky;
+  left: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+@keyframes lucide-spin {
+  to { transform: rotate(360deg); }
+}
+.lucide-spin {
+  animation: lucide-spin 1s linear infinite;
+}
+
+/* ── Search input (toolbar) ── */
+.sessions-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-left: 6px;
+}
+.sessions-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--fg-4);
+  pointer-events: none;
+}
+.sessions-search-input {
+  width: 170px;
+  height: 28px;
+  padding: 0 26px 0 30px;   /* right padding leaves room for the clear (×) button */
+  border: var(--border-width) solid var(--border);
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04);
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  transition: border-color .12s ease, background .12s ease, width .15s ease;
+}
+.sessions-search-input::placeholder {
+  color: var(--fg-4);
+}
+.sessions-search-input:focus {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+  width: 220px;
+}
+body.light-mode .sessions-search-input {
+  color: var(--fg-2);
+  border-color: rgba(var(--ink-rgb), 0.18);
+}
+/* Clear (×) button — sits inside the field, shown by JS once there's a query. */
+.sessions-search-clear {
+  position: absolute;
+  right: 5px;
+  display: none;             /* toggled to inline-flex by JS when text is present */
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sessions-search-clear:hover {
+  color: var(--fg-1);
+  background: rgba(var(--ink-rgb), 0.08);
+}
+/* "Searching messages…" spinner inside the search field while an advanced
+   message scan is in flight (reuses the global lucide-spin keyframes). */
+.sessions-msg-scanning {
+  position: absolute;
+  right: 28px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: none;
+  pointer-events: none;
+  animation: lucide-spin 0.8s linear infinite;
+}
+.sessions-msg-scanning.on { display: block; }
+
+/* ── Collapsible search (toolbar) ────────────────────────────────────
+   The search starts ICON-ONLY from the very first paint: the trigger is
+   visible and the search-area (T+C/Title chip + field) is hidden. The
+   `search-collapsed` class ships IN THE MARKUP (agents.html / sessions.html
+   → #sessions-toolbar-actions) so the collapsed state is the static default
+   and does NOT depend on JS timing. JS re-adds it on init (idempotent),
+   removes it on trigger click to reveal the chip + field, and re-adds it on
+   a second click or Escape (clearing any active query). The explicit
+   `.search-collapsed` vs `:not(.search-collapsed)` pair below means each
+   state is decided by exactly one selector — no ambiguity during boot when
+   the class is briefly absent. */
+#sessions-toolbar-actions.search-collapsed .sessions-search-area {
+  display: none;
+}
+#sessions-toolbar-actions:not(.search-collapsed) .sessions-search-area {
+  display: flex;
+  align-items: center;
+}
+/* While the search is open the trigger keeps an accent tint so it reads as
+   the active control; it also signals "this closes the search". */
+.sessions-tb-search.active {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.40);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+/* The icon trigger is the collapsed stand-in for the field; while the search
+   is open the field replaces it (the trigger hides so only the field shows,
+   exactly like the pre-collapsible toolbar when expanded). */
+#sessions-toolbar-actions.search-collapsed .sessions-tb-search {
+  display: inline-flex;
+}
+#sessions-toolbar-actions:not(.search-collapsed) .sessions-tb-search {
+  display: none;
+}
+
+/* ── Search-mode toggle (toolbar) — single glass-chip button that switches
+     between "Title" and "T+C". The view switcher button (.sessions-view-btn)
+     shares these selectors — keep them in sync. ── */
+.sessions-search-mode-btn,
+.sessions-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 38px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 3px;
+  border: var(--border-width) solid rgba(var(--ink-rgb), 0.12);
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--fg-3);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.sessions-search-mode-btn:hover,
+.sessions-view-btn:hover {
+  background: rgba(var(--ink-rgb), 0.10);
+  border-color: rgba(var(--ink-rgb), 0.22);
+  color: var(--fg-2);
+}
+.sessions-search-mode-btn:active,
+.sessions-view-btn:active {
+  background: rgba(var(--ink-rgb), 0.14);
+  border-color: rgba(var(--ink-rgb), 0.28);
+}
+/* Alternate mode (search chip: Title; view chip: All / Bin): subtle accent
+   tint so it's clearly a different state. */
+.sessions-search-mode-btn.title-mode,
+.sessions-view-btn.alt-mode {
+  background: rgba(var(--accent-rgb), 0.10);
+  border-color: rgba(var(--accent-rgb), 0.25);
+  color: var(--accent);
+}
+.sessions-search-mode-btn.title-mode:hover,
+.sessions-view-btn.alt-mode:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.35);
+}
+body.light-mode .sessions-search-mode-btn,
+body.light-mode .sessions-view-btn {
+  background: rgba(var(--ink-rgb), 0.04);
+  border-color: rgba(var(--ink-rgb), 0.14);
+  color: var(--fg-3);
+}
+body.light-mode .sessions-search-mode-btn:hover,
+body.light-mode .sessions-view-btn:hover {
+  background: rgba(var(--ink-rgb), 0.08);
+  border-color: rgba(var(--ink-rgb), 0.22);
+  color: var(--fg-2);
+}
+body.light-mode .sessions-search-mode-btn.title-mode,
+body.light-mode .sessions-view-btn.alt-mode {
+  background: rgba(var(--accent-rgb), 0.08);
+  border-color: rgba(var(--accent-rgb), 0.22);
+  color: var(--accent);
+}
+body.light-mode .sessions-search-mode-btn.title-mode:hover,
+body.light-mode .sessions-view-btn.alt-mode:hover {
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: rgba(var(--accent-rgb), 0.32);
+}
+
+/* ── Bulk subset-select dropdown (toolbar) ── */
+.sessions-tb-select {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: var(--border-width) solid var(--border);
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb),0.04);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.sessions-tb-select:hover { background: rgba(var(--ink-rgb),0.12); border-color: rgba(var(--ink-rgb),0.30); }
+body.light-mode .sessions-tb-select { color: var(--fg-2); border-color: rgba(var(--ink-rgb),0.18); }
+
+/* Clickable Links badges — show the affordance on hover. */
+.sess-link-badge[role="button"] { cursor: pointer; transition: filter .12s ease, transform .08s ease; }
+.sess-link-badge[role="button"]:hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+/* ── Light mode overrides ── */
+body.light-mode #sessions-table thead th {
+  background: var(--bg-1);
+  border-bottom-color: var(--border);
+}
+body.light-mode #sessions-table tbody td {
+  border-bottom-color: var(--border-soft);
+}
+body.light-mode .sess-agent-badge {
+  background: var(--bg-2);
+  border-color: var(--border-soft);
+}
+
+/* ── Responsive column hiding ───────────────────────────────────────
+   Classes generated from the config's responsive.breakpoints rules.
+   Applied as col-resp-hide-{maxWidth} on <th> and <td> elements. */
+@media (max-width: 600px) {
+  .col-resp-hide-600 { display: none; }
+}
+@media (max-width: 900px) {
+  .col-resp-hide-900 { display: none; }
+}
+@media (max-width: 1100px) {
+  .col-resp-hide-1100 { display: none; }
+}
+
+/* ── Narrow title-only viewer ────────────────────────────────────────
+   When the sessions VIEW (the table wrap's visible width) is ≤500px the
+   page becomes a pure session-title viewer. The gutter handle STAYS (its
+   drag/click toggle keeps working) and the Title column is sized to fit
+   the view via --sessions-title-width — set by JS to the view width minus
+   whatever the checkbox side occupies. So showing the checkbox makes the
+   title NARROWER rather than pushing it right, and the title's right edge
+   always ends at the view's right edge.
+   Scrolling right still reveals the remaining columns; scrolling back to
+   the left edge re-fills the view with the title column.
+   !important beats both the inline config width from _buildThead and any
+   user-persisted width from _applyColWidths, so the title always fits
+   the view in narrow mode regardless of saved column sizes. */
+/* Desktop keeps an 850px table floor for horizontally scrolling data columns.
+   Narrow/mobile mode is title-only, so release that floor and size the table
+   from the actual visible scrollport instead. */
+#sessions-table-wrap.narrow #sessions-table-inner {
+  min-width: 0;
+}
+
+#sessions-table-wrap.narrow #sessions-table thead th.col-title,
+#sessions-table-wrap.narrow #sessions-table tbody td.col-title {
+  box-sizing: border-box;
+  width: var(--sessions-title-width) !important;
+  min-width: var(--sessions-title-width) !important;
+  max-width: var(--sessions-title-width) !important;
+}
+
+/* In title-only mode, the relative time belongs inside the title row alongside
+   More and Delete. Hide the separate desktop data columns so none can claim
+   the right edge of the mobile scrollport. */
+#sessions-table-wrap.narrow #sessions-table .col-status,
+#sessions-table-wrap.narrow #sessions-table .col-links,
+#sessions-table-wrap.narrow #sessions-table .col-msgs,
+#sessions-table-wrap.narrow #sessions-table .col-tokens_in,
+#sessions-table-wrap.narrow #sessions-table .col-tokens_out,
+#sessions-table-wrap.narrow #sessions-table .col-cost,
+#sessions-table-wrap.narrow #sessions-table .col-duration,
+#sessions-table-wrap.narrow #sessions-table .col-updated {
+  display: none !important;
+}
+
+/* ── Mobile mode: larger type ───────────────────────────────────────────
+   With the compact mobile navigation active (body.mobile-mode — set by
+   mobile-navigation.js when app-settings mobile_mode=true and the viewport
+   is ≤800px), the desktop-tuned 9-12px type is too small to read
+   comfortably on a phone. These overrides scale the text up across the page
+   and give rows a little more height to breathe. Scoped to body.mobile-mode
+   so a narrow desktop window (no mobile navigation) keeps desktop sizing.
+   col-check keeps line-height:1 so the 26px checkbox stays centered in the
+   taller row (matches the base rule's intent at the top of this file). */
+@media (max-width: 800px) {
+  body.mobile-mode #sessions-table { font-size: 16px; }
+  body.mobile-mode #sessions-table thead th {
+    font-size: 12px;
+    padding: 10px 6px;
+  }
+  body.mobile-mode #sessions-table thead th.col-check { padding: 10px 0 10px 6px; }
+  body.mobile-mode #sessions-table tbody td {
+    height: 40px;
+    line-height: 40px;
+    padding: 0 8px;
+  }
+  body.mobile-mode #sessions-table tbody td.col-check { line-height: 1; }
+  body.mobile-mode .col-sortable .sort-arrow { font-size: 11px; }
+  body.mobile-mode .sess-title-status { font-size: 12px; }
+  body.mobile-mode .sess-status { font-size: 12px; height: 28px; }
+  body.mobile-mode .sess-agent-badge { font-size: 13px; height: 28px; max-width: 180px; }
+  body.mobile-mode .sess-origin-badge { font-size: 12px; height: 28px; }
+  body.mobile-mode .sess-msg-count-chip { font-size: 12px; height: 28px; min-width: 28px; }
+  body.mobile-mode .sessions-tb-btn {
+    font-size: 15px;
+    height: 36px;
+    padding: 0 14px;
+  }
+  body.mobile-mode .sessions-tb-refresh,
+  body.mobile-mode .sessions-tb-search,
+  body.mobile-mode .sessions-tb-trash {
+    width: 36px;
+    height: 36px;
+  }
+  body.mobile-mode .sessions-tb-select { font-size: 15px; height: 36px; }
+  body.mobile-mode .sessions-search-mode-btn,
+  body.mobile-mode .sessions-view-btn {
+    font-size: 14px;
+    height: 36px;
+    min-width: 48px;
+    padding: 0 12px;
+  }
+  body.mobile-mode .sessions-search-input {
+    font-size: 16px;
+    height: 36px;
+    width: 200px;
+  }
+  body.mobile-mode .sessions-search-input:focus { width: 240px; }
+  body.mobile-mode .sessions-empty-text { font-size: 18px; }
+  body.mobile-mode .sessions-empty-hint { font-size: 14px; }
+  body.mobile-mode .sessions-loading { font-size: 15px; }
+}
+.sessions-loading-status {
+  display: none;
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.sessions-loading-status.active { display: inline; }
+
+/* Floating bulk-selection panel. It appears with the first checked row and
+   stays visible while the table scrolls. The header is its drag handle. */
+.sessions-selection-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 90;
+  width: 210px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: var(--border-width) solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-elev);
+  box-shadow: 0 14px 36px rgba(var(--shadow-rgb), 0.3);
+  color: var(--fg-1);
+}
+.sessions-selection-panel[hidden] { display: none !important; }
+.sessions-selection-panel.moved { transform: none; }
+.sessions-selection-panel.dragging {
+  user-select: none;
+  box-shadow: 0 18px 42px rgba(var(--shadow-rgb), 0.38);
+}
+.sessions-selection-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: var(--border-width) solid var(--border);
+  background: rgba(var(--ink-rgb), 0.04);
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: grab;
+  touch-action: none;
+}
+.sessions-selection-panel-header:active { cursor: grabbing; }
+.sessions-selection-panel-header svg {
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+.sessions-selection-panel-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding: 8px;
+}
+.sessions-selection-panel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04);
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sessions-selection-panel-btn:hover {
+  background: rgba(var(--ink-rgb), 0.1);
+  color: var(--fg-1);
+}
+.sessions-selection-panel-btn > svg {
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+#sessions-selection-panel[data-mode="binned"] { width: 276px; }
+#sessions-selection-panel #sessions-undo-btn[hidden] { display: none; }
+#sessions-selection-panel #sessions-undo-btn::after { content: 'Undo'; }
+#sessions-selection-panel #sessions-undo-btn[data-state="warning"]::after { content: 'Undo?'; }
+#sessions-selection-panel #sessions-trash-btn {
+  width: auto;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--danger-rgb), 0.28);
+  background: rgba(var(--danger-rgb), 0.07);
+}
+#sessions-selection-panel #sessions-trash-btn::after { content: 'Delete'; }
+#sessions-selection-panel #sessions-trash-btn[data-state="warning"]::after { content: 'Delete?'; }
+/* The shared control supplies the live text span while the request is in flight. */
+#sessions-selection-panel #sessions-trash-btn[data-state="deleting"]::after { content: none; }
+#sessions-selection-panel[data-mode="binned"] #sessions-trash-btn::after { content: 'Permanent delete'; }
+#sessions-selection-panel[data-mode="binned"] #sessions-trash-btn[data-state="warning"]::after { content: 'Permanent delete?'; }
+/* The binned follow-up panel is intentionally a two-action state: undo or
+   permanent deletion. Keep Clear out even during a delayed attribute repaint. */
+#sessions-selection-panel[data-mode="binned"] #sessions-clear-selection-btn { display: none !important; }
+
+/* ── Session activity chart ──────────────────────────────────────────────────
+   One vertical lane per session, mounted above #sessions-table-wrap by
+   sessions-page.js (see sessions/js/sessions-activity-chart.js). The shell
+   reuses the shared .ac-model-analytics* classes in ui/shared/css/app3.css so it
+   reads as the same chart family as the Abilities and Model pages; only the lane
+   plot below is new.
+
+   X is the shared session-list ORDER, laid out with the NEWEST on the right — the
+   same list-order the sessions table and the chat picker use — so the strip opens
+   scrolled to the newest end and scrolling left walks back in time.
+
+   Y is a SHARED time range read on a LOG scale, and the bars are CENTRE-aligned on
+   the median line: a lane's bar straddles it, half its height above and half below.
+   Equal steps of height are equal RATIOS of duration rather than equal amounts of it,
+   so a session an hour long is a tall bar on the same line rather than a tower over a
+   floor of flattened short ones — spans here run from seconds to days, and a linear
+   range collapses everything short onto that floor. The median line is the plot's only
+   reference — there is no Y axis and no gutter, so the log mapping is disclosed in the
+   module (see durationShare) rather than on an axis label.
+
+   Token use is carried by the bar's own width, and every section of a lane's span
+   is drawn: an idle section is a fixed 5px block in the lane's idle tone, and a
+   run section is that block plus its token share in the lane's run tone. Runs
+   therefore always read wider than the idle track.
+
+   The SECTION is an internal resolution, not a visible grid, and the two kinds are
+   grouped differently. Consecutive idle sections join into one solid quiet block,
+   because a quiet stretch is one thing. Consecutive run sections are each drawn as
+   their own element, held 1px clear of the run beside them, so the run's width —
+   its token share — stays countable. See SEAM_GAP / RUN_GAP / JOINT_LAP and the
+   section loop in sessions/js/sessions-activity-chart.js.
+
+   Colour carries pinned vs the rest: a pinned session draws its own tone pair (the
+   model palette's second colour and a muted relative of it, see PINNED_RUN_COLOR /
+   PINNED_IDLE_COLOR in the module) and every other lane draws the first colour's
+   pair. Within a pair the two tones are the whole vocabulary — quiet vs active.
+
+   Lanes sit at a fixed 25px pitch (one session per 25px — see PITCH in the
+   module), so how many fit on screen follows the panel's AVAILABLE WIDTH rather
+   than a fixed lane count. The strip is therefore as wide as its lanes need and
+   scrolls horizontally out to the older sessions.
+
+   That strip carries no native scrollbar: its edges spring back instead (the
+   shared applyRubberBand helper, applied in the module), and it sets
+   `overscroll-behavior-x: none` so a horizontal overscroll can never chain to the
+   browser and fire back/forward history nav.
+
+   Picking a lane is the chart's own gesture, and it reads twice over: the lane holds
+   its tint after the pointer leaves, and it grows by half about the median line so
+   it lifts off the strip — and the stats panel swaps to that lane's own figures, whose
+   "Open session" link is the one thing that leads out of the chart. A lane must never
+   paint the browser's focus ring, so the ring is switched off on :focus rather than on
+   :focus-visible alone (a lane is an SVG <g>, and the UA rings it on plain :focus).
+
+   There is deliberately no header text: the plot is the whole panel, and the
+   one-line summary lives in the family's own popover, opened from the chart
+   head's icon button. The shared .ac-model-analytics-head already right-aligns a
+   controls-only row, so this head needs no extra layout. */
+.sessions-activity {
+  /* The sessions card supplies its own outer padding, so the chart adds only the
+     gap down to the table rather than a second frame. */
+  margin: 0 0 14px;
+}
+
+/* The shared head button sets `display: inline-grid`, which outranks the UA
+   [hidden] rule, so the button must opt out explicitly when there is no summary
+   to report. (Same reason .ac-model-analytics-reset-range carries its own
+   [hidden] rule.) */
+.sessions-activity-details[hidden] { display: none; }
+
+.sessions-activity-summary { margin: 0; color: var(--fg-2); }
+
+/* The plot is just the horizontally scrolling strip. There is deliberately no Y-axis
+   gutter beside it: every lane is centred on the same median line, and its height reads
+   as a point on a log-scale profile rather than against tick values, so there are no
+   labels to place. `position: relative` anchors the stats panel, which is parked in the
+   strip's top-left corner (see .sessions-activity-tip below) and must NOT scroll with the
+   lanes. */
+.sessions-activity-plot { position: relative; display: flex; align-items: flex-start; }
+
+/* Lanes sit at a fixed 25px pitch (one session per 25px — see PITCH in the
+   module), so the strip is exactly as wide as its lanes need and the panel's
+   available width decides how many are visible. overflow-x reveals the rest.
+   A drag does NOT pick lanes — picking is a click (.sessions-activity-lane). The
+   only thing a horizontal drag could do here is pan, and `touch-action: pan-y` on
+   THIS element refuses that for the whole chart — every lane and the x-axis band
+   live inside it, and a pan is permitted in a direction only when every element
+   from the touch target up to this scroller permits it — so a touch drag can never
+   scroll the lanes out from under itself. `pan-y`, not `none`: vertical page
+   scrolling still has to work over the chart. Panning the strip sideways is the
+   WHEEL's job instead, and the wheel is unaffected by touch-action. */
+.sessions-activity-chart {
+  margin-top: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  touch-action: pan-y;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  /* No visible scrollbar: the strip's edges spring back instead (applyRubberBand
+     in the module), so the bar would only ever be a second, competing cue. */
+  scrollbar-width: none;
+  /* A horizontal overscroll must never chain out to the browser — that is what
+     triggers back/forward history nav on a trackpad swipe. `none` keeps the
+     gesture on the strip so the rubber band owns the edge. Same reasoning as the
+     wide sessions/agents tables (see agents.css). */
+  overscroll-behavior-x: none;
+}
+/* WebKit/Chromium ignore `scrollbar-width` on some builds; belt-and-braces. */
+.sessions-activity-chart::-webkit-scrollbar { display: none; height: 0; }
+.sessions-activity-svg { min-height: 210px; margin-bottom: 0; }
+
+/* A lane is the chart's one control: the whole group is a keyboard-reachable button
+   (role=button, tabindex=0 — see the module), and the pointer says so.
+
+   The focus ring is switched off on :focus — NOT on :focus-visible alone — because a
+   lane is an SVG <g>, and the UA paints its default ring (`outline: auto 5px` in the
+   near-black text colour) on plain :focus as well. Tinting only :focus-visible left a
+   black box around the lane on every mouse click, which is the one thing a chart
+   surface must never do. The keyboard cue survives losing the ring: a keyboard hit
+   still matches :focus-visible, and that is what lights the lane's own hover tint and
+   swaps its run blocks to the accent colour (the two :focus-visible rules below). A
+   POINTER pick is shown by the lane's held tint instead — see the [aria-pressed] rule
+   further down. */
+.sessions-activity-lane {
+  cursor: pointer;
+  /* The picked lane POPS by scaling about its own centre (see the [aria-pressed] rule
+     below), so that centre must be measured from the lane's OWN box rather than from
+     the SVG's view box. `fill-box` gives exactly that: every lane's box is the same
+     shape — its full-height hit column — so every lane scales about the same point,
+     the median line all the bars are centred on. */
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform .15s ease;
+  /* No touch-action here: the horizontal pan is refused ONCE for the whole chart by the
+     strip itself (see .sessions-activity-chart), which covers every lane and the x-axis
+     band alike. Picking is a plain click on the lane (see the click listener in the
+     module), so this rule stays about the lane's own appearance. */
+}
+.sessions-activity-lane:focus { outline: none; }
+
+/* Hover affordance only. A lane's visible marks are the idle track and the run
+   slices themselves, so the full-height background column stays invisible until the
+   lane is pointed at. It marks the lane's extent and clickability without ever
+   drawing a bar of its own — a permanently tinted one would compete with the idle
+   track that already shows the lane's extent. */
+.sessions-activity-lane-bg { opacity: 0; transition: opacity .15s ease; }
+.sessions-activity-lane:hover .sessions-activity-lane-bg,
+.sessions-activity-lane:focus-visible .sessions-activity-lane-bg { opacity: .12; }
+
+/* Decoration never steals the pointer — the hit rect owns hovering/clicks, and
+   the token sections sit above it so each one keeps its own hover title. The idle
+   blocks carry no title, so they stay pointer-transparent for the same reason: the
+   hit rect's lane-level tooltip must keep working across the quiet stretches. */
+.sessions-activity-lane-bg,
+.sessions-activity-idle,
+.sessions-activity-median { pointer-events: none; }
+/* The median line every bar is centred on. It replaces the floor baseline a
+   bottom-aligned chart would draw, so it is the one reference the plot carries. */
+.sessions-activity-median { stroke: var(--border-strong); stroke-width: 1; }
+/* Run blocks carry the lane's run tone as a flat fill — their intensity is not a
+   second channel, so there is no per-block opacity to transition on hover. The
+   lane's hover tint (.sessions-activity-lane-bg) is the affordance, and the focus
+   ring below swaps a run's fill instead. */
+.sessions-activity-lane:focus-visible .sessions-activity-bar { fill: var(--accent); }
+
+/* The lane the stats panel is reporting on keeps its tint on after the pointer
+   leaves, so the figures and the lane they describe stay connected. Same tone as
+   the hover tint, held instead of transient (declared after the hover rule so the
+   pick wins while also hovered). */
+.sessions-activity-lane[aria-pressed="true"] .sessions-activity-lane-bg { opacity: .16; }
+
+/* A lane grows under a real MOUSE pointer, as a small hover affordance. Gated on
+   `(hover: hover) and (pointer: fine)` — a touchscreen reports :hover as sticky after a
+   tap, which would leave a lane popped that nobody asked for. Declared BEFORE the picked
+   rule below: both selectors have equal specificity (0,2,0), so source order decides, and
+   picked-and-hovered must stay at the bigger 1.5 pop. */
+@media (hover: hover) and (pointer: fine) {
+  .sessions-activity-lane:hover { transform: scale(1.25); }
+}
+
+/* The picked lane also POPS OUT of the page: it grows HALF about its own centre,
+   so the lane the panel is describing rises off the strip instead of sitting flush in
+   it. Every lane's box is its full-height hit column, so that centre IS the median line
+   the bars are centred on and the pop grows upward and downward rather than sliding
+   sideways. The module leaves exactly this much room for it: the plot is inset
+   symmetrically (T = B = 60 in render()), so a lane at full plot height, scaled 1.5,
+   spans exactly the SVG's own view box and is never clipped — and the strip scrolls
+   with `overflow-y: hidden`, so a clipped pop would be clipped for real. */
+.sessions-activity-lane[aria-pressed="true"] { transform: scale(1.5); }
+
+/* The stats panel is the shared model-chart pinned tip (.ac-model-analytics-tip in
+   ui/shared/css/app3.css), parked in the plot's top-left corner. Its Total row carries
+   no swatch, so its two cells take the whole row instead of the swatch/label/value
+   columns a dotted row uses. */
+.sessions-activity-tip .ac-model-analytics-tip-total { grid-template-columns: minmax(0, 1fr) auto; }
+/* A session TITLE heads the focused panel, and titles can be long, so the heading is
+   held to one line and ellipsised rather than wrapping the panel taller. */
+.sessions-activity-tip .ac-model-analytics-tip-date { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The focused panel's one ACTION: a link that opens the picked session in the chat
+   panel. It sits under the figures behind the same hairline the Total row uses, so it
+   reads as the panel's footer rather than as a fifth figure.
+   
+   The pinned panel is pointer-transparent (see .ac-model-analytics-tip in
+   ui/shared/css/app3.css) so the lanes beneath it stay clickable — which means this
+   control has to re-enable the pointer for itself, or the panel would swallow its own
+   link. It is a <button>, because it performs an action rather than navigating
+   anywhere, but it is styled as a link: the panel is a readout, and this is the one
+   place it leads out of the chart. */
+.sessions-activity-tip-foot {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: var(--border-width) solid var(--border);
+}
+.sessions-activity-tip .sessions-activity-open {
+  pointer-events: auto;
+  display: inline-block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sessions-activity-tip .sessions-activity-open:hover { text-decoration-thickness: 2px; }
+.sessions-activity-tip .sessions-activity-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

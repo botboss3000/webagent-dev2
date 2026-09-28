@@ -1,0 +1,6 @@
+{
+  "id": "users-instance-tab",
+  "label": "Users",
+  "icon": "users",
+  "hidden": true
+}

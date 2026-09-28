@@ -1,0 +1,309 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Settings — Instances → "This device" → Settings (the JSON-driven config area).
+   ui/main-panel/app/settings/
+
+   Three surfaces, all driven by app-pages.json:
+     • the landing LIST (#settings-list) — grouped clickable section headings,
+     • the per-section PAGES (page partials into #settings-page-slot-*) — each
+       a stack of the standard .ac-category-group tables (styled in app3.css),
+     • the unified search/chat PILL (shared .chat-pill classes in app1.css /
+       index.css; page-assistant engine in settings/page-assistant.js).
+
+   Theme tokens only — never hard-code hex (design-system.css is the source).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Slot wrappers must not be flex items (or the parent's gap fires between all
+   ten slots and stacks phantom space above the list). Collapse them so the
+   real .settings-page elements are the flex items, like the old
+   #ac-section-slot-* wrappers. */
+#app-config-content > [id^="settings-page-slot-"] { display: contents; }
+
+/* Models scope / revision toolbar.  Kept outside the shared model table so the
+   Agent Config sister mount remains unchanged. */
+.model-scope-toolbar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+}
+.model-scope-field {
+  display: grid;
+  gap: 5px;
+  min-width: min(290px, 100%);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.model-scope-field .ac-input { width: 100%; }
+.model-scope-status {
+  align-self: center;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  font-size: 12px;
+  font-weight: 700;
+}
+.model-scope-status.is-published { color: var(--success); border-color: currentColor; }
+.model-scope-status.is-saved-draft { color: var(--accent); border-color: currentColor; }
+.model-scope-status.is-unsaved { color: var(--warning); border-color: currentColor; }
+.model-scope-status.is-error { color: var(--danger); border-color: currentColor; }
+.model-scope-hint {
+  flex: 1 0 100%;
+  color: var(--fg-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+@media (max-width: 620px) {
+  .model-scope-field { flex: 1 0 100%; }
+  .model-scope-toolbar .ac-btn { flex: 1 1 auto; }
+}
+.model-scope-actions { position: relative; }
+.model-scope-actions > summary { list-style: none; cursor: pointer; }
+.model-scope-actions > summary::-webkit-details-marker { display: none; }
+.model-scope-actions-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  min-width: 160px;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-1);
+  box-shadow: 0 12px 28px rgba(var(--ink-rgb), .18);
+}
+.model-scope-actions-menu .ac-btn { justify-content: flex-start; text-align: left; }
+.model-lifecycle-result {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-2);
+}
+.model-lifecycle-result[hidden] { display: none; }
+.model-lifecycle-result h4 { margin: 0; color: var(--fg-1); font-size: 13px; }
+.model-lifecycle-result pre { max-height: 280px; margin: 0; overflow: auto; padding: 10px; border-radius: var(--radius-md, 8px); background: var(--bg-1); color: var(--fg-2); font: 11px/1.45 var(--font-mono); white-space: pre-wrap; }
+.model-lifecycle-summary { display: flex; flex-wrap: wrap; gap: 7px; color: var(--fg-2); font-size: 12px; }
+.model-lifecycle-summary span { padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; }
+.model-lifecycle-history { display: grid; gap: 7px; }
+.model-lifecycle-history-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); color: var(--fg-2); font-size: 12px; }
+.model-credential-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--fg-3); font-size: 12px; }
+.model-credential-state.is-configured { color: var(--success); }
+.model-credential-state.is-missing { color: var(--warning); }
+
+/* ── Page chrome (topbar shown while a single page is open) ─────────────── */
+/* The three surfaces below (topbar / list / page) run edge-to-edge: the
+   Settings tab sits 10px from the panel edge via the host overrides in
+   instances.css (.inst-detail / #app-config-content margins are neutralised),
+   so no max-width cap is applied here. */
+.settings-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  /* 5px padding on either side, matching the settings-content inset so the
+     back button / title align with the section cards below. */
+  padding: 10px 5px 2px;
+  box-sizing: border-box;
+}
+.settings-topbar[hidden] { display: none !important; }
+.settings-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+  color: var(--fg-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.settings-back-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-color: var(--accent);
+}
+.settings-topbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Landing list — grouped, system-settings cards ─────────────────────── */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 0 12px;
+  box-sizing: border-box;
+}
+.settings-list[hidden] { display: none !important; }
+.settings-group {
+  --settings-icon: var(--brand);
+  --settings-icon-rgb: var(--brand-rgb);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.settings-group[data-settings-group="app"] {
+  --settings-icon: var(--purple);
+  --settings-icon-rgb: var(--purple-rgb);
+}
+.settings-group[data-settings-group="agent"] {
+  --settings-icon: var(--success);
+  --settings-icon-rgb: var(--success-rgb);
+}
+.settings-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+.settings-group-label .lucide-icon { color: var(--settings-icon); }
+.settings-group-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-2) 76%, transparent);
+  box-shadow: 0 8px 20px rgba(var(--ink-rgb), 0.05);
+}
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  min-height: 74px;
+  padding: 15px 18px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .1s ease;
+}
+.settings-item + .settings-item { border-top: 1px solid var(--border); }
+.settings-item:hover { background: rgba(var(--settings-icon-rgb), 0.09); }
+.settings-item:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--settings-icon);
+  outline-offset: -2px;
+}
+.settings-item:active { transform: translateY(1px); }
+.settings-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(var(--settings-icon-rgb), 0.15);
+  color: var(--settings-icon);
+}
+.settings-item-body { flex: 1 1 auto; min-width: 0; }
+.settings-item-title {
+  display: block;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.settings-item-desc {
+  display: block;
+  margin-top: 3px;
+  color: var(--fg-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.settings-item-chev {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--fg-4);
+  opacity: .72;
+  transition: color .15s ease, opacity .15s ease, transform .15s ease;
+}
+.settings-item:hover .settings-item-chev {
+  color: var(--settings-icon);
+  opacity: 1;
+  transform: translateX(2px);
+}
+@media (max-width: 560px) {
+  .settings-list { gap: 19px; }
+  .settings-item { min-height: 68px; padding: 13px 14px; }
+  .settings-group-card { border-radius: 15px; }
+  .settings-item-icon { flex-basis: 38px; width: 38px; height: 38px; }
+}
+
+/* ── Per-section pages ──────────────────────────────────────────────────── */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+.settings-page[hidden] { display: none !important; }
+/* Build gate for the Agent Tools page (mirrors .ac-section.is-building in
+   app3.css): the agent-settings module drops the class once its async build
+   of the ability/integration tables resolves. */
+.settings-page.is-building > *:not(.ac-section-loader) { display: none !important; }
+.settings-page.is-building > .ac-section-loader { display: flex !important; }
+.settings-page > .ac-section-loader { display: none; }
+
+.model-credit-editor {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-1);
+  display: grid;
+  gap: 8px;
+}
+.model-credit-rates {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .model-credit-rates { grid-template-columns: 1fr; }
+}
+
+/* One Settings row component: the star is the only favorite affordance. */
+.settings-item-row { display:flex; align-items:stretch; }
+.settings-item-row + .settings-item-row { border-top:var(--border-width) solid var(--border); }
+.settings-item-row .settings-item { flex:1; border-top:0; }
+.settings-item-favorite { flex:0 0 42px; border:0; background:transparent; color:var(--fg-3); cursor:pointer; display:grid; place-items:center; }
+.settings-item-favorite:hover, .settings-item-favorite:focus-visible { color:var(--accent); background:var(--accent-soft); outline:0; }
+.settings-favorite-icon { fill:transparent; transition:color .16s ease, fill .16s ease, transform .16s ease; }
+.settings-favorite-icon.is-favorited { color:var(--warning); fill:currentColor; }

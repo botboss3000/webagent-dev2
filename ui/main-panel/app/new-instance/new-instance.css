@@ -1,0 +1,217 @@
+/* New Instance — step-wizard chrome for the "New Instance" tab of the Instances
+   page's "New instance" tile (ui/main-panel/app/new-instance/). Loaded via
+   page.json's css list so the main instances.css stays focused on the fleet grid.
+
+   COLOR SCHEME → ui/shared/css/design-system.css (single source of truth). No raw
+   hex/rgb: use var(--brand) / rgba(var(--brand-rgb), a) for the accent and the
+   --bg-*, --fg-*, --border neutrals. The step body's inputs/buttons reuse the
+   app-wide `ac-` component classes from ui/shared/css/app3.css. Both dark AND
+   light must stay correct. */
+
+/* The host div instances.js renders for this tab. */
+.inst-ni-host { margin-top: 2px; }
+
+/* Cap + centre the step column to the SAME 750px as the New Deployment tab and
+   the admin settings pages (`.ac-stickynav .ac-list` in app3.css). */
+.ni-list { padding: 0; max-width: 750px; margin-left: auto; margin-right: auto; }
+
+/* ── Step card ──
+   One card per wizard step: number badge · titles · chevron. Open steps show
+   their body; locked steps are greyed out and ignore header clicks. */
+.ni-step {
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-1);
+  overflow: hidden;
+  transition: border-color .15s, opacity .2s;
+}
+.ni-step + .ni-step { margin-top: 8px; }
+
+.ni-step-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.ni-step:not(.ni-step--locked) .ni-step-head:hover { background: rgba(var(--ink-rgb), 0.03); }
+
+.ni-step-num {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(var(--brand-rgb), 0.12);
+  color: var(--brand);
+}
+
+.ni-step-titles { flex: 1 1 auto; min-width: 0; }
+.ni-step-name { font-size: 14px; font-weight: 650; color: var(--fg-1); }
+.ni-step-desc { font-size: 12px; color: var(--fg-3); margin-top: 2px; }
+
+.ni-step-chev {
+  flex: 0 0 auto;
+  width: 16px; height: 16px;
+  color: var(--fg-3);
+  transition: transform .15s;
+}
+.ni-step--open .ni-step-chev { transform: rotate(180deg); }
+
+.ni-step-lock {
+  flex: 0 0 auto;
+  width: 14px; height: 14px;
+  color: var(--fg-3);
+}
+.ni-step--open .ni-step-lock { display: none; }
+
+.ni-step-body { display: none; padding: 2px 14px 16px 52px; }
+.ni-step--open .ni-step-body { display: block; }
+
+/* Locked look: faded + desaturated, number badge goes neutral, header inert. */
+.ni-step--locked { opacity: 0.62; }
+.ni-step--locked .ni-step-head { cursor: default; }
+.ni-step--locked .ni-step-num { background: rgba(var(--ink-rgb), 0.08); color: var(--fg-3); }
+.ni-step--locked .ni-step-name { color: var(--fg-3); }
+
+.ni-step-placeholder {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+/* ── Checkbox options ──
+   Flat rows (no box): a real (visually-hidden) checkbox inside a wrapping label,
+   with a branded styled box — same pattern as app3.css's `.ac-sr-check-cell`, but
+   accessible (keyboard-focusable, native toggle semantics). */
+.ni-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.ni-opt ~ .ni-opt { margin-top: 20px; }
+.ni-opt:hover .ni-opt-title { color: var(--brand); }
+
+.ni-opt-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px; height: 1px;
+  margin: 0;
+}
+.ni-opt-check {
+  flex: 0 0 auto;
+  width: 20px; height: 20px;
+  margin-top: 1px;
+  border-radius: 5px;
+  border: var(--border-width) solid var(--border);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  transition: background .1s, border-color .1s;
+}
+.ni-opt-check::after {
+  content: '\2713';
+  font-size: 12px;
+  line-height: 1;
+  color: transparent;
+}
+.ni-opt:hover .ni-opt-check { border-color: var(--accent); }
+.ni-opt-input:checked + .ni-opt-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ni-opt-input:checked + .ni-opt-check::after { color: var(--bg-0); }
+.ni-opt-input:focus-visible + .ni-opt-check {
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.35);
+}
+
+.ni-opt-text { flex: 1 1 auto; min-width: 0; }
+.ni-opt-title { display: block; font-size: 13px; font-weight: 600; color: var(--fg-1); }
+.ni-opt-sub { display: block; font-size: 11.5px; line-height: 1.5; color: var(--fg-3); margin-top: 2px; }
+.ni-repo-link {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ni-btn-ico { width: 14px; height: 14px; }
+
+/* Step 2/3 content */
+.ni-section + .ni-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: var(--border-width) solid var(--border);
+}
+.ni-section-title { font-size: 13px; font-weight: 650; color: var(--fg-1); margin-bottom: 8px; }
+.ni-cloud-project { margin-top: 10px; font-size: 12px; color: var(--fg-3); }
+.ni-cloud-project a { margin-left: 6px; color: var(--accent); overflow-wrap: anywhere; }
+.ni-section-note,
+.ni-field-note { font-size: 11.5px; line-height: 1.5; color: var(--fg-3); margin: 5px 0 10px; }
+.ni-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.ni-required { color: var(--danger); }
+
+.ni-sync-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+.ni-sync-opt + .ni-sync-opt { border-top: var(--border-width) solid var(--border); }
+.ni-sync-opt input { margin-top: 3px; accent-color: var(--accent); }
+.ni-sync-opt span { display: block; min-width: 0; }
+.ni-sync-opt strong { display: block; font-size: 12.5px; color: var(--fg-1); font-weight: 600; }
+.ni-sync-opt small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.45; color: var(--fg-3); }
+
+.ni-target-panel { margin-top: 14px; padding-top: 14px; border-top: var(--border-width) solid var(--border); }
+.ni-credential-panel { margin-top: 12px; display: grid; gap: 9px; }
+.ni-credential-panel > .ac-btn { justify-self: start; }
+.ni-credential-panel [hidden] { display: none; }
+.ni-credential-json { width: 100%; min-height: 128px; resize: vertical; font-family: var(--font-mono, monospace); font-size: 11.5px; }
+.ni-credential-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+.ni-credential-actions .ni-status { margin: 0 auto 0 0; }
+.ni-provider-config {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.ni-provider-field { min-width: 0; }
+.ni-inline-check { display: flex; align-items: center; gap: 7px; min-height: 36px; font-size: 12px; color: var(--fg-2); }
+.ni-inline-check input { accent-color: var(--accent); }
+.ni-status { display: inline-block; font-size: 11.5px; line-height: 1.45; color: var(--fg-3); margin-top: 7px; }
+.ni-status--ok { color: var(--success); }
+.ni-status--warn { color: var(--warning); }
+.ni-status--err { color: var(--danger); }
+.ni-deploy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.ni-log {
+  max-height: 250px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: var(--border-width) solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-0);
+  color: var(--fg-2);
+  font: 11.5px/1.5 var(--font-mono, monospace);
+}
+.ni-target-note { margin-top: 12px; padding: 10px 12px; border: var(--border-width) solid var(--border); border-radius: 9px; color: var(--fg-3); font-size: 12px; line-height: 1.5; }
+
+@media (max-width: 680px) {
+  .ni-step-body { padding-left: 14px; }
+  .ni-two-col,
+  .ni-provider-config,
+  .ni-target-head { grid-template-columns: 1fr; }
+  .ni-target-head .ac-btn { justify-self: start; }
+}

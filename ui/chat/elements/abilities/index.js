@@ -1,0 +1,21 @@
+'use strict';
+
+// Chat element: abilities — toggle abilities on/off for the current chat
+
+export function html(cfg = {}) {
+  const size = cfg.element_size || '16px';
+  return `<button type="button" class="chat-skills-btn" title="Abilities — click to turn each on/off for this chat" data-element-name="abilities">
+    <i data-lucide="blocks" style="width:${size};height:${size};"></i>
+    <span class="csp-badge">0</span>
+  </button>`;
+}
+
+export function init(el, cfg = {}) {
+  el.id = 'chat-abilities-btn';
+  const badge = el.querySelector('.csp-badge');
+  if (badge) badge.id = 'chat-abilities-badge';
+}
+
+export function destroy(el) {}
+
+export function style() { return ''; }

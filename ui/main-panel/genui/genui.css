@@ -1,0 +1,462 @@
+/* ── Gen UI Tab ── */
+
+/* COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
+   No raw hex/rgb here: use var(--brand) / var(--accent) / var(--accent-hover) for
+   the brand accent, rgba(var(--brand-rgb), a) for any accent opacity, var(--success|
+   warning|danger) (or rgba(var(--*-rgb), a)) for status, var(--purple) for the 2nd hue.
+   Need a colour that doesn't exist yet? Add a token to the palette in design-system.css
+   (the dark :root block AND its body.light-mode twin), then reference it here.
+   Re-theming the whole app (e.g. peach → green) is then a one-file edit. */
+
+/* NOTE: the footer toolbar (page selector, +, refresh, ✦ chat) lives in its own
+   swappable module — js/genui-toolbar.js + genui-toolbar.css. Its styles are
+   NOT here, so a redesign of the footer never touches this core stylesheet. */
+
+/* ── New Page Dialog ── */
+
+#genui-new-page-dialog {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(var(--shadow-rgb), 0.65);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+
+.genui-dialog-box {
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 10px;
+  padding: 22px 24px;
+  width: 320px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.5);
+}
+
+.genui-dialog-box h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.genui-dialog-input {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-1);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.genui-dialog-input:focus {
+  border-color: var(--accent);
+}
+
+.genui-dialog-input::placeholder { color: var(--fg-4); }
+
+.genui-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.genui-dialog-btn {
+  padding: 6px 16px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s;
+}
+
+.genui-dialog-btn-primary {
+  background: var(--accent);
+  color: var(--bg-0);
+  border-color: var(--accent);
+}
+
+.genui-dialog-btn-primary:hover { background: var(--brand-strong); }
+
+.genui-dialog-btn-cancel {
+  background: transparent;
+  color: var(--fg-3);
+  border-color: var(--border);
+}
+
+.genui-dialog-btn-cancel:hover { background: var(--bg-elev); color: var(--fg-1); }
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+#tab-genui {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-0);
+}
+
+#tab-genui.active {
+  display: flex;
+}
+
+#genui-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+/* ── Viewport (iframe area) ──
+   The viewport fills the remaining column height. When the footer is hidden it
+   reclaims the available space. */
+
+#genui-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* FIRST-CLASS GENUI HOST. The agent's genui is rendered (into an open shadow
+   root) directly inside this element — no iframe. Two things make that safe for
+   the app shell:
+     • contain: layout paint  — clips the genui's painting to this box AND makes
+       this element the containing block for any position:fixed descendant, so a
+       genui's full-bleed background can't spill over the rest of the app.
+     • transform: translateZ(0) — belt-and-suspenders for the same fixed-child
+       containment in browsers that need a transform to establish it.
+   Background is transparent by default so the app's own animated background
+   shows THROUGH the genui (the default look); a genui only paints its own
+   background when the agent deliberately designs one. This host is the scroll
+   container for tall genui. */
+.genui-host {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  position: relative;
+  overflow: auto;
+  contain: layout paint;
+  transform: translateZ(0);
+}
+
+/* ── Placeholder State ── */
+
+.genui-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--fg-3);
+}
+
+.genui-placeholder-icon {
+  font-size: 48px;
+  opacity: 0.4;
+}
+
+.genui-placeholder-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.genui-placeholder-hint {
+  font-size: 12px;
+  color: var(--fg-4);
+  font-style: italic;
+}
+
+/* ── Loading State ── */
+
+.genui-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--brand);
+  font-size: 14px;
+}
+
+.genui-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-soft);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: genui-spin 0.8s linear infinite;
+}
+
+@keyframes genui-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Gallery (front page) ─────────────────────────────────────────────────
+   Card grid of every genui page, styled after the Agents page card grid
+   (ui/main-panel/agents/agents.css): a toolbar + a wrapping grid of square
+   tiles. Each tile shows a thumbnail preview of that page (its HTML rendered
+   scripts-stripped in its own shadow root and scaled down); clicking a tile
+   opens the page. Shown by default when the tab opens instead of auto-loading
+   the first page. */
+
+#genui-gallery[hidden] { display: none; }
+
+.genui-gallery {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  z-index: 1;
+}
+
+/* ── Gallery toolbar (mirrors #agents-toolbar) ── */
+.genui-gallery-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 20px 12px;
+  flex-shrink: 0;
+}
+.genui-gallery-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.genui-gallery-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700; color: var(--fg-1);
+}
+.genui-gallery-title > svg, .genui-gallery-title > .lucide-icon { width: 17px; height: 17px; }
+.genui-gallery-sub { font-size: 12px; color: var(--fg-4); font-weight: 400; }
+.genui-gallery-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.genui-gallery-tb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  font-size: 12px; font-weight: 600;
+  border: var(--border-width) solid var(--border); border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.04); color: var(--fg-1); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.genui-gallery-tb-btn:hover { background: rgba(var(--ink-rgb), 0.12); border-color: rgba(var(--ink-rgb), 0.30); }
+.genui-gallery-tb-btn:disabled { opacity: 0.4; cursor: default; }
+.genui-gallery-tb-btn > * { pointer-events: none; }
+.genui-gallery-tb-btn > svg, .genui-gallery-tb-btn > .lucide-icon { width: 14px; height: 14px; }
+.genui-gallery-tb-btn.genui-gallery-tb-icon { width: 28px; padding: 0; justify-content: center; }
+
+/* Toolbar delete button — mirrors .agents-tb-trash: red trash that arms into
+   the shared trash→hazard→spin two-click confirm (SHARED-DELETE-CONTROL). It is
+   hidden until at least one page is checked (unlike Agents, which keeps its
+   trash visible for the recycling bin). */
+.genui-gallery-tb-trash {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid rgba(var(--danger-rgb), 0.22); border-radius: 7px;
+  background: rgba(var(--danger-rgb), 0.05); color: var(--danger); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.genui-gallery-tb-trash:hover { background: rgba(var(--danger-rgb), 0.14); border-color: rgba(var(--danger-rgb), 0.45); }
+.genui-gallery-tb-trash.warning { color: var(--warning); border-color: rgba(var(--warning-rgb), 0.5); background: rgba(var(--warning-rgb), 0.12); }
+.genui-gallery-tb-trash.warning:hover { background: rgba(var(--warning-rgb), 0.2); color: var(--warning); }
+.genui-gallery-tb-trash:disabled { opacity: 0.4; cursor: default; }
+.genui-gallery-tb-trash > * { pointer-events: none; }
+
+/* ── Per-tile selection checkbox (top-right of every page tile) — mirrors
+   .agent-select-box on the Agents page. The thumbnail underneath is
+   pointer-events:none, so clicks land on this box or the card itself. ── */
+.genui-select-box {
+  position: absolute; top: 7px; right: 7px; z-index: 5;
+  width: 19px; height: 19px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--border-width) solid var(--border); border-radius: 5px;
+  background: rgba(var(--bg-0-rgb), 0.55); color: transparent;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.genui-select-box:hover { border-color: var(--brand); }
+.genui-select-box > svg { width: 13px; height: 13px; pointer-events: none; }
+.genui-gallery-card.selected .genui-select-box {
+  background: var(--brand); border-color: var(--brand); color: #fff;
+}
+.genui-gallery-card.selected { border-color: var(--brand); }
+
+/* ── Card grid (mirrors .agents-squares) ──
+   Single source of truth for the page's side inset, fed to the grid padding. */
+.genui-gallery { --genui-gallery-inset: 20px; }
+@media (max-width: 800px) {
+  .genui-gallery { --genui-gallery-inset: 10px; }
+}
+.genui-gallery-squares {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 12px;
+  padding: 16px var(--genui-gallery-inset) 24px;
+}
+.genui-gallery-squares::-webkit-scrollbar { width: 5px; }
+.genui-gallery-squares::-webkit-scrollbar-thumb { background: var(--bg-tint); border-radius: 3px; }
+
+/* ── One page tile (mirrors .agent-card, widened to hold a thumbnail) ── */
+.genui-gallery-card {
+  position: relative;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.genui-gallery-card:hover {
+  border-color: var(--border);
+  background: var(--bg-2);
+  transform: translateY(-1px);
+}
+.genui-gallery-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+/* The page the user last had open gets the accent ring (mirrors
+   .agent-card.activated). */
+.genui-gallery-card.activated {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+.genui-gallery-card.activated:hover { border-color: var(--brand); }
+
+.genui-card-thumb {
+  position: relative;
+  width: 100%;
+  height: 128px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border-soft);
+  pointer-events: none;
+}
+/* The scaled-down live preview (width fixed to a virtual page canvas and
+   shrunk with transform:scale — see _loadThumb in genui.js). The thumb box
+   clips it; the scale transform makes this box the containing block for any
+   position:fixed child of the previewed page. */
+.genui-thumb-mount {
+  position: relative;
+  width: 720px;
+  transform-origin: 0 0;
+  contain: layout paint;
+}
+.genui-thumb-skeleton {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.genui-thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--fg-4);
+  font-size: 12px;
+  text-align: center;
+  padding: 0 12px;
+}
+.genui-thumb-fallback > svg, .genui-thumb-fallback > .lucide-icon { width: 16px; height: 16px; }
+
+.genui-gallery-card-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 2px;
+}
+
+/* ── "New page" create tile (mirrors the Agents page's "New Agent" tile) ── */
+.genui-gallery-new {
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  gap: 6px;
+}
+.genui-gallery-new:hover { border-color: var(--brand); }
+.genui-gallery-new-icon {
+  width: 40px; height: 40px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px;
+  background: rgba(var(--brand-rgb), 0.16); color: var(--brand);
+}
+.genui-gallery-new-icon > svg, .genui-gallery-new-icon > .lucide-icon { width: 20px; height: 20px; }
+.genui-gallery-new .genui-gallery-card-name { color: var(--brand); font-style: italic; }
+
+/* ── Empty state ── */
+.genui-gallery-empty {
+  width: 100%;
+  padding: 40px 20px;
+  font-size: 13px;
+  color: var(--fg-3);
+  text-align: center;
+}
+
+/* ═══════════════════════════════════════════════
+   LIGHT MODE OVERRIDES
+   ═══════════════════════════════════════════════ */
+body.light-mode #tab-genui {
+  background: var(--bg-0);
+}
+body.light-mode .genui-host {
+  background: transparent;
+}
+body.light-mode .genui-placeholder {
+  color: var(--fg-3);
+}
+body.light-mode .genui-placeholder-text {
+  color: var(--brand);
+}
+body.light-mode .genui-placeholder-hint {
+  color: var(--fg-4);
+}
+body.light-mode .genui-spinner {
+  border-color: var(--border);
+  border-top-color: var(--brand);
+}
+body.light-mode .genui-dialog-box {
+  background: var(--bg-0);
+  border-color: var(--border);
+}
+body.light-mode .genui-dialog-box h3 { color: var(--fg-1); }
+body.light-mode .genui-dialog-input {
+  background: var(--bg-0);
+  border-color: var(--border);
+  color: var(--fg-1);
+}
+body.light-mode .genui-dialog-input:focus { border-color: var(--brand); }
+body.light-mode .genui-dialog-btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+body.light-mode .genui-dialog-btn-cancel {
+  border-color: var(--border);
+  color: var(--fg-3);
+}
+body.light-mode .genui-dialog-btn-cancel:hover { background: var(--bg-elev); color: var(--fg-1); }
+body.light-mode .genui-gallery-tb-trash { color: var(--danger); border-color: rgba(var(--danger-rgb), 0.25); background: rgba(var(--danger-rgb), 0.04); }
+body.light-mode .genui-gallery-tb-trash:hover { background: rgba(var(--danger-rgb), 0.10); }
+body.light-mode .genui-gallery-tb-trash.warning { color: var(--warning); border-color: rgba(var(--warning-rgb), 0.5); background: rgba(var(--warning-rgb), 0.12); }
+body.light-mode .genui-select-box { background: rgba(255, 255, 255, 0.75); border-color: rgba(61, 44, 46, 0.35); }

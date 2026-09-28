@@ -1,0 +1,93 @@
+<template data-slot="#admin-tools">
+  <main class="files-main files-optimizer-main" id="files-optimizer-main" data-view="optimizer" hidden></main>
+</template>
+
+<template data-slot="#main-panel">
+<div id="optimizer-page-container" hidden>
+
+  <header id="optimizer-page-header">
+    <div class="ac-page-title">Optimizer Runs</div>
+  </header>
+
+  <div id="optimizer-page-scroll-wrap">
+  <div id="optimizer-page-content">
+
+    <div class="ac-card">
+      <!-- Toolbar: count + filters + refresh -->
+      <div class="ac-opt-toolbar">
+        <div class="ac-opt-toolbar-left">
+          <span class="ac-card-label" style="margin:0;">Runs</span>
+          <span id="ac-opt-runs-count" class="ac-opt-count">— loading…</span>
+        </div>
+        <div class="ac-opt-toolbar-right">
+          <input type="text" id="ac-opt-search" class="ac-input ac-opt-search" placeholder="Filter by target…" autocomplete="off">
+          <select id="ac-opt-filter-status" class="ac-input ac-opt-filter" title="Filter by status">
+            <option value="">All statuses</option>
+            <option value="running">Running</option>
+            <option value="success">Success</option>
+            <option value="failed">Failed</option>
+          </select>
+          <button type="button" id="ac-opt-refresh" class="ac-btn ac-btn-ghost ac-opt-icon-btn" title="Refresh">
+            <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="ac-opt-table-wrap">
+        <table id="ac-opt-runs-table" class="ac-stats-table ac-opt-runs-table">
+          <thead>
+            <tr>
+              <th class="ac-opt-sort" data-sort="target">Target</th>
+              <th class="ac-opt-sort" data-sort="status">Status</th>
+              <th class="ac-opt-sort" data-sort="stage">Stage</th>
+              <th class="ac-opt-sort ac-opt-num" data-sort="proposals">Proposals</th>
+              <th class="ac-opt-sort ac-opt-num" data-sort="trials_count">Trials</th>
+              <th class="ac-opt-sort ac-opt-num" data-sort="tokens">Tokens</th>
+              <th class="ac-opt-sort ac-opt-num" data-sort="cost">Cost</th>
+              <th class="ac-opt-sort ac-opt-num" data-sort="duration_ms">Duration</th>
+              <th class="ac-opt-sort" data-sort="started_at">Started</th>
+            </tr>
+          </thead>
+          <tbody id="ac-opt-runs-tbody">
+            <tr><td colspan="9" class="ac-table-empty">Loading runs…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Run configuration (on/off + cadence) ── -->
+    <div class="ac-card">
+      <div class="ac-card-label">Optimizer</div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button type="button" id="ac-opt-mode-on" class="ac-seg-btn active" data-mode="on" style="flex:1;">
+          <i data-lucide="zap" class="lucide-icon" style="width:16px;height:16px;margin-bottom:4px;"></i><br>
+          On<br><span class="ac-seg-sub">Auto-optimize</span>
+        </button>
+        <button type="button" id="ac-opt-mode-off" class="ac-seg-btn" data-mode="off" style="flex:1;">
+          <i data-lucide="power" class="lucide-icon" style="width:16px;height:16px;margin-bottom:4px;"></i><br>
+          Off<br><span class="ac-seg-sub">Manual only</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="ac-opt-schedule-section" class="ac-card" style="display:none;">
+      <div class="ac-card-label">Run condition</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+        <span class="ac-hint">Run the optimizer if session is greater than</span>
+        <input type="number" id="ac-opt-schedule-min" class="ac-input" value="5" min="1" max="100" style="width:64px;">
+        <span class="ac-hint">turns</span>
+      </div>
+      <div class="ac-hint" style="margin-top:8px;opacity:0.8;">Shorter sessions are skipped. A turn is one message-and-reply.</div>
+    </div>
+
+    <div class="ac-card" style="display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;">
+      <span id="ac-opt-status" class="ac-status" style="flex:1;display:none;"></span>
+      <button id="ac-opt-save" class="ac-btn ac-btn-primary">Save Config</button>
+      <button id="ac-opt-run-now" class="ac-btn ac-btn-ghost">Run Now</button>
+    </div>
+
+  </div><!-- /optimizer-page-content -->
+  </div><!-- /optimizer-page-scroll-wrap -->
+
+</div><!-- /optimizer-page-container -->
+</template>

@@ -1,0 +1,136 @@
+/* ── Model changer button (in footer row) ──────────────────────────────
+   A compact inline-flex with two small chevrons flanking the model name.
+   Sits alongside abilities/target/mode in the footer row.                   */
+.chat-model-changer {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--fg-2);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: color 0.15s;
+  }
+.chat-model-changer:hover { color: var(--fg-1); }
+/* ── Agent-driven override (Model Switcher) ─────────────────────────────
+   While the AGENT has switched this session's model (use_premium_model /
+   set_model), the changer shows the real model in warning color so the
+   temporary upgrade is visible. The backend clears the override at run end
+   (runner._finish_run) and the UI drops the class — no agent step involved. */
+.chat-model-changer.agent-override {
+    color: var(--warning);
+    background: rgba(var(--warning-rgb), 0.10);
+    border-radius: 6px;
+  }
+.chat-model-changer.agent-override:hover { color: var(--warning); }
+.chat-model-changer.agent-override .cmc-name { font-weight: 700; }
+/* No Standard model appointed for this agent (or the stored pick is gone): the
+   chat cannot start until a model is picked. Error tone — never the old bare
+   "Default" label, which read as a working default model. */
+.chat-model-changer.no-model { color: var(--danger, #e5484d); }
+.chat-model-changer.no-model .cmc-name { font-weight: 700; }
+.chat-model-changer .cmc-chev {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.5;
+    pointer-events: all; /* override SVG default visiblePainted so the whole 14×14 box is clickable */
+    transition: opacity 0.15s, transform 0.12s;
+  }
+.chat-model-changer:hover .cmc-chev { opacity: 0.9; }
+.chat-model-changer .cmc-chev-left:active { transform: translateX(-1px); }
+.chat-model-changer .cmc-chev-right:active { transform: translateX(1px); }
+.chat-model-changer .cmc-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1;
+  }
+
+/* ── Saving / checked feedback ──────────────────────────────────────────
+   .saving: chevrons are dimmed+inert, the label is hidden, and a tiny
+   CSS spinner sits in its place.  .checked: a green ✓ replaces the spinner
+   for 600 ms, then the label fades back in.                               */
+.chat-model-changer .cmc-status {
+    display: none;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+.chat-model-changer.saving .cmc-chev {
+    opacity: 0.15;
+    pointer-events: none;
+  }
+.chat-model-changer.saving .cmc-name { display: none; }
+.chat-model-changer.saving .cmc-status {
+    display: block;
+    border: 2px solid var(--fg-4);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: cmc-spin 0.6s linear infinite;
+  }
+.chat-model-changer.checked .cmc-chev {
+    opacity: 0.15;
+    pointer-events: none;
+  }
+.chat-model-changer.checked .cmc-name { display: none; }
+.chat-model-changer.checked .cmc-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--success);
+    border: none;
+    animation: none;
+  }
+.chat-model-changer.checked .cmc-status::after {
+    content: '✓';
+  }
+
+@keyframes cmc-spin {
+    to { transform: rotate(360deg); }
+  }
+
+/* ── Model changer toast ───────────────────────────────────────────────
+   Floats above the model changer button, shows the full model id briefly
+   then fades away.                                                        */
+.cmc-toast {
+    position: fixed;
+    z-index: 1001;
+    pointer-events: none;
+    background: var(--bg-elev);
+    border: var(--border-width) solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--fg-1);
+    box-shadow: var(--shadow-float);
+    white-space: nowrap;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    transform: translateY(6px) scale(0.95);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+.cmc-toast.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+.cmc-toast.hiding {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.95);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }

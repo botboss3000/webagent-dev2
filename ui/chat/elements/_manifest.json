@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "description": "Chat element registry — each element is a self-contained module. Elements generate their own DOM and CSS, controlled via chat_ui.json.",
+  "elements": {
+    "agent_name": { "entry": "agent-name.js" },
+    "session_dropdown": { "entry": "session-dropdown/index.js", "css": "session-dropdown/index.css" },
+    "new_session": { "entry": "new-session.js" },
+    "session_prev": { "entry": "session-nav.js" },
+    "session_next": { "entry": "session-nav.js" },
+    "changes": { "entry": "changes.js", "css": "changes.css" },
+    "local_changes": { "entry": "local-changes/index.js", "css": "local-changes/index.css" },
+    "refresh": { "entry": "refresh.js" },
+    "delete_session": { "entry": "delete-session.js" },
+    "abilities": { "entry": "abilities/index.js", "css": "abilities/index.css" },
+    "target": { "entry": "target/index.js", "css": "target/index.css" },
+    "mode": { "entry": "mode/index.js", "css": "mode/index.css" },
+    "model_changer": { "entry": "model-changer/index.js", "css": "model-changer/index.css" },
+    "activity": { "entry": "activity/index.js", "css": "activity/index.css" },
+    "voice": { "entry": "voice.js" },
+    "send": { "entry": "send.js" },
+    "attach": { "entry": "attach.js" },
+    "stop": { "entry": "stop.js" },
+    "continue": { "entry": "continue.js" },
+    "close": { "entry": "close.js" },
+    "minimize": { "entry": "minimize.js" },
+    "icon": { "entry": "icon.js" },
+    "title": { "entry": "title.js" },
+    "status": { "entry": "status.js" },
+    "visibility": { "entry": "visibility/index.js", "css": "visibility/index.css" },
+    "browser_notifications": { "entry": "browser-notifications/index.js", "css": "browser-notifications/index.css" },
+    "dot": { "entry": "dot.js" }
+  }
+}

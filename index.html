@@ -124,7 +124,6 @@
     if (_isBenign(msg)) return;   // benign browser noise — no banner, no title flag
     var src = e.filename ? (e.filename.split('/').pop() + ':' + e.lineno) : 'error';
     window.__reportJsError({ message: msg, source: src, stack: e.error && e.error.stack });
-    try { document.title = '[JS ERR] ' + document.title.replace(/^\[JS ERR\] /, ''); } catch (_) {}
   });
 
   // Unhandled promise rejections — this is the path a failed dynamic import()

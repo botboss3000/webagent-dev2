@@ -240,6 +240,7 @@ async def _run_that_died_with_destination(tmp_path, monkeypatch, *, name, meta):
     destination = await db.insert_interaction(
         "user", session_id, role="assistant", content="The closing message.",
         metadata=json.dumps(meta),
+        chat_render_kind="promoted_answer" if meta.get("closing_promoted") else "activity",
     )
     await db.run_state_set_assistant(session_id, destination)
     # The process dies before recording a terminal status → the boot sweep
@@ -337,6 +338,7 @@ async def _promoted_run_db(tmp_path, monkeypatch, *, name, destination_meta):
     destination = await db.insert_interaction(
         "user", session_id, role="assistant", content="The closing message.",
         metadata=json.dumps(destination_meta),
+        chat_render_kind="promoted_answer" if destination_meta.get("closing_promoted") else "activity",
     )
     await db.run_state_set_assistant(session_id, destination)
     await db.mark_orphans_for_resume()
@@ -430,6 +432,7 @@ async def _promotion_latch_reads_the_durable_marker(tmp_path, monkeypatch):
     await db.insert_interaction(
         "user", session_id, role="assistant", content="done",
         metadata=json.dumps({"message_phase": "main", "closing_promoted": True}),
+        chat_render_kind="promoted_answer",
     )
     assert await db.has_promoted_closing_terminal("user", session_id) is True
 

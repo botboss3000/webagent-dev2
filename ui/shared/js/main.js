@@ -355,7 +355,7 @@ const _bootReady = _publicGuestReady;
 // via console.error, which the in-app debug console panel captures and shows;
 // the header bug-toggle turns red while the panel holds an error entry (see
 // debugConsole.js), so a problem is visible without opening the panel or
-// DevTools. The page title is flagged too, so it shows in the browser tab.
+// DevTools.
 //
 // Yellow status dots in the header mean the WebSocket is trying to connect
 // (state: "Connecting…"). They turn green once connected, red if the server
@@ -413,8 +413,6 @@ function _showJsErrorBanner(msg, source, errorEvent) {
     }
   } catch (_) {}
 
-  // Title prefix — immediately visible in the browser tab
-  document.title = '[JS ERR] ' + document.title.replace(/^\[JS ERR\] /, '');
 
   // The old fixed top-of-page red banner is gone. Every error routed through
   // here also emits console.error(...) below, which the debug console panel

@@ -1828,6 +1828,51 @@ def _apply_config_to_env(config: dict) -> None:
     os.environ.pop("MULTI_PROVIDERS", None)
 
 
+_SUBSCRIPTION_CAPABILITY_FIELDS = (
+    "text_capable", "image_capable", "image_out_capable", "voice_capable",
+)
+
+
+def _is_subscription_model_entry(entry: dict) -> bool:
+    """Whether a roster row uses ChatGPT OAuth rather than an API key."""
+    entry = entry or {}
+    return (
+        entry.get("provider") == "openai_subscription"
+        or entry.get("auth_mode") == "chatgpt"
+        or entry.get("base_url") == "codex://chatgpt"
+    )
+
+
+def _normalize_subscription_model_capabilities(entry: dict) -> dict:
+    """Reconcile legacy subscription rows with the authoritative live roster.
+
+    v1 rows can retain missing/false modality flags after the v2 migration.  The
+    ChatGPT subscription catalog is first-party metadata, so for a model it knows
+    it wins over those persisted summaries. Unknown model ids are left untouched.
+    """
+    row = dict(entry or {})
+    if not _is_subscription_model_entry(row) or not row.get("model"):
+        return row
+    try:
+        from app import openai_subscription
+        known = next(
+            (item for item in openai_subscription.models()
+             if item.get("id") == row.get("model")),
+            None,
+        )
+    except Exception:
+        known = None
+    if not known:
+        return row
+    row.setdefault("provider", "openai_subscription")
+    row.setdefault("auth_mode", "chatgpt")
+    row.setdefault("base_url", "codex://chatgpt")
+    for key in _SUBSCRIPTION_CAPABILITY_FIELDS:
+        if key in known:
+            row[key] = bool(known[key])
+    return row
+
+
 async def load_llm_capabilities_for_user(user_id: str, agent_rec: Optional[dict] = None) -> dict:
     """Read the user's LLM config (own → admin) and return media-capability
     info WITHOUT touching env vars.
@@ -1866,12 +1911,15 @@ async def load_llm_capabilities_for_user(user_id: str, agent_rec: Optional[dict]
     if agent_rec:
         cfg = _effective_config(cfg, agent_rec)
     cfg, _capabilities = await _clamp_config_to_entitlements(user_id, base, cfg)
+    cfg = _normalize_subscription_model_capabilities(cfg)
 
     default = {
         "entry_id": cfg.get("entry_id", ""),
         "model": cfg.get("model", ""),
         "display_name": cfg.get("display_name", ""),
         "provider": cfg.get("provider", ""),
+        "auth_mode": cfg.get("auth_mode", "api_key"),
+        "credential_scope": cfg.get("credential_scope", ""),
         "base_url": cfg.get("base_url", ""),
         "api_key": cfg.get("api_key", ""),
         "text_capable": bool(cfg.get("text_capable", True)),
@@ -1882,14 +1930,18 @@ async def load_llm_capabilities_for_user(user_id: str, agent_rec: Optional[dict]
         "high_effort_capable": bool(cfg.get("high_effort_capable", False)),
     }
     racers = []
-    for p in (cfg.get("multi_providers") or []):
+    for raw in (cfg.get("multi_providers") or []):
+        p = _normalize_subscription_model_capabilities(raw)
         racers.append({
             "entry_id": p.get("entry_id", ""),
             "model": p.get("model", ""),
             "display_name": p.get("display_name", ""),
             "provider": p.get("provider", "custom"),
+            "auth_mode": p.get("auth_mode", "api_key"),
+            "credential_scope": p.get("credential_scope", ""),
             "base_url": p.get("base_url", ""),
             "api_key": p.get("api_key", ""),
+            "enabled": bool(p.get("enabled", False)),
             "text_capable": bool(p.get("text_capable", True)),
             "image_capable": bool(p.get("image_capable", False)),
             "use_for_image": bool(p.get("use_for_image", False)),
@@ -1922,6 +1974,12 @@ async def load_llm_capabilities_for_user(user_id: str, agent_rec: Optional[dict]
         "default": default,
         "racers": racers,
         "role_assignments": dict(cfg.get("role_assignments") or {}),
+        # Internal, non-secret tenant identity used when a worker row authenticates
+        # through ChatGPT OAuth instead of carrying an API key.
+        "credential_context": {
+            "user_id": user_id,
+            "agent_id": str((agent_rec or {}).get("id") or ""),
+        },
     }
 
 
@@ -1979,21 +2037,39 @@ def turn_models_image_capable(caps: dict) -> bool:
     return model_sees_images(caps.get("default") or {})
 
 
-def pick_describer(caps: dict) -> Optional[dict]:
-    """Choose the image-describer model when no turn model can see images.
+def _has_worker_credentials(entry: dict) -> bool:
+    """Whether a bounded worker can authenticate this roster entry."""
+    entry = entry or {}
+    if _is_subscription_model_entry(entry):
+        return bool(entry.get("entry_id") and entry.get("credential_scope"))
+    return bool(entry.get("base_url") and entry.get("api_key"))
 
-    Prefer the default model if it is image-capable, else the first racer flagged
-    ``use_for_image`` that is image-capable. Returns {model, provider, base_url,
-    api_key} or None when no image-capable describer is configured.
-    """
+
+def _worker_model_config(entry: dict, caps: Optional[dict] = None) -> dict:
+    """Project a capability row into the shared bounded-completion config."""
+    entry = entry or {}
+    context = (caps or {}).get("credential_context") or {}
+    return {
+        "entry_id": entry.get("entry_id", ""),
+        "model": entry.get("model", ""),
+        "provider": entry.get("provider", ""),
+        "auth_mode": entry.get("auth_mode", "api_key"),
+        "credential_scope": entry.get("credential_scope", ""),
+        "base_url": entry.get("base_url", ""),
+        "api_key": entry.get("api_key", ""),
+        "user_id": context.get("user_id", ""),
+        "agent_id": context.get("agent_id", ""),
+    }
+
+
+def pick_describer(caps: dict) -> Optional[dict]:
+    """Choose an authenticated image describer for a text-only turn model."""
     d = caps.get("default") or {}
-    if d.get("image_capable") and d.get("model") and d.get("api_key"):
-        return {"model": d["model"], "provider": d.get("provider", ""),
-                "base_url": d.get("base_url", ""), "api_key": d.get("api_key", "")}
+    if model_sees_images(d) and _has_worker_credentials(d):
+        return _worker_model_config(d, caps)
     for r in (caps.get("racers") or []):
-        if r.get("image_capable") and r.get("use_for_image") and r.get("model") and r.get("api_key"):
-            return {"model": r["model"], "provider": r.get("provider", ""),
-                    "base_url": r.get("base_url", ""), "api_key": r.get("api_key", "")}
+        if r.get("use_for_image") and model_sees_images(r) and _has_worker_credentials(r):
+            return _worker_model_config(r, caps)
     return None
 
 
@@ -2149,36 +2225,26 @@ def is_high_effort_model(caps: dict, model: str) -> bool:
 
 
 def pick_vision_model(caps: dict) -> Optional[dict]:
-    """Choose the model that READS images for the ``process_image`` delegate tool.
+    """Choose the authenticated model used by the ``process_image`` worker.
 
-    Prefer the default model if it can see images, else the first saved row flagged
-    image-input capable. A row need NOT be enabled for text — an image-only model
-    (e.g. a Gemini *-image variant) is a fine vision worker even though it can't be
-    the agent's tool-calling brain. The model catalog guards the pick: a candidate
-    the catalog says canNOT accept image input is skipped even if mis-ticked, so a
-    stale checkbox can't send an image to a blind text model. Returns
-    {model, provider, base_url, api_key} or None when no image-input model fits.
+    API-backed rows require their API key; ChatGPT-subscription rows instead carry
+    the entry/scope identity needed by ``SubscriptionResponseClient``. The catalog
+    still vetoes a row that is definitively text-only.
     """
-    def _ok(e: dict) -> bool:
-        if not (e.get("image_capable") and e.get("model") and e.get("api_key")):
-            return False
-        return _catalog_modality(e["model"], e.get("provider", ""), "in") is not False
+    def _ok(entry: dict) -> bool:
+        return model_sees_images(entry) and _has_worker_credentials(entry)
 
-    def _pick(e):
-        return {"model": e["model"], "provider": e.get("provider", ""),
-                "base_url": e.get("base_url", ""), "api_key": e.get("api_key", "")}
-
-    d = caps.get("default") or {}
-    if _ok(d):
-        return _pick(d)
+    default = caps.get("default") or {}
+    if _ok(default):
+        return _worker_model_config(default, caps)
     # Prefer rows the admin explicitly ticked for image input, then any capable row.
     racers = list(caps.get("racers") or [])
-    for e in racers:
-        if _ok(e) and e.get("use_for_image"):
-            return _pick(e)
-    for e in racers:
-        if _ok(e):
-            return _pick(e)
+    for entry in racers:
+        if _ok(entry) and entry.get("use_for_image"):
+            return _worker_model_config(entry, caps)
+    for entry in racers:
+        if _ok(entry):
+            return _worker_model_config(entry, caps)
     return None
 
 
@@ -2354,6 +2420,10 @@ class AppSettings(BaseModel):
     access_mode: str = "admin_approval"  # admin_approval | public_registered
     # Compact hamburger/sidebar navigation is the default on mobile viewports.
     mobile_mode: bool = True
+    # Human-facing site/app name used in the document title and public SEO
+    # identity. Kept short because it is rendered into browser chrome and
+    # metadata.
+    site_name: str = "WebAgent"
     # ── User BYOD (per-user bring-your-own-database) ──
     # OFF (default): single-tenant — every user shares the one admin-configured
     # database, exactly as before (self-hosters and existing installs are
@@ -3257,6 +3327,12 @@ def get_always_on_display() -> bool:
     the chat wake_lock control. Defaults False (screen sleeps normally) when
     unset/blank."""
     return _load_app_settings().get("always_on_display", False) is True
+
+def get_site_name() -> str:
+    """Return the configured site name, falling back to the default brand."""
+    value = str(_load_app_settings().get("site_name") or "").strip()
+    return value[:120] or "WebAgent"
+
 
 
 def get_voice_dictation_config() -> dict:
@@ -5408,6 +5484,7 @@ async def set_app_settings(request: Request):
     existing = _load_app_settings()
     settings = AppSettings(**{**existing, **body})
     settings.access_mode = normalize_access_mode(settings.access_mode)
+    settings.site_name = str(settings.site_name or "").strip()[:120] or "WebAgent"
     if settings.voice_dictation_mode not in {"browser_then_llm", "llm_only"}:
         settings.voice_dictation_mode = "browser_then_llm"
     # Clamp stream buffer retention to a sane range so a bad value can't

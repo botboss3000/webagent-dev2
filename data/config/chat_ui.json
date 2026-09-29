@@ -257,6 +257,7 @@
           "cost",
           "model",
           "message_id",
+          "row_details",
           "schema",
           "refresh"
         ],
@@ -271,6 +272,9 @@
             "enabled": true
           },
           "message_id": {
+            "enabled": true
+          },
+          "row_details": {
             "enabled": true
           },
           "schema": {

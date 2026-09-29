@@ -670,25 +670,6 @@ async def describe_image_attachment(
     (e.g. the provider's "no remaining credits" 400) so callers can surface WHY
     the description failed instead of only seeing None.
     """
-    url = await _attachment_to_image_data_url(att)
-    if not url:
-        if error_sink is not None:
-            error_sink.append("describe_image_attachment: image attachment could not be read")
-        return None
-    base_url = describer_cfg.get("base_url", "")
-    api_key = describer_cfg.get("api_key", "")
-    model = describer_cfg.get("model", "")
-    if not (base_url and api_key and model):
-        if error_sink is not None:
-            error_sink.append(
-                "describe_image_attachment: incomplete describer config (missing base_url/api_key/model)")
-        return None
-
-    try:
-        from openai import AsyncOpenAI
-    except ImportError:
-        from app.openai_compat import AsyncOpenAI
-
     sys_line = (system_prompt or "").strip() or (
         "You are an image-description assistant. Describe the attached image in "
         "thorough, faithful detail so that another AI model which cannot see the "
@@ -696,36 +677,25 @@ async def describe_image_attachment(
         "layout, objects, people, colours, charts and notable details. Do not add "
         "commentary or speculation beyond what is visible."
     )
-    user_parts: List[Dict[str, Any]] = []
+    user_lines: List[str] = []
     hint = (user_text_hint or "").strip()
     if hint:
-        user_parts.append({"type": "text",
-                           "text": f"The user's message accompanying this image: {hint}"})
-    user_parts.append({"type": "text",
-                       "text": (instruction or "").strip() or "Describe this image in detail."})
-    user_parts.append({"type": "image_url", "image_url": {"url": url}})
+        user_lines.append(f"The user's message accompanying this image: {hint}")
+    user_lines.append((instruction or "").strip() or "Describe this image in detail.")
 
-    try:
-        from app.agent.provider_completion import safe_chat_completion
-        client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=30.0)
-        resp = await safe_chat_completion(
-            client,
-            model=model,
-            messages=[
-                {"role": "system", "content": sys_line},
-                {"role": "user", "content": user_parts},
-            ],
-            temperature=0.0,
-            max_tokens=768,
-        )
-        if resp and resp.choices:
-            text = (resp.choices[0].message.content or "").strip()
-            return text or None
-    except Exception as e:
-        logger.warning("describe_image_attachment failed for %s: %s", att.get("id"), e)
-        if error_sink is not None:
-            error_sink.append(str(e))
-    return None
+    # Use the single bounded-completion route so API-key and ChatGPT OAuth models
+    # receive the same image payload and provider-specific transport handling.
+    from app.agent.provider_completion import ask_model
+    return await ask_model(
+        describer_cfg,
+        sys_line,
+        "\n\n".join(user_lines),
+        attachments=[att],
+        temperature=0.0,
+        max_tokens=768,
+        timeout=30.0,
+        error_sink=error_sink,
+    )
 
 
 

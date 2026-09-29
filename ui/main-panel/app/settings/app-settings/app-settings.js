@@ -75,6 +75,7 @@ function _initAppSettings() {
   _initSafetySwitch();
   _initSessionNotifications();
   _initAlwaysOnDisplay();
+  _initSiteName();
   _initVoiceDictationPolicy();
   _initMaxActiveSessions();
   _initDefaultMaxTokens();
@@ -558,6 +559,36 @@ function _initAlwaysOnDisplay() {
       chk.checked = !chk.checked;  // revert on failure
       _flashSaveCheck(wrap, false, e.message);
     }
+  });
+}
+
+// App-wide site name — saved in app-settings.json and reflected in the
+// document title / public UI config on the next load.
+function _initSiteName() {
+  const input = _qs('ac-site-name');
+  if (!input) return;
+  const control = input.closest('.ac-config-control') || input;
+  const save = async () => {
+    if (!isAdmin()) { showRestrictedModal(); return; }
+    const value = input.value.trim().slice(0, 120);
+    input.value = value;
+    _markSaving(control);
+    try {
+      const res = await _fetch(apiPath('/admin/settings/app'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site_name: value || 'WebAgent' }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      document.title = value || 'WebAgent';
+      _flashSaveCheck(control, true);
+    } catch (e) {
+      _flashSaveCheck(control, false, e.message);
+    }
+  };
+  input.addEventListener('change', save);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); save(); }
   });
 }
 
@@ -1171,6 +1202,10 @@ async function _loadAppSettings(data) {
     const aod = _qs('ac-always-on-display');
     if (aod) aod.checked = data.always_on_display === true;  // default OFF
     const voiceLlm = _qs('ac-voice-dictation-llm');
+    const siteName = _qs('ac-site-name');
+    if (siteName) siteName.value = typeof data.site_name === 'string' && data.site_name.trim()
+      ? data.site_name.trim()
+      : 'WebAgent';
     const voiceMode = _qs('ac-voice-dictation-mode');
     if (voiceLlm) voiceLlm.checked = data.voice_dictation_llm_enabled !== false;
     if (voiceMode) {

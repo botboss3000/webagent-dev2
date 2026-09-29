@@ -124,6 +124,24 @@ async def snapshot(session_id: str,request: Request,before: int | None=None,limi
     _,repo,_ = await scope(request,session_id,owner_id)
     return await repo.snapshot(session_id,before=before,limit=limit)
 
+@router.get("/sessions/{session_id}/messages/{message_id}/row-details")
+async def row_details(session_id: str, message_id: str, request: Request):
+    # Owner-only diagnostics: never expose private row metadata to participants.
+    _, repo, _ = await scope(request, session_id)
+    with repo.transaction(write=False) as conn:
+        row = conn.execute(
+            "SELECT * FROM chat_publications WHERE session_id=? AND id=?",
+            (session_id, message_id)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Message not found")
+        row = dict(row)
+    # Preserve the exact plaintext JSON, including whitespace, for inspection.
+    raw_payload = await repo.cipher.decrypt(repo.owner_id, row["payload"])
+    row["payload"] = raw_payload
+    await scope(request, session_id)
+    return {"table": "chat_publications", "render_type": row["kind"],
+            "row": row, "parsed_payload": json.loads(raw_payload)}
+
 @router.get("/sessions/{session_id}/events")
 async def events(session_id: str,request: Request,after: int=Query(0,ge=0),owner_id: str | None=None):
     _,repo,_ = await scope(request,session_id,owner_id)

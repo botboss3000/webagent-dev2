@@ -12,6 +12,7 @@ from .repository import ChatRepository, uid
 
 _tasks = {}
 _worker = uid()
+_shutting_down = False
 
 def internal_request(owner):
     request=Request({"type":"http","method":"POST","path":"/api/v2/chat/internal",
@@ -133,17 +134,69 @@ async def _heartbeat(execution):
 
 
 async def _resume_orphan(execution, run):
-    """Run the v1 durable transcript resumer inside V2 publication authority."""
-    from app.agent.runner import resume_one
+    """Hold V2 authority through the bounded V1 recovery ladder."""
+    from datetime import datetime, timezone
+    from app.agent.runner import resume_one, recovery_pending
+    from app.db import get_db
 
-    launched = await resume_one(run["session_id"], reason="v2_boot")
-    await execution.flush()
+    launched = False
+    while True:
+        state = await execution.repo.run(execution.run_id)
+        if state["state"] in TERMINAL:
+            return launched
+        if await execution.repo.has_uncertain_tool_result(execution.run_id):
+            await execution.repo.fail_execution(
+                execution.run_id,execution.generation,
+                reason="Execution stopped with an unconfirmed tool result. Review activity before continuing.")
+            return launched
+        legacy = await get_db().run_state_get(run["session_id"])
+        if not legacy:
+            await execution.repo.fail_execution(execution.run_id, execution.generation)
+            return launched
+        if legacy.get("status") == "running":
+            await asyncio.sleep(1)
+            continue
+        if not recovery_pending(legacy):
+            await execution.repo.fail_execution(execution.run_id, execution.generation)
+            return launched
+        next_at = legacy.get("next_resume_at")
+        if next_at:
+            try:
+                due = datetime.fromisoformat(next_at.replace("Z","+00:00"))
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=timezone.utc)
+                delay = (due-datetime.now(timezone.utc)).total_seconds()
+                if delay > 0:
+                    await asyncio.sleep(min(delay,10))
+                    continue
+            except (ValueError,TypeError):
+                pass
+        attempt = await resume_one(run["session_id"], reason="v2_recovery",
+                                   await_result=True)
+        launched = launched or attempt
+        await execution.flush()
+        if not attempt:
+            await asyncio.sleep(10)
+
+
+async def _settle_execution(execution):
+    """Translate a V1 involuntary stop into a V2 recovery attempt."""
+    from app.agent.runner import recovery_pending
+    from app.db import get_db
+
     state = await execution.repo.run(execution.run_id)
-    if state["state"] not in TERMINAL:
-        # A probe, policy gate, missing builder, or errored resume may decline to
-        # launch. Close the V2 run visibly instead of leaving it active forever.
-        await execution.repo.fail_execution(execution.run_id, execution.generation)
-    return launched
+    if state["state"] in TERMINAL or _shutting_down:
+        return
+    legacy = await get_db().run_state_get(state["session_id"])
+    if recovery_pending(legacy):
+        if await execution.repo.has_uncertain_tool_result(execution.run_id):
+            await execution.repo.fail_execution(
+                execution.run_id,execution.generation,
+                reason="Execution stopped with an unconfirmed tool result. Review activity before continuing.")
+            return
+        execution.repo.requeue_recovery(execution.run_id,execution.generation)
+    else:
+        await execution.repo.fail_execution(execution.run_id,execution.generation)
 
 
 async def _drive(owner,run_id):
@@ -175,7 +228,7 @@ async def _drive(owner,run_id):
                 if not done.cancelled() and done.exception() is not None:
                     driver.cancel()
             heartbeat.add_done_callback(lease_finished)
-            if run.get("stop_reason") == "server_restart_resume":
+            if run.get("stop_reason") in {"server_restart_resume","transcript_resume"}:
                 await _resume_orphan(execution, run)
                 return
             if str(run.get("stop_reason") or "").startswith("finalization_retry:"):
@@ -217,7 +270,7 @@ async def _drive(owner,run_id):
             await execution.flush()
             state=await repo.run(run_id)
             if state["state"] not in TERMINAL:
-                await repo.fail_execution(run_id,generation)
+                await _settle_execution(execution)
         except asyncio.CancelledError:
             if execution:
                 await execution.flush()
@@ -227,7 +280,7 @@ async def _drive(owner,run_id):
                 await execution.repo.journal(run_id,execution.generation,"execution_error",
                                              {"error_type":type(error).__name__,"incomplete":True,"stack":[{"file":f.filename,"line":f.lineno,"function":f.name} for f in traceback.extract_tb(error.__traceback__)],"sqlite_error":getattr(error,"sqlite_errorname",None)})
                 with contextlib.suppress(Fenced):
-                    await repo.fail_execution(run_id,execution.generation)
+                    await _settle_execution(execution)
         finally:
             if heartbeat:
                 heartbeat.cancel()

@@ -27,6 +27,8 @@
  * the Gen UI preview path; boot config applied by ui/shared/js/appearance.js.
  */
 
+import {authHeaders} from './left-login.js';
+
 // ── Tunables (overridable via configure()) ──────────────────────────────────
 
 const DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024; // 128 MB
@@ -121,6 +123,13 @@ export function put(key, blob) {
   return url;
 }
 
+function _fetchSource(srcUrl) {
+  // Workspace content grants still require the caller's identity. Keep bearer
+  // headers off arbitrary media URLs, including external and blob sources.
+  return fetch(srcUrl, srcUrl.startsWith('/api/v1/content/')
+    ? {headers:authHeaders()} : undefined);
+}
+
 /** The common path: return the cached object URL for `key`, else fetch `srcUrl`,
  *  cache the bytes, and return an object URL. On any fetch failure (or when the
  *  cache is disabled) resolves to `srcUrl` unchanged, so rendering still works.
@@ -130,7 +139,7 @@ export async function fetchUrl(key, srcUrl) {
   const hit = getUrl(key);
   if (hit) return hit;
   try {
-    const res = await fetch(srcUrl);
+    const res = await _fetchSource(srcUrl);
     if (!res.ok) return '';
     const blob = await res.blob();
     return put(key, blob) || '';
@@ -151,14 +160,15 @@ export async function thumbUrl(key, srcUrl, mimeType) {
   try {
     // Prefer the already-cached full blob; else fetch it once.
     let blob = getBlob(key);
+    let fullUrl = getUrl(key);
     if (!blob) {
-      const res = await fetch(srcUrl);
+      const res = await _fetchSource(srcUrl);
       if (!res.ok) return srcUrl;
       blob = await res.blob();
-      put(key, blob); // opportunistically cache the full bytes too
+      fullUrl = put(key, blob); // also serve small images without a second request
     }
     const thumb = await _downscale(blob);
-    if (!thumb) return srcUrl;
+    if (!thumb) return fullUrl || srcUrl;
     return put(tkey, thumb) || srcUrl;
   } catch {
     return srcUrl;

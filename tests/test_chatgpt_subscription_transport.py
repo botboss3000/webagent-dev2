@@ -102,11 +102,65 @@ def test_subscription_catalog_exposes_verified_roster_capabilities():
         assert model["modality_known"] is True
 
 
+def test_stale_sol_capabilities_normalize_and_oauth_worker_stays_selectable():
+    from app.admin.settings import (
+        _normalize_subscription_model_capabilities,
+        pick_vision_model,
+    )
+
+    stale = {
+        "entry_id": "sol-row",
+        "model": "gpt-5.6-sol",
+        "provider": "openai_subscription",
+        "auth_mode": "chatgpt",
+        "credential_scope": "agent",
+        "base_url": "codex://chatgpt",
+        "image_capable": False,
+        "text_capable": False,
+    }
+    normalized = _normalize_subscription_model_capabilities(stale)
+    assert normalized["image_capable"] is True
+    assert normalized["text_capable"] is True
+
+    picked = pick_vision_model({
+        "default": normalized,
+        "racers": [],
+        "credential_context": {"user_id": "user-9", "agent_id": "agent-7"},
+    })
+    assert picked == {
+        "entry_id": "sol-row",
+        "model": "gpt-5.6-sol",
+        "provider": "openai_subscription",
+        "auth_mode": "chatgpt",
+        "credential_scope": "agent",
+        "base_url": "codex://chatgpt",
+        "api_key": "",
+        "user_id": "user-9",
+        "agent_id": "agent-7",
+    }
+
+
+def test_text_only_subscription_row_is_not_selected_for_vision():
+    from app.admin.settings import pick_vision_model
+
+    caps = {
+        "default": {
+            "entry_id": "text-row",
+            "model": "subscription-text-only",
+            "provider": "openai_subscription",
+            "credential_scope": "platform",
+            "image_capable": False,
+        },
+        "racers": [],
+    }
+    assert pick_vision_model(caps) is None
+
+
 def test_model_table_keeps_text_roles_and_gates_media_roles_by_capability():
     source = open("ui/shared/js/model-table.js", encoding="utf-8").read()
-    assert "['Premium', m.text_capable !== false]" in source
-    assert "['System', m.text_capable !== false]" in source
-    assert "_buildRoleToggle(rolesSection, !!p.voice_capable" in source
+    assert "_buildRoleToggle(rolesSection, p.text_capable !== false, hasRole(p, 'premium')" in source
+    assert "_buildRoleToggle(rolesSection, p.text_capable !== false, hasRole(p, 'system')" in source
+    assert "_buildRoleToggle(rolesSection, liveVoiceCapable, hasRole(p, 'voice')" in source
     assert "voice_capable: capVoice" in source
 
 
@@ -191,7 +245,15 @@ def test_transport_auth_loads_selected_tenant(monkeypatch):
 
 def test_tenant_scopes_are_wired_to_each_configuration_surface():
     model_table = open("ui/shared/js/model-table.js", encoding="utf-8").read()
-    agent_ui = open("ui/main-panel/agents/js/tab-config.js", encoding="utf-8").read()
+    agent_ui = open("ui/main-panel/agents/configs/content.js", encoding="utf-8").read()
+    account_ui = open("ui/shared/js/my-models.js", encoding="utf-8").read()
+    assert "subscriptionScope = opts.subscriptionScope || 'platform'" in model_table
+    assert "scope=agent&agent_id=" in agent_ui
+    assert "scope=user" in account_ui
+    assert "profile_id" not in model_table
+
+    model_table = open("ui/shared/js/model-table.js", encoding="utf-8").read()
+    agent_ui = open("ui/main-panel/agents/configs/content.js", encoding="utf-8").read()
     account_ui = open("ui/shared/js/my-models.js", encoding="utf-8").read()
     assert "subscriptionScope = opts.subscriptionScope || 'platform'" in model_table
     assert "scope=agent&agent_id=" in agent_ui

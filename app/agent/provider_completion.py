@@ -334,7 +334,8 @@ async def ask_model(
     """Run one tools-free completion and return the model's text reply.
 
     Args:
-      model_cfg:  {model, base_url, api_key} for the target model (provider key).
+      model_cfg: target model plus either {base_url, api_key}, or subscription
+                 {entry_id, credential_scope, user_id, agent_id} identity.
       system_prompt: the worker's instructions ("you are X, do Y, report Z").
       user_text:  the question / task for this round.
       attachments: optional attachment dicts; any inlinable image among them is
@@ -346,12 +347,23 @@ async def ask_model(
     Returns the reply text, or None when the config is incomplete or the call
     fails. Never raises — callers treat None as "delegation unavailable".
     """
-    model = (model_cfg or {}).get("model", "")
-    base_url = (model_cfg or {}).get("base_url", "")
-    api_key = (model_cfg or {}).get("api_key", "")
-    if not (model and base_url and api_key):
+    cfg = model_cfg or {}
+    model = cfg.get("model", "")
+    base_url = cfg.get("base_url", "")
+    api_key = cfg.get("api_key", "")
+    subscription = (
+        cfg.get("provider") == "openai_subscription"
+        or cfg.get("auth_mode") == "chatgpt"
+        or base_url == "codex://chatgpt"
+    )
+    valid_credentials = (
+        bool(cfg.get("entry_id") and cfg.get("credential_scope"))
+        if subscription else bool(base_url and api_key)
+    )
+    if not model or not valid_credentials:
         if error_sink is not None:
-            error_sink.append("ask_model: incomplete model config (missing model/base_url/api_key)")
+            needed = "model/entry_id/credential_scope" if subscription else "model/base_url/api_key"
+            error_sink.append(f"ask_model: incomplete model config (missing {needed})")
         return None
 
     # Inline any image attachments (reusing the shared mime/size/storage guards).
@@ -366,6 +378,10 @@ async def ask_model(
             if url:
                 image_parts.append({"type": "image_url", "image_url": {"url": url}})
 
+    if attachments and not image_parts:
+        if error_sink is not None:
+            error_sink.append("ask_model: image attachment could not be read")
+        return None
     if image_parts:
         user_content: Any = [{"type": "text", "text": user_text or ""}, *image_parts]
     else:
@@ -377,7 +393,15 @@ async def ask_model(
         from app.openai_compat import AsyncOpenAI
 
     try:
-        client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+        if subscription:
+            client = SubscriptionResponseClient(
+                scope=str(cfg.get("credential_scope") or ""),
+                entry_id=str(cfg.get("entry_id") or ""),
+                user_id=str(cfg.get("user_id") or ""),
+                agent_id=str(cfg.get("agent_id") or ""),
+            )
+        else:
+            client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         resp = await complete_text(
             client,
             model=model,

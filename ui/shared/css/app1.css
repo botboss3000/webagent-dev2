@@ -2817,13 +2817,15 @@ body.light-mode .chat-skeleton-bubble.user {
 }
 #chat-component-panel.has-components { opacity: 1; }
 /* Open: this is the one solid component surface, directly measured and pinned
-   by _positionFullView. JS sets its explicit transcript-aligned pixel width. */
+   by _positionFullView. JS supplies the available transcript width; the same
+   config variable that sizes the transcript remains the authoritative cap. */
 #chat-component-panel.open {
   position: fixed;
   margin: 0;
   z-index: 4; /* composer (5) stays above the lower edge of this 75% overlay */
   width: auto;
-  max-width: none;
+  /* Override the legacy inline maxWidth reset until positioning is CSS-only. */
+  max-width: var(--chat-surface-max-width, 100%) !important;
   pointer-events: auto;
   background: var(--bg-elev);
   border-color: var(--border);

@@ -137,12 +137,13 @@ class ChatRepository:
             message_id, stamp = uid(), now()
             active = conn.execute("""SELECT * FROM chat_runs WHERE session_id=? AND state IN ('queued','running')
                 ORDER BY created_at DESC LIMIT 1""", (session_id,)).fetchone()
-            run_id = active["id"] if active else uid()
+            recovering = bool(active and active["stop_reason"] in {"server_restart_resume","transcript_resume"})
+            run_id = active["id"] if active and not recovering else uid()
             conn.execute("INSERT INTO chat_messages VALUES (?,?,?,?,?,?,?)",
                          (message_id, session_id, author_id, cmid, fingerprint, encrypted, stamp))
-            if not active:
-                parent=None
-                if payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
+            if not active or recovering:
+                parent=active["id"] if recovering else None
+                if parent is None and payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
                     previous=conn.execute("""SELECT id FROM chat_runs WHERE session_id=?
                         AND state IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 1""",
                         (session_id,)).fetchone()
@@ -348,10 +349,29 @@ class ChatRepository:
                  candidate_id,marker,stamp,stamp))
             return {"run_id":run_id,"parent_run_id":parent["id"],"duplicate":False}
 
-    async def fail_execution(self, run_id, generation):
+    async def has_uncertain_tool_result(self, run_id):
+        """A call without a durable result must not be replayed automatically."""
+        with self.transaction(write=False) as conn:
+            self._run(conn,run_id)
+            rows=list(conn.execute("""SELECT kind,payload FROM chat_execution
+                WHERE run_id=? AND kind IN ('tool_call','tool_result') ORDER BY seq""",
+                (run_id,)))
+        pending=set()
+        for row in rows:
+            event=await self.decode(row["payload"])
+            call_id=event.get("tool_call_id")
+            if row["kind"]=="tool_call":
+                if not call_id:
+                    return True
+                pending.add(call_id)
+            elif call_id:
+                pending.discard(call_id)
+        return bool(pending)
+
+    async def fail_execution(self, run_id, generation, *, reason=None):
         """Terminally close an execution error without offering draft-only retry."""
         payload=await self.encode({
-            "text":"Execution stopped before a final answer was available. You can continue in a new run.",
+            "text":reason or "Execution stopped before a final answer was available. You can continue in a new run.",
             "system_outcome":"failed",
         })
         with self.transaction() as conn:
@@ -361,6 +381,14 @@ class ChatRepository:
             conn.execute("UPDATE chat_runs SET state='failed',lease_until=0,updated_at=? WHERE id=?",
                          (now(),run_id))
             return result
+
+    def requeue_recovery(self, run_id, generation):
+        """Keep an involuntary stop under V2 ownership for transcript recovery."""
+        with self.transaction() as conn:
+            self._run(conn,run_id,generation,{"running","finalizing"})
+            conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
+                lease_owner=NULL,lease_until=0,stop_reason='transcript_resume',updated_at=?
+                WHERE id=?""",(now(),run_id))
 
     async def snapshot(self, session_id, *, before=None, limit=100):
         limit = max(1,min(limit,200))

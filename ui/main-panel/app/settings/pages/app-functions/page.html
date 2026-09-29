@@ -102,6 +102,20 @@
           </span>
         </div>
 
+        <!-- ── Site name ──
+             Saved server-side as site_name in app-settings.json and applied to
+             the browser title plus the public SEO/site identity. -->
+        <div class="ac-ability-row" id="ac-site-name-row">
+          <span class="ac-ability-icon"><i data-lucide="type" class="lucide-icon ac-ico-18 ac-fg-accent"></i></span>
+          <div class="ac-ability-label">
+            <div class="ac-ability-name">Site name</div>
+            <div class="ac-ability-desc">The name shown in the browser tab and public site metadata.</div>
+          </div>
+          <span class="ac-config-control">
+            <input type="text" id="ac-site-name" class="ac-input" maxlength="120" placeholder="WebAgent" autocomplete="off">
+          </span>
+        </div>
+
         <!-- ── Row · Voice dictation (expandable policy) ──
              The toggle allows recorded audio to leave the browser for
              transcription by the configured LLM provider. Expand to choose

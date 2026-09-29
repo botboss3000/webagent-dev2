@@ -764,7 +764,7 @@ def _iso_ts(ts) -> str:
 
 def _seo_head_block(origin: str, path: str, title: str, desc: str, noindex: bool = False,
                     og_type: str = "website", published=None, modified=None,
-                    image: str = None) -> str:
+                    image: str = None, site_name: str = "WebAgent") -> str:
     """Build the shared SEO / social-preview <head> tags (description, canonical,
     Open Graph, Twitter card) with ABSOLUTE urls — link scrapers reject relative
     og:image / og:url. Used by both the app shell and the landing page. Pass
@@ -797,7 +797,7 @@ def _seo_head_block(origin: str, path: str, title: str, desc: str, noindex: bool
         f'<link rel="canonical" href="{eurl}">\n'
         f'<meta property="og:type" content="{_esc(og_type, quote=True)}">\n'
         + article_meta
-        + f'<meta property="og:site_name" content="WebAgent">\n'
+        + f'<meta property="og:site_name" content="{_esc(site_name, quote=True)}">\n'
         f'<meta property="og:title" content="{et}">\n'
         f'<meta property="og:description" content="{ed}">\n'
         f'<meta property="og:url" content="{eurl}">\n'
@@ -827,14 +827,14 @@ def _jsonld_block(*objs) -> str:
     return f'<script type="application/ld+json">{text}</script>\n'
 
 
-def _home_jsonld(origin: str) -> str:
+def _home_jsonld(origin: str, site_name: str = "WebAgent") -> str:
     """Organisation + WebSite structured data for the public home page — lets
     search engines treat the site as a named entity (brand name + logo) and is
     the basis for brand sitelinks. Emitted only on indexable home surfaces."""
     org = {
         "@context": "https://schema.org",
         "@type": "Organization",
-        "name": "WebAgent",
+        "name": site_name,
         "url": origin + "/",
         "logo": origin + _SEO_LOGO_IMAGE,
         "description": _SEO_DEFAULT_DESC,
@@ -844,7 +844,7 @@ def _home_jsonld(origin: str) -> str:
     site = {
         "@context": "https://schema.org",
         "@type": "WebSite",
-        "name": "WebAgent",
+        "name": site_name,
         "url": origin + "/",
     }
     return _jsonld_block(org, site)
@@ -956,16 +956,19 @@ def _render_app_shell(
     (see the matching KEEP comment in index.html)."""
     import json
     from html import escape as _esc
+    from app.admin.settings import get_site_name
+
+    site_name = get_site_name()
     if not _ROOT_INDEX_HTML.is_file():
         return HTMLResponse("<p>Missing index.html</p>", status_code=404)
     html = _ROOT_INDEX_HTML.read_text(encoding="utf-8")
     origin = _seo_origin(request)
     path = request.url.path or "/"
-    title = _SEO_DEFAULT_TITLE
+    title = site_name
     desc = _SEO_DEFAULT_DESC
     if agent_name:
-        title = f"Chat with {agent_name} — WebAgent"
-        desc = f"Chat with {agent_name}, an AI agent on WebAgent."
+        title = f"Chat with {agent_name} — {site_name}"
+        desc = f"Chat with {agent_name}, an AI agent on {site_name}."
     elif route_error:
         # Keep failed public links non-indexable and generic: the response must
         # not reveal whether an agent was deleted, disabled, or never existed.
@@ -976,7 +979,7 @@ def _render_app_shell(
     # duplicate content. Public-agent and route-error URLs keep their own path and
     # are noindex, so neither becomes a misleading canonical home page.
     canonical_path = path if (agent_id or route_error) else "/"
-    meta = _seo_head_block(origin, canonical_path, title, desc, noindex=bool(agent_id or route_error))
+    meta = _seo_head_block(origin, canonical_path, title, desc, noindex=bool(agent_id or route_error), site_name=site_name)
     if route_error:
         meta += f"<script>window.__routeError = {json.dumps(route_error)};</script>\n"
     if agent_id:
@@ -993,7 +996,7 @@ def _render_app_shell(
     else:
         # Brand identity (Organisation + WebSite) for the indexable app home. A
         # public agent link is noindex, so it skips this.
-        meta += _home_jsonld(origin)
+        meta += _home_jsonld(origin, site_name)
     if chat_portal:
         meta += (
             '<script>document.documentElement.classList.add("chat-portal"); '
@@ -1094,6 +1097,10 @@ def _render_landing_page(request: Request):
 async def shutdown():
     """Close browser instances and persistent terminal session on server shutdown."""
     app.state.startup_phase = "stopping"
+    if os.environ.get("WEBAGENT_V2_ISOLATED") == "1":
+        # The main shutdown hook runs before V2's worker-cancellation hook.
+        from app.chat import runtime as chat_runtime
+        chat_runtime._shutting_down = True
     if performance_test_mode():
         app.state.startup_phase = "stopped"
         return

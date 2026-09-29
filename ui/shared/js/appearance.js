@@ -384,6 +384,12 @@
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (cfg) {
       if (!cfg) return;
+      // Reconcile the server-rendered title with the saved app-wide name for
+      // cached shells and runtime config refreshes. Preserve public-agent and
+      // route-error titles, which are more specific than the site name.
+      if (!window.__agentId && !window.__routeError && typeof cfg.site_name === 'string' && cfg.site_name.trim()) {
+        document.title = cfg.site_name.trim();
+      }
       var changed = false;
       for (var k in DEFAULTS) {
         if (DEFAULTS.hasOwnProperty(k) && typeof cfg[k] === 'string' && cfg[k] && cfg[k] !== values[k]) {

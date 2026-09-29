@@ -31,7 +31,7 @@ const _MESSAGE_GUTTER_DEFAULTS = {
   },
   more_menu: {
     enabled: true,
-    order: ['context', 'cost', 'model', 'message_id', 'schema', 'refresh'],
+    order: ['context', 'cost', 'model', 'message_id', 'row_details', 'schema', 'refresh'],
     controls: {},
   },
 };
@@ -2091,6 +2091,50 @@ function _openBubbleMoreMenu(btn, bubble) {
     model: modelRow,
     message_id: idRow,
   };
+
+  if (bubble.classList.contains('agent') && bubble.dataset.publicId) {
+    const detailsRow = document.createElement('button');
+    detailsRow.type = 'button';
+    detailsRow.className = 'bubble-more-row bubble-more-action';
+    detailsRow.dataset.moreControl = 'row_details';
+    detailsRow.setAttribute('role', 'menuitem');
+    detailsRow.style.cssText = 'width:100%;border:0;background:transparent;color:inherit;font:inherit;text-align:left;';
+    detailsRow.innerHTML = '<span class="bubble-more-label"><i data-lucide="database" style="width:13px;height:13px;"></i><span>row detials</span></span>';
+    detailsRow.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const sessionId = app.currentSessionId;
+      const messageId = bubble.dataset.publicId;
+      const userId = app.currentUserId;
+      detailsRow.disabled = true;
+      detailsRow.querySelector('span span').textContent = 'Loading…';
+      try {
+        const response = await fetch(apiPath('/api/v2/chat/sessions/' +
+          encodeURIComponent(sessionId) + '/messages/' + encodeURIComponent(messageId) + '/row-details'),
+          { headers: authHeaders(), cache: 'no-store' });
+        if (!response.ok) throw new Error(response.status === 404 ? 'Message not found' :
+          response.status === 401 || response.status === 403 ? 'Access denied' : 'Could not load row details');
+        const details = await response.json();
+        if (!menu.isConnected || sessionId !== app.currentSessionId || userId !== app.currentUserId) return;
+        const content = document.createElement('div');
+        const summary = document.createElement('p');
+        summary.textContent = 'Table: ' + details.table + ' · Render type (kind): ' + details.render_type;
+        const note = document.createElement('p');
+        note.textContent = 'Complete stored row. payload contains the exact decrypted JSON string; parsed_payload expands it below.';
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-mono);';
+        pre.textContent = JSON.stringify(details, null, 2);
+        content.append(summary, note, pre);
+        _closeBubbleMoreMenu();
+        openChatElementFullView(content, btn, 'Row details');
+      } catch (error) {
+        if (menu.isConnected) detailsRow.querySelector('span span').textContent = error.message + ' — retry';
+      } finally {
+        detailsRow.disabled = false;
+      }
+    });
+    menu.appendChild(detailsRow);
+    moreRows.row_details = detailsRow;
+  }
 
   // Schema snapshots are available only on agent messages that sent one to the
   // LLM. Keep this technical action in More rather than the visible gutter.

@@ -1817,7 +1817,9 @@ select.cvm-connect-input { font-family: inherit; }
   min-height: calc(var(--inst-grid-h, 100vh) - 56px);
 }
 .inst-detail:has(.inst-file-manager-host) .inst-file-manager-host {
-  height: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -1825,7 +1827,9 @@ select.cvm-connect-input { font-family: inherit; }
 /* The .admin-tools shell explorer.html injects is a full-height flex row; it must
    fill the host so the sidebar + editor split fills the tab. */
 .inst-file-manager-host .admin-tools {
-  height: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1;
 }
 /* Lucide icons are decorative (clicks route to their parent button) — mirror the
    #tab-explorer rule so the nested file manager's buttons respond the same way. */

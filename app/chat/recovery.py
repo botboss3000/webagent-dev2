@@ -46,6 +46,8 @@ async def supervise():
 
 async def shutdown(task):
     from .runtime import _tasks
+    from . import runtime
+    runtime._shutting_down = True
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task

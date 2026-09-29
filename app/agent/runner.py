@@ -760,12 +760,36 @@ async def _probe_provider_for_run(db: Any, row: Dict[str, Any]) -> bool:
         return False
 
 
-async def resume_one(session_id: str, *, reason: Optional[str] = None) -> bool:
+async def resume_one(session_id: str, *, reason: Optional[str] = None,
+                     await_result: bool = False) -> bool:
     """Attempt to re-ignite a single stopped run. Returns True if a resume turn
     was launched. Enforces eligibility, the retry budget + backoff, the opt-out,
     and an atomic lease so a live run is never double-started."""
     from app.db import get_db
     from app.agent.run_manager import get_run_manager
+
+    # Controlled V2 runs have their own publication and recovery authority.
+    # The inherited boot sweep and watchdog must not start an unbound replay.
+    if reason != "v2_recovery":
+        import os
+        if os.environ.get("WEBAGENT_V2_ISOLATED") == "1":
+            from app.db import get_user_db
+            try:
+                row = await get_db().run_state_get(session_id)
+                owner = row.get("user_id") if row else None
+                if owner:
+                    conn = get_user_db(owner)._get_conn()
+                    try:
+                        controlled = conn.execute(
+                            "SELECT 1 FROM chat_runs WHERE session_id=? LIMIT 1",
+                            (session_id,)).fetchone()
+                    finally:
+                        conn.close()
+                    if controlled:
+                        return False
+            except Exception:
+                logger.exception("Could not check V2 ownership for %s",session_id)
+                return False
 
     # Kill switch: while engaged, auto-resume is suppressed. This is the single
     # funnel for every involuntary revival (watchdog, boot orphan-resume, runtime
@@ -1010,6 +1034,7 @@ async def resume_one(session_id: str, *, reason: Optional[str] = None) -> bool:
         relaunch_ctx=rc, fresh=False, replace=False,
         build_turn=lambda replaced: builder(rc, True),
         owner_token=token,
+        await_result=await_result,
     )
     return True
 

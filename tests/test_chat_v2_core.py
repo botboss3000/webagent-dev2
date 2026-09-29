@@ -53,6 +53,40 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         await self.repo.consume(receipt["run_id"],generation)
         return receipt["run_id"],generation
 
+    async def test_row_details_returns_every_column_and_exact_plaintext(self):
+        from unittest.mock import AsyncMock, patch
+        from app.chat.api import row_details
+        from fastapi import HTTPException
+        receipt = await self.repo.accept("s", "alice", Send(client_message_id="row", text="Hello"), self.policy)
+        scope = AsyncMock(return_value=("alice", self.repo, {}))
+        with self.repo.transaction(write=False) as conn:
+            stored = dict(conn.execute("SELECT * FROM chat_publications WHERE id=?",
+                                       (receipt["message_id"],)).fetchone())
+        raw = await self.repo.cipher.decrypt("alice", stored["payload"])
+        with patch("app.chat.api.scope", scope):
+            result = await row_details("s", receipt["message_id"], None)
+            self.assertEqual(result["row"], {**stored, "payload": raw})
+            self.assertEqual(result["parsed_payload"], json.loads(raw))
+            self.assertEqual(result["render_type"], "user")
+            self.assertEqual(result["table"], "chat_publications")
+            self.assertEqual(scope.await_count, 2)
+            with self.assertRaises(HTTPException) as caught:
+                await row_details("different-session", receipt["message_id"], None)
+            self.assertEqual(caught.exception.status_code, 404)
+
+    async def test_row_details_checks_owner_and_rechecks_access(self):
+        from unittest.mock import AsyncMock, patch
+        from app.chat.api import row_details
+        from fastapi import HTTPException
+        receipt = await self.repo.accept("s", "alice", Send(client_message_id="row", text="Hello"), self.policy)
+        denied = HTTPException(404, "Session not found")
+        with patch("app.chat.api.scope", AsyncMock(side_effect=denied)):
+            with self.assertRaises(HTTPException):
+                await row_details("s", receipt["message_id"], None)
+        with patch("app.chat.api.scope", AsyncMock(side_effect=[("alice", self.repo, {}), denied])):
+            with self.assertRaises(HTTPException):
+                await row_details("s", receipt["message_id"], None)
+
     async def test_accept_is_idempotent_and_conflicts_on_changed_content(self):
         command=Send(client_message_id="one",text="Hello")
         first=await self.repo.accept("s","alice",command,self.policy)
@@ -268,6 +302,117 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
                       [event["kind"] for event in await self.repo.activity("s")])
         self.assertNotIn("Original user request",json.dumps(await self.repo.snapshot("s")))
 
+    async def test_new_message_waits_behind_recovering_run(self):
+        run,g=await self.start()
+        self.repo.requeue_recovery(run,g)
+        later=await self.repo.accept(
+            "s","alice",Send(client_message_id="later",text="New direction"),self.policy)
+        self.assertNotEqual(later["run_id"],run)
+        recovery=self.repo.claim(run,"recovery-worker")
+        with self.assertRaises(Conflict):
+            self.repo.claim(later["run_id"],"next-worker")
+        await self.repo.fail_execution(run,recovery)
+        next_generation=self.repo.claim(later["run_id"],"next-worker")
+        rows=await self.repo.consume(later["run_id"],next_generation)
+        self.assertEqual([row["text"] for row in rows],["New direction"])
+        self.assertEqual((await self.repo.run(later["run_id"]))["parent_run_id"],run)
+
+    async def test_v1_watchdog_does_not_claim_a_v2_run(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock, patch
+        from app.agent.runner import resume_one
+
+        run,g=await self.start()
+        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
+            "user_id":"alice","status":"interrupted","stop_cause":"crash"}))
+        manager=Mock()
+        with patch.dict("os.environ",{"WEBAGENT_V2_ISOLATED":"1"}), \
+             patch("app.db.get_db",return_value=legacy), \
+             patch("app.db.get_user_db",return_value=SimpleNamespace(_get_conn=self.connect)), \
+             patch("app.agent.run_manager.get_run_manager",return_value=manager):
+            self.assertFalse(await resume_one("s",reason="runtime:crash"))
+        manager.is_running.assert_not_called()
+        self.assertEqual((await self.repo.run(run))["state"],"running")
+
+
+    async def test_unconfirmed_tool_result_blocks_automatic_replay(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.chat.runtime import Execution, _settle_execution
+
+        run,g=await self.start()
+        await self.repo.journal(run,g,"tool_call",{
+            "tool":"external_write","tool_call_id":"call-1"})
+        self.assertTrue(await self.repo.has_uncertain_tool_result(run))
+        execution=Execution(self.repo,run,g)
+        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
+            "status":"error","stop_cause":"crash"}))
+        with patch("app.db.get_db",return_value=legacy):
+            await _settle_execution(execution)
+        self.assertEqual((await self.repo.run(run))["state"],"failed")
+        item=(await self.repo.snapshot("s"))["items"][-1]
+        self.assertIn("unconfirmed tool result",item["payload"]["text"])
+
+    async def test_confirmed_tool_result_is_eligible_for_recovery(self):
+        run,g=await self.start()
+        await self.repo.journal(run,g,"tool_call",{
+            "tool":"read_source","tool_call_id":"call-1"})
+        await self.repo.journal(run,g,"tool_result",{
+            "tool":"read_source","tool_call_id":"call-1"})
+        self.assertFalse(await self.repo.has_uncertain_tool_result(run))
+
+
+    async def test_recoverable_execution_requeues_without_failure(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.chat.runtime import Execution, _settle_execution
+
+        run,g=await self.start()
+        execution=Execution(self.repo,run,g)
+        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
+            "status":"error","stop_cause":"crash"}))
+        with patch("app.db.get_db",return_value=legacy):
+            await _settle_execution(execution)
+        state=await self.repo.run(run)
+        self.assertEqual((state["state"],state["stop_reason"]),
+                         ("queued","transcript_resume"))
+        self.assertEqual(self.repo.pending_runs(),[run])
+        self.assertEqual([item["kind"] for item in (await self.repo.snapshot("s"))["items"]],
+                         ["user"])
+
+    async def test_shutdown_keeps_run_for_boot_recovery(self):
+        from app.chat import runtime
+        from app.chat.runtime import Execution, _settle_execution
+
+        run,g=await self.start()
+        execution=Execution(self.repo,run,g)
+        prior=runtime._shutting_down
+        runtime._shutting_down=True
+        try:
+            await _settle_execution(execution)
+        finally:
+            runtime._shutting_down=prior
+        self.assertEqual((await self.repo.run(run))["state"],"running")
+        self.assertEqual(await self.repo.recover_orphaned(),[run])
+        self.assertEqual((await self.repo.run(run))["stop_reason"],
+                         "server_restart_resume")
+
+    async def test_nonrecoverable_execution_is_terminal(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.chat.runtime import Execution, _settle_execution
+
+        run,g=await self.start()
+        execution=Execution(self.repo,run,g)
+        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
+            "status":"error","stop_cause":"provider_unavailable"}))
+        with patch("app.db.get_db",return_value=legacy):
+            await _settle_execution(execution)
+        self.assertEqual((await self.repo.run(run))["state"],"failed")
+        self.assertEqual((await self.repo.snapshot("s"))["items"][-1]["kind"],
+                         "failure")
+
+
     async def test_execution_error_has_no_finalization_retry(self):
         run,g=await self.start()
         await self.repo.journal(run,g,"execution_error",{"error_type":"ProviderFailure"})
@@ -389,6 +534,7 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_boot_orphan_resume_publishes_through_v2_authority(self):
         from unittest.mock import AsyncMock, patch
+        from types import SimpleNamespace
         from app.chat.context import current
         from app.chat.execution import _emit_to_visualizers
         from app.chat.runtime import Execution, _resume_orphan
@@ -398,8 +544,10 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         generation=self.repo.claim(run,"recovery-worker")
         execution=Execution(self.repo,run,generation)
 
-        async def resumed(session_id,reason=None):
-            self.assertEqual((session_id,reason),("s","v2_boot"))
+        async def resumed(session_id,reason=None,await_result=False):
+            self.assertEqual((session_id,reason),("s","v2_recovery"))
+            self.assertTrue(await_result)
+            await asyncio.sleep(0.01)
             await _emit_to_visualizers("s",{
                 "type":"response","content":"Recovered answer",
                 "terminal_candidate":True,
@@ -407,9 +555,12 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
             })
             return True
 
+        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
+            "status":"interrupted","stop_cause":"server_restart"}))
         token=current.set(execution)
         try:
-            with patch("app.agent.runner.resume_one",new=AsyncMock(side_effect=resumed)):
+            with patch("app.agent.runner.resume_one",new=AsyncMock(side_effect=resumed)), \
+                 patch("app.db.get_db",return_value=legacy):
                 self.assertTrue(await _resume_orphan(execution,await self.repo.run(run)))
         finally:
             current.reset(token)

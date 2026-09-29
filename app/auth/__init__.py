@@ -690,6 +690,7 @@ class UiConfigResponse(BaseModel):
     # (ui/shared/js/main.js applies it at boot; the App Settings toggle applies
     # it live). Default OFF (screen sleeps normally).
     always_on_display: bool = False
+    site_name: str = "WebAgent"
     # Chat presentation + copy — served as a dict so every chat surface can be
     # configured at boot without a server restart.
     chat_ui: dict
@@ -721,6 +722,7 @@ async def ui_config(request: Request, agent_id: str = Query(None)):
         get_allow_user_appearance,
         get_session_completion_notifications,
         get_always_on_display,
+        get_site_name,
         get_voice_dictation_config,
         get_hide_header_on_keyboard,
         get_hide_header_kb_threshold,
@@ -835,6 +837,7 @@ async def ui_config(request: Request, agent_id: str = Query(None)):
         allow_user_appearance=allow_user_appearance,
         session_completion_notifications=get_session_completion_notifications(),
         always_on_display=get_always_on_display(),
+        site_name=get_site_name(),
         voice_dictation_llm_enabled=voice_dictation["llm_enabled"],
         voice_dictation_mode=voice_dictation["mode"],
         hide_header_on_keyboard=get_hide_header_on_keyboard(),

@@ -167,6 +167,36 @@ class AskModel(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(text)
         self.assertIn("no remaining credits", " ".join(sink))
 
+    async def test_subscription_worker_uses_oauth_identity_without_api_key(self):
+        seen = {}
+
+        async def complete(client, **kwargs):
+            seen["client"] = client
+            seen["kwargs"] = kwargs
+            return _response("described")
+
+        cfg = {
+            "entry_id": "sol-row",
+            "model": "gpt-5.6-sol",
+            "provider": "openai_subscription",
+            "auth_mode": "chatgpt",
+            "credential_scope": "agent",
+            "base_url": "codex://chatgpt",
+            "user_id": "user-9",
+            "agent_id": "agent-7",
+        }
+        with patch("app.agent.provider_completion.complete_text", new=complete):
+            text = await ask_model(cfg, "system", "inspect the image")
+
+        self.assertEqual(text, "described")
+        client = seen["client"]
+        self.assertIsInstance(client, SubscriptionResponseClient)
+        self.assertEqual(
+            (client.scope, client.entry_id, client.user_id, client.agent_id),
+            ("agent", "sol-row", "user-9", "agent-7"),
+        )
+        self.assertEqual(seen["kwargs"]["provider"], "openai_subscription")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,7 +87,8 @@ def build_tools(*, user_id: str = "", session_id: str = "", agent_id: str = "",
         except Exception:
             pass
         try:
-            caps = await load_llm_capabilities_for_user(user_id)
+            agent_rec = await db.get_agent_by_id(agent_id) if agent_id else None
+            caps = await load_llm_capabilities_for_user(user_id, agent_rec=agent_rec)
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Could not read model config: {e}"})
         vision = pick_vision_model(caps)

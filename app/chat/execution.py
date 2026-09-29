@@ -2856,7 +2856,7 @@ async def _chat_impl(request: ChatRequest, fastapi_request: Request):
         async for _dev in _maybe_describe_images(
             db, request.user_id, request.message, user_interaction_id,
             loop_config, attachment_docs, _desc_out,
-            agent_id=agent["id"], session_id=request.session_id,
+            agent_id=agent["id"], agent_rec=agent, session_id=request.session_id,
         ):
             await _emit_to_visualizers(request.session_id, _dev)
         # Launcher element-pickup fingerprint → foldable chip + this-turn fold.
@@ -4305,7 +4305,7 @@ async def _run_turn_background(
             async for _dev in _maybe_describe_images(
                 db, request.user_id, request.message, user_interaction_id,
                 loop_config, attachment_docs, _desc_out,
-                agent_id=agent["id"], session_id=session_id,
+                agent_id=agent["id"], agent_rec=agent, session_id=session_id,
             ):
                 await event_callback(_dev)
         # Launcher element-pickup fingerprint → foldable chip + this-turn fold.
@@ -4640,6 +4640,15 @@ async def _run_turn_background(
         # (user_stop / replaced) already on the row is preserved by run_state_finish.
         _web_cause = ("complete" if final_status == "complete"
                       else (final_stop_cause or "crash") if final_status == "error" else None)
+        if final_status == "interrupted":
+            # A worker shutdown cancels the turn before the boot sweep runs.
+            # Persist an involuntary cause so transcript recovery can claim it;
+            # retain a cause already recorded by Stop, replace, or watchdog.
+            try:
+                _prior = await db.run_state_get(session_id)
+                _web_cause = (_prior or {}).get("stop_cause") or "crash"
+            except Exception:
+                _web_cause = "crash"
         try:
             # NOT offloaded: run_state_finish emits an agent-status WebSocket
             # broadcast (main-loop-bound notify_user), so it stays on the loop.
@@ -5476,7 +5485,7 @@ def unregister_visualizer_listener(session_id: str, websocket: Any):
 
 async def _maybe_describe_images(db, user_id, message, user_interaction_id,
                                  loop_config, attachment_docs, out,
-                                 agent_id="", session_id=""):
+                                 agent_id="", agent_rec=None, session_id=""):
     """Attachment type-router step (async generator).
 
     Routes each attached image by the agent's actual model capability (see
@@ -5509,7 +5518,7 @@ async def _maybe_describe_images(db, user_id, message, user_interaction_id,
 
     from app.admin.settings import load_llm_capabilities_for_user, media_routing
     try:
-        caps = await load_llm_capabilities_for_user(user_id)
+        caps = await load_llm_capabilities_for_user(user_id, agent_rec=agent_rec)
     except Exception as e:
         logger.warning("attachment route: capability read failed: %s", e)
         return

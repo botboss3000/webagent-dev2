@@ -3,16 +3,50 @@ import * as chat from './client.js';
 import {reconcilePublicNodes} from './projection.js';
 import {addChatBubble} from '../js/chat-bubble.js';
 import {renderActivity, disconnectActivity} from './activity-view.js';
+import {getPendingAttachments, renderAttachmentElement} from '../../shared/js/attachments.js';
+import {apiPath} from '../../shared/js/config.js';
+import {authHeaders} from '../../shared/js/left-login.js';
 
 let session=null,unsubscribe=null,epoch=0,pending=[],lastState=null;
 function current(id,generation) {
   return id===session && id===app.currentSessionId && generation===epoch;
+}
+function appendUserAttachment(node, attachment) {
+  const id=attachment?.attachment_id;
+  if(!id || [...node.children].some(child=>child.dataset.attachmentId===id)) return;
+  const element=renderAttachmentElement(attachment,{thumbnail:true});
+  if(!element) return;
+  element.dataset.attachmentId=id;
+  node.appendChild(element);
+}
+function renderUserAttachments(node, item) {
+  const ids=Array.isArray(item.payload.attachment_ids)
+    ? item.payload.attachment_ids.filter(id=>typeof id==='string' && id) : [];
+  if(!ids.length) return;
+  const sessionId=session, generation=epoch;
+  if(item.pending) {
+    for(const attachment of getPendingAttachments()) {
+      if(ids.includes(attachment.attachment_id)) appendUserAttachment(node,attachment);
+    }
+  }
+  // Published messages carry stable IDs, while the upload API owns MIME type
+  // and current content grants. Resolve those for cold history and outbox restores.
+  for(const id of ids) {
+    if([...node.children].some(child=>child.dataset.attachmentId===id)) continue;
+    fetch(apiPath('/api/v1/upload/'+encodeURIComponent(id)),{headers:authHeaders()})
+      .then(response=>response.ok?response.json():null)
+      .then(attachment=>{
+        if(attachment && current(sessionId,generation) && node.parentNode===app.chatMessages)
+          appendUserAttachment(node,{...attachment,attachment_id:id});
+      }).catch(()=>{});
+  }
 }
 function createNode(item) {
   if(!['user','answer','notice','failure'].includes(item.kind) || typeof item.payload.text!=='string') return null;
   const role=item.kind==='user'?'user':'agent';
   const node=addChatBubble(role,item.payload.text,'published'+(item.pending?' pending':''),
     undefined,item.run_id,item.id,item.created_at);
+  if(role==='user') renderUserAttachments(node,item);
   if(item.pending) {
     const label=document.createElement('span');
     label.dataset.submissionStatus='pending';

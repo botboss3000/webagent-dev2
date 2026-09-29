@@ -36,6 +36,7 @@ import { _sessionsCache, _formatRelativeTime, sessionDropdownStore } from './ses
 import { switchToSession } from './session-core.js?v=515';
 import { apiPath } from '../../shared/js/config.js';
 import { authHeaders } from '../../shared/js/left-login.js';
+import {setNotificationUnread} from '../core/notifications.js';
 import {
   flagLabel,
   resolveSessionFlag,
@@ -114,6 +115,13 @@ function _currentUserId() {
  *  list repaints from the same source of truth, exactly as the dropdown's own
  *  markSessionRead does. */
 async function _markSessionRead(sid) {
+  if (await setNotificationUnread(sid,false)) {
+    const payload={ok:true,session_id:sid,read_at:new Date().toISOString()};
+    window.dispatchEvent(new CustomEvent('session:visited', {
+      detail: { sessionId:sid, visitedAt:payload.read_at },
+    }));
+    return payload;
+  }
   const res = await fetch(apiPath(
     `/api/v1/db/sessions/${encodeURIComponent(sid)}/read`
     + `?db=user.db&user_id=${encodeURIComponent(_currentUserId())}`,

@@ -24,6 +24,7 @@ import { applyRubberBand } from '../../../shared/js/rubber-band.js';
 import { kvCache } from '../../js/storage/kv-cache.js';
 import { compareSessionsByPinnedOrder } from '../../../shared/js/session-ordering.js';
 import { sessionAttentionFlag, sessionFlagIsRead, flagLabel, flagTone, closingCta } from '../../../shared/js/session-flag.js';
+import {enrichSessions} from '../../core/notifications.js';
 
 let _sessionsCache = [];
 
@@ -508,7 +509,7 @@ function _isSessionRead(session) {
 function _reconcileSessionReadState(sessions) {
   return sessions.map((session) => {
     const override = _sessionReadStateOverrides.get(session.id);
-    return override ? { ...session, ...override } : session;
+    return override && !session.v2_notification ? { ...session, ...override } : session;
   });
 }
 
@@ -2256,6 +2257,11 @@ async function populateSessionSelect(userId, { preferCache = false } = {}) {
   }
   if (!failed && !_binMode) _refreshAndRenderPortalSessions(userId);
   if (mySeq !== _sessionFetchSeq) return;
+  if (!failed) {
+    try { sessions = await enrichSessions(sessions,userId); }
+    catch (error) { failed = true; console.warn('Failed to load chat notifications:',error); }
+  }
+  if (mySeq !== _sessionFetchSeq) return;
 
   // ── Failure path: never clobber; keep what the user can see; retry ──
   if (failed) {
@@ -2588,3 +2594,7 @@ export {
   _scheduleSearchCommit,
   _cancelPendingSearchCommit,
 };
+
+window.addEventListener('v2-notifications-changed',()=>{
+  if(app.currentUserId) void populateSessionSelect(app.currentUserId);
+});

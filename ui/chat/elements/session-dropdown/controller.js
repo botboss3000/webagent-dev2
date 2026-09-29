@@ -27,6 +27,7 @@ import { advanceDeleteBtn, resetDeleteBtn } from '../../../shared/js/delete-cont
 import { makeRowsReorderable, attachRowLongPress } from '../../../shared/js/ordering.js';
 import { storageAdapter } from '../../js/storage/storage-adapter.js';
 import { authHeaders } from '../../../shared/js/left-login.js';
+import {setNotificationUnread} from '../../core/notifications.js';
 import { activateNeedsInputChip } from '../../../shared/js/needs-input-chip.js';
 import { positionKebabPopup } from '../../../shared/js/dom-utils.js';
 import { createChatWidget } from '../../../chat-widget/js/chat-widget.js';
@@ -1237,6 +1238,12 @@ export function mountSessionDropdown(root, opts = {}) {
     button.dataset.pending = '1';
     button.disabled = true;
     try {
+      if (await setNotificationUnread(sessionId,false)) {
+        window.dispatchEvent(new CustomEvent('session:visited', {
+          detail: { sessionId, visitedAt: new Date().toISOString() },
+        }));
+        return true;
+      }
       const response = await fetch(apiPath(`/api/v1/db/sessions/${encodeURIComponent(sessionId)}/read?db=user.db&user_id=${encodeURIComponent(app.currentUserId || '')}`), {
         method: 'POST',
         headers: authHeaders(),
@@ -1266,6 +1273,12 @@ export function mountSessionDropdown(root, opts = {}) {
     button.dataset.pending = '1';
     button.disabled = true;
     try {
+      if (await setNotificationUnread(sessionId,true)) {
+        window.dispatchEvent(new CustomEvent('session:unread', {
+          detail: { sessionId, unreadAt: new Date().toISOString() },
+        }));
+        return true;
+      }
       const response = await fetch(apiPath(`/api/v1/db/sessions/${encodeURIComponent(sessionId)}/unread?db=user.db&user_id=${encodeURIComponent(app.currentUserId || '')}`), {
         method: 'POST',
         headers: authHeaders(),

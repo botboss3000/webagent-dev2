@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {applyPublication,applySnapshot,emptyState,mergeCachedState} from '../ui/chat/core/state.js';
+import {applyPublication,applySnapshot,emptyState,mergeCachedState,mergeLatestSnapshot,prependHistory} from '../ui/chat/core/state.js';
 
 const item = (id,position,extra={}) => ({
   id,session_id:'s',run_id:'r',position,revision:1,schema_version:1,
@@ -80,4 +80,16 @@ test('same-cursor cache merges progress but rejects conflicting public content',
   assert.throws(()=>mergeCachedState(
     {...base,runs:[{id:'r',state:'failed'}]},
     {...base,runs:[{id:'r',state:'completed'}]}));
+});
+
+test('older public pages survive refresh and cross-tab cache writes without a gap',()=>{
+  const first=applySnapshot('s',{...snapshot([item('three',3),item('four',4)]),cursor:4,has_more:true});
+  const older=prependHistory(first,{...snapshot([item('one',1),item('two',2)]),cursor:4,has_more:false});
+  assert.deepEqual(older.items.map(row=>row.id),['one','two','three','four']);
+  const refreshed=mergeLatestSnapshot(older,{...snapshot([item('three',3),item('four',4)]),cursor:4,has_more:true});
+  assert.deepEqual(refreshed.items,older.items);
+  assert.equal(refreshed.has_more,false);
+  assert.deepEqual(mergeCachedState(first,older).items,older.items);
+  const gapped=mergeLatestSnapshot(first,{...snapshot([item('ten',10)]),cursor:10,has_more:true});
+  assert.deepEqual(gapped.items.map(row=>row.id),['ten']);
 });

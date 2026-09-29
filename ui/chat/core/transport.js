@@ -1,4 +1,4 @@
-import {applyPublication, applySnapshot, canonical, emptyState} from './state.js';
+import {applyPublication, applySnapshot, mergeLatestSnapshot, prependHistory, canonical, emptyState} from './state.js';
 
 // Each client owns one authenticated subject and instance. Storage is injected
 // so browser persistence and deterministic delivery tests exercise the same code.
@@ -62,7 +62,21 @@ export function createChatClient({request, cache, onStatus = () => {}}) {
   }
   async function replace(id, controller) {
     const body=await (await json(path(id),{signal:controller?.signal})).json();
-    return serial(id,()=>save(applySnapshot(id,body),controller));
+    return serial(id,()=>save(mergeLatestSnapshot(stateFor(id),body),controller));
+  }
+  async function loadOlder(id) {
+    assertAlive();
+    const controller=streams.get(id);
+    const state=stateFor(id);
+    if (!controller || controller.signal.aborted || !state.has_more || !state.items.length) return state;
+    const before=state.items[0].position;
+    const body=await (await json(path(id)+'?before='+before,{signal:controller.signal})).json();
+    return serial(id,()=>{
+      const current=stateFor(id);
+      if (controller.signal.aborted || streams.get(id)!==controller ||
+          !current.has_more || current.items[0]?.position!==before) return current;
+      return save(prependHistory(current,body),controller);
+    });
   }
   async function openSession(id, {fresh = true, subscribe: live = true} = {}) {
     assertAlive();
@@ -211,6 +225,6 @@ export function createChatClient({request, cache, onStatus = () => {}}) {
     for(const controller of streams.values()) controller.abort();
     streams.clear();listeners.clear();states.clear();
   }
-  return {command,stateFor,subscribe,openSession,closeSession,queueMessage,pendingMessages,
+  return {command,stateFor,subscribe,openSession,closeSession,loadOlder,queueMessage,pendingMessages,
           drainOutbox,dispose,receive};
 }

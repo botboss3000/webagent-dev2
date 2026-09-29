@@ -202,19 +202,22 @@ async def notification(session_id: str,request: Request,owner_id: str | None=Non
         "unread":ack["manual_unread"] or latest["cursor"]>ack["cursor"]}}
 
 @router.get("/notifications")
-async def notifications(request: Request):
+async def notifications(request: Request, after: str = "", limit: int = Query(200, ge=1, le=200)):
     actor,repo,_=await scope(request)
+    # Cursor names the last scanned session, including one without a terminal item.
     with repo.transaction(write=False) as conn:
         session_ids=[row[0] for row in conn.execute(
-            "SELECT id FROM sessions WHERE user_id=? AND status='active' ORDER BY updated_at DESC LIMIT 200",
-            (actor,))]
+            "SELECT id FROM sessions WHERE user_id=? AND status='active' AND id>? ORDER BY id LIMIT ?",
+            (actor,after,limit+1))]
     rows=[]
-    for session_id in session_ids:
+    for session_id in session_ids[:limit]:
         latest=await repo.latest_notification(session_id)
         if latest is not None:
             ack=repo.notification_ack(session_id)
             rows.append({**latest,"unread":ack["manual_unread"] or latest["cursor"]>ack["cursor"]})
-    return {"notifications":rows}
+    more=len(session_ids)>limit
+    return {"notifications":rows,"has_more":more,
+            "next_after":session_ids[limit-1] if more else None}
 
 @router.post("/sessions/{session_id}/acknowledgement")
 async def acknowledge(session_id: str,body: Ack,request: Request,owner_id: str | None=None):

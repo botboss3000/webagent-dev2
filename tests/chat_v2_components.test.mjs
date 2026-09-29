@@ -162,6 +162,9 @@ test('actual V2 panel starts element loading without blocking the transcript',as
   '../../shared/js/state.js':{app},'./client.js':chat,
   './projection.js':{reconcilePublicNodes(){}},'../js/chat-bubble.js':{addChatBubble(){}},
   './activity-view.js':{renderActivity(){},disconnectActivity(){}},
+  '../../shared/js/attachments.js':{getPendingAttachments(){return []},renderAttachmentElement(){}},
+  '../../shared/js/config.js':{apiPath:path=>path},
+  '../../shared/js/left-login.js':{authHeaders(){return {}}},
  };
  const module=new vm.SourceTextModule(await fs.readFile(new URL('../ui/chat/core/panel.js',import.meta.url),'utf8'),{context});
  await module.link(async spec=>{

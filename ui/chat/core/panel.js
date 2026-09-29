@@ -7,7 +7,8 @@ import {getPendingAttachments, renderAttachmentElement} from '../../shared/js/at
 import {apiPath} from '../../shared/js/config.js';
 import {authHeaders} from '../../shared/js/left-login.js';
 
-let session=null,unsubscribe=null,epoch=0,pending=[],lastState=null;
+let session=null,unsubscribe=null,epoch=0,pending=[],lastState=null,scroller=null,loadingOlder=false;
+const retrying=new Set();
 function current(id,generation) {
   return id===session && id===app.currentSessionId && generation===epoch;
 }
@@ -47,6 +48,32 @@ function createNode(item) {
   const node=addChatBubble(role,item.payload.text,'published'+(item.pending?' pending':''),
     undefined,item.run_id,item.id,item.created_at);
   if(role==='user') renderUserAttachments(node,item);
+  if(item.kind==='failure' && item.payload.retry?.kind==='finalization'
+      && typeof item.payload.retry.candidate_id==='string') {
+    const candidate=item.payload.retry.candidate_id;
+    const button=document.createElement('button');
+    button.type='button';button.dataset.finalizationRetry=candidate;
+    button.textContent='Retry final response';
+    button.addEventListener('click',async()=>{
+      const generation=epoch;
+      if(retrying.has(candidate) || !current(item.session_id,generation)) return;
+      retrying.add(candidate);button.disabled=true;button.textContent='Retrying final response…';
+      try {
+        await chat.command('/sessions/'+encodeURIComponent(item.session_id)+'/finalization-retry',
+          {candidate_id:candidate});
+        if(current(item.session_id,generation)) await refreshPanel();
+      } catch(error) {
+        if(current(item.session_id,generation)) {
+          button.textContent='Retry failed — try again';
+          button.title=error.message || 'Could not retry final response';
+        }
+      } finally {
+        retrying.delete(candidate);
+        if(button.isConnected && current(item.session_id,generation)) button.disabled=false;
+      }
+    });
+    node.appendChild(button);
+  }
   if(item.pending) {
     const label=document.createElement('span');
     label.dataset.submissionStatus='pending';
@@ -64,6 +91,14 @@ function render(state) {
   const accepted=new Set(state.items.filter(x=>x.kind==='user').map(x=>x.payload.client_message_id));
   pending=pending.filter(entry=>!accepted.has(entry.message.client_message_id));
   reconcilePublicNodes(app.chatMessages,state,pending,createNode);
+  for(const button of app.chatMessages.querySelectorAll?.('[data-finalization-retry]') || []) {
+    const failure=state.items.find(item=>item.payload.retry?.candidate_id===button.dataset.finalizationRetry);
+    if(retrying.has(button.dataset.finalizationRetry)) {
+      button.disabled=true;button.textContent='Retrying final response…';
+    } else if(failure && state.runs.some(run=>run.parent_run_id===failure.run_id)) {
+      button.disabled=true;button.textContent='Final response retry requested';
+    }
+  }
   const active=state.runs.filter(run=>['queued','running','finalizing','stopping'].includes(run.state));
   app.isProcessing=active.length>0;
   if(active.length) {
@@ -78,8 +113,31 @@ function render(state) {
   app._reLandAnchor?.();
   window.dispatchEvent(new CustomEvent('webagent-public-chat-state',{detail:{sessionId:session,runs:state.runs}}));
 }
+async function onHistoryScroll() {
+  if(!scroller || loadingOlder || !lastState?.has_more || scroller.scrollTop>150) return;
+  const id=session,generation=epoch;
+  const anchor=[...app.chatMessages.children].find(node=>node.dataset.publicId);
+  const top=anchor?.getBoundingClientRect().top;
+  loadingOlder=true;
+  let loaded=false;
+  try {
+    await chat.loadOlder(id);
+    loaded=true;
+    if(current(id,generation) && anchor?.isConnected && Number.isFinite(top))
+      scroller.scrollTop+=anchor.getBoundingClientRect().top-top;
+  } catch(error) {
+    if(current(id,generation)) app.chatActivityStart?.('Could not load older messages. Scroll up to retry.');
+  } finally {
+    loadingOlder=false;
+    if(loaded && current(id,generation) && scroller?.clientHeight>0 &&
+        scroller.scrollHeight<=scroller.clientHeight && lastState?.has_more)
+      queueMicrotask(onHistoryScroll);
+  }
+}
 export function disconnectPanel() {
   epoch++;
+  scroller?.removeEventListener('scroll',onHistoryScroll);scroller=null;loadingOlder=false;
+  retrying.clear();
   disconnectActivity();
   app.loadChatComponents?.(null);
   unsubscribe?.();unsubscribe=null;
@@ -95,6 +153,8 @@ export async function loadPanel(id,{persisted=true,onReady=()=>{}}={}) {
   if(!current(id,generation)) return;
   app.chatMessages.dataset.publicConversation='true';
   app.chatMessages.replaceChildren();
+  scroller=app._chatScroller || app.chatMessages.parentElement;
+  scroller?.addEventListener('scroll',onHistoryScroll,{passive:true});
   const restoredPending=await chat.pendingMessages(id);
   if(!current(id,generation)) return;
   pending=restoredPending;
@@ -106,6 +166,8 @@ export async function loadPanel(id,{persisted=true,onReady=()=>{}}={}) {
     await chat.openSession(id);
   }
   if(current(id,generation)) void chat.drainOutbox();
+  if(current(id,generation) && scroller && scroller.scrollHeight<=scroller.clientHeight)
+    void onHistoryScroll();
 }
 export async function refreshPanel() {
   if(session) return chat.openSession(session);

@@ -194,3 +194,21 @@ test('bounded event responses reconnect immediately at the committed cursor',asy
   assert.equal(requests.length,2);
   client.dispose();
 });
+
+test('older page loads once, then live publication keeps loaded history',async()=>{
+  const store=cache(),calls=[];
+  const client=createChatClient({cache:store,request:async(path)=>{
+    calls.push(path);
+    if(path.includes('?before=3')) return response({...snap([row('one',1),row('two',2)],4),has_more:false});
+    return response({...snap([row('three',3),row('four',4)],4),has_more:true});
+  }});
+  await client.openSession('s',{subscribe:false});
+  // A non-subscribed open releases its controller; reopen live to page.
+  await client.openSession('s',{fresh:false});
+  await client.loadOlder('s');
+  assert.deepEqual(client.stateFor('s').items.map(item=>item.id),['one','two','three','four']);
+  await client.receive('s','publication',{cursor:5,item:row('five',5)});
+  assert.deepEqual(client.stateFor('s').items.map(item=>item.id),['one','two','three','four','five']);
+  assert.equal(calls.filter(path=>path.includes('?before=3')).length,1);
+  client.dispose();
+});

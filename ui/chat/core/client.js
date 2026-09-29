@@ -99,6 +99,7 @@ export const subscribe=(...args)=>active().subscribe(...args);
 export const stateFor=(...args)=>active().stateFor(...args);
 export const openSession=(...args)=>active().openSession(...args);
 export const closeSession=(...args)=>client?.closeSession(...args);
+export const loadOlder=(...args)=>active().loadOlder(...args);
 export const queueMessage=(...args)=>active().queueMessage(...args);
 export const pendingMessages=(...args)=>active().pendingMessages(...args);
 export const drainOutbox=(...args)=>active().drainOutbox(...args);

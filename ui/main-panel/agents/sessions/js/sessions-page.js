@@ -37,6 +37,7 @@ import {
   writeAgentCache,
 } from '../../js/agent-cache.js';
 import { initSessionsActivityChart } from './sessions-activity-chart.js';
+import {enrichSessions,setNotificationUnread} from '../../../../chat/core/notifications.js';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -167,6 +168,7 @@ function _timeStatusClass(runStatus) {
 // than falling through to created_at.
 function _rowIsRead(row) {
   if (!row) return false;
+  if (row.v2_notification) return !row.v2_notification.unread;
   return _isSessionRead({ ...row, activity_at: row.activity_at || row.last_active });
 }
 
@@ -1861,6 +1863,7 @@ async function _loadAndRender(reason = 'foreground') {
   let rows;
   try {
     rows = await _fetchForConfig(loadConfig, fetchAgentFilter);
+    if (!loadNativeContext) rows = await enrichSessions(rows,app.currentUserId);
   } catch (error) {
     console.warn('[Sessions] Catalog load failed', error);
     if (loadNativeContext) _setLoadStatus('Could not verify Codex tasks', false, 3000);
@@ -2219,6 +2222,11 @@ function _sessionRowById(sid) {
 }
 
 async function _setSessionReadState(sid, read) {
+  if (await setNotificationUnread(sid,!read)) {
+    await _loadAndRender('mutation');
+    try { populateSessionSelect(app.currentUserId); } catch (_) {}
+    return;
+  }
   const endpoint = read ? 'read' : 'unread';
   const response = await fetch(apiPath(`/api/v1/db/sessions/${encodeURIComponent(sid)}/${endpoint}?db=user.db&user_id=${encodeURIComponent(app.currentUserId || '')}`), {
     method: 'POST',
@@ -3349,3 +3357,7 @@ export function stopSessions() {
 // Aliases for backward compat
 const activateSessionsPage = startSessions;
 const initSessionsPage = startSessions;
+
+window.addEventListener('v2-notifications-changed',()=>{
+  if(_sessionsData.length && app.currentUserId) void _loadAndRender('background');
+});

@@ -19,9 +19,24 @@ export function canonical(value) {
 export function mergeCachedState(stored, incoming) {
   if (!stored || stored.cursor < incoming.cursor) return incoming;
   if (stored.cursor > incoming.cursor) return stored;
-  if (canonical(stored.items) !== canonical(incoming.items)) {
+  if (canonical(stored.items) !== canonical(incoming.items) &&
+      !stored.items.some(item=>incoming.items.some(other=>other.id===item.id))) {
     throw new Error('Conflicting public cache at one cursor');
   }
+  const items = new Map(stored.items.map(item => [item.id,item]));
+  const positions = new Map(stored.items.map(item => [item.position,item.id]));
+  for (const item of incoming.items) {
+    const old = items.get(item.id);
+    if ((old && canonical(old) !== canonical(item)) ||
+        (positions.has(item.position) && positions.get(item.position) !== item.id)) {
+      throw new Error('Conflicting public cache at one cursor');
+    }
+    items.set(item.id,item);positions.set(item.position,item.id);
+  }
+  const oldest = Math.min(stored.items[0]?.position ?? Infinity,incoming.items[0]?.position ?? Infinity);
+  const has_more = stored.items[0]?.position === incoming.items[0]?.position
+    ? stored.has_more && incoming.has_more
+    : stored.items[0]?.position === oldest ? stored.has_more : incoming.has_more;
   const phase = {queued:0,running:1,finalizing:2,stopping:3,
     completed:4,cancelled:4,failed:4};
   const runs = new Map((stored.runs || []).map(run => [run.id,run]));
@@ -35,7 +50,8 @@ export function mergeCachedState(stored, incoming) {
     }
     if (newRank >= oldRank) runs.set(run.id,run);
   }
-  return {...incoming,runs:[...runs.values()]};
+  return {...incoming,items:[...items.values()].sort((a,b)=>a.position-b.position),
+    has_more,runs:[...runs.values()]};
 }
 
 function validateItem(sessionId, item) {
@@ -102,4 +118,24 @@ export function applySnapshot(sessionId, snapshot) {
   let state = {...emptyState(sessionId),runs:snapshot.runs};
   for (const item of snapshot.items) state = upsert(state,item,true);
   return { ...state, cursor:snapshot.cursor, has_more:!!snapshot.has_more };
+}
+
+export function mergeLatestSnapshot(previous, snapshot) {
+  const latest=applySnapshot(previous.sessionId,snapshot);
+  if (!previous.items.length || !latest.items.length) return latest;
+  const first=latest.items[0].position;
+  const lastPrevious=previous.items.at(-1).position;
+  // A long offline gap may exceed one snapshot page. Never present a hole as history.
+  if (lastPrevious < first-1) return latest;
+  const older=previous.items.filter(item=>item.position<first && item.kind!=='component');
+  if (!older.length) return latest;
+  return {...latest,items:older.concat(latest.items),has_more:previous.has_more};
+}
+
+export function prependHistory(current, snapshot) {
+  const page=applySnapshot(current.sessionId,snapshot);
+  if (page.items.some(item=>current.items.length && item.position>=current.items[0].position)) {
+    throw new Error('Older page overlaps loaded history');
+  }
+  return {...current,items:page.items.concat(current.items),has_more:page.has_more};
 }

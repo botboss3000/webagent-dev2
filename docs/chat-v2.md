@@ -80,12 +80,17 @@ Implemented in the isolated instance:
   supply the visible transcript. Account/session changes fence pending network work.
 - Cached and streamed publications share the reducer; pending sends use the
   independent instance/subject cache partition.
+- The main panel exposes final-response retry for failed publications with a
+  frozen finalization candidate. Its older-message loader requests bounded
+  snapshot pages and preserves the visible scroll anchor.
+- V2 terminal notifications and acknowledgements now drive the header,
+  session dropdown, and Sessions view. The notification API pages across all
+  active sessions, and a read/unread change updates those surfaces.
 
 Still required: selected configuration/agent seeding, complete execution adapter
-coverage, finalization retry commands, typed transcript artifacts, notification
-projections, compaction coordination, widget/embed/voice and other integrations,
-history pagination, and removal of remaining legacy helpers, APIs, and browser
-authority paths. Attachment rendering remains incomplete in the main panel.
+coverage, typed transcript artifacts, compaction coordination, widget/embed/voice
+and other integrations, and removal of remaining legacy helpers, APIs, and
+browser authority paths. Attachment rendering remains incomplete in the main panel.
 Elements are owner-only session resources, synchronized separately from the public
 transcript through the V2 components endpoint. Admin activity groups are now connected as described below. The complete browser/fault/performance/regression
 matrix remains outstanding; this is not a finished or accepted chat rebuild.
@@ -103,8 +108,9 @@ docker run --rm --network none --user 1000:1000 --entrypoint python \
   -m pytest -q -p no:cacheprovider tests/test_chat_v2_core.py
 ```
 
-Current checks: 26 backend core tests and 25 client reducer/transport/projection
-tests pass. The main panel's 66-module dependency graph links successfully.
+Current focused checks: 58 backend and 48 client tests pass, including
+notification paging, acknowledgement, and older-message state/transport
+coverage. The main panel's 66-module dependency graph links successfully.
 Projection tests use a deterministic DOM double, not a browser; they establish
 identity/reconciliation behavior but do not establish visual or latency acceptance.
 A live V2 API run confirmed send deduplication, conflicting-key rejection,

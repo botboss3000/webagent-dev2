@@ -315,7 +315,7 @@ def _reusable_final_response(request: str, assistant_msgs: List[str]) -> Optiona
     # message, authored with full context and a validated flag. Never paraphrase
     # it — the closer only lacks that context, so any rewrite is strictly worse.
     try:
-        from app.agent.closing_message import parse_envelope
+        from app.chat.closing import parse_envelope
         if parse_envelope(final)["valid"]:
             return final
     except Exception:  # noqa: BLE001 — reuse detection must never break the closer
@@ -476,7 +476,7 @@ def _closing_output_enabled(agent_rec: Optional[dict], execution_mode: Optional[
     fail closed: Manager/Codex configuration is not an activation authority.
     """
     try:
-        from app.agent.closing_message import resolve as resolve_closing_message
+        from app.chat.closing import resolve as resolve_closing_message
         policy = resolve_closing_message(agent_rec, execution_mode)
         return bool(policy and policy.get("output_closer_enabled", True))
     except Exception as exc:
@@ -1733,7 +1733,7 @@ async def _send_audit_back(
         # Live UI push — same 'response' event shape the loop emits for an
         # assistant message, so the self-note renders as an agent bubble.
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, {
                 "type": "response", "level": "agent",
                 "content": content, "asst_id": turn_uid,
@@ -1782,7 +1782,7 @@ async def _send_audit_back(
 
         async def _broadcast(ev: Dict[str, Any]) -> None:
             try:
-                from app.api.chat import _emit_to_visualizers
+                from app.chat.execution import _emit_to_visualizers
                 await _emit_to_visualizers(session_id, ev, user_id=user_id, db_override=db)
             except Exception:
                 pass
@@ -1895,7 +1895,7 @@ async def _emit_progress_note(
     writing…'). Mirrors the summary push path; never raises — a failed emit
     must not break the close-out."""
     try:
-        from app.api.chat import _emit_to_visualizers
+        from app.chat.execution import _emit_to_visualizers
         await _emit_to_visualizers(session_id, {
             "type": "pipeline", "level": "pipeline", "step": step,
         }, user_id=user_id, db_override=db)
@@ -2788,7 +2788,7 @@ async def run_output_closer(
 
         # ── Push live to the chat UI (parallel event, same path as tool/response) ──
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, {
                 "type": "summary",
                 "level": "agent",

@@ -148,7 +148,7 @@ async def _catalog_seed_for_new_agent(db, user_id: str) -> dict:
     so the shared agent can guide onboarding without lending credentials.
     """
     from app.admin.settings import _load_own_llm_config
-    from app.entitlements.rosters import resolve_platform_roster_config
+    from app.entitlements.rosters import resolve_platform_roster_config, select_roster_entry
 
     owned = await _load_own_llm_config(user_id) or {}
     platform = await resolve_platform_roster_config(user_id, db=db) or {}
@@ -182,9 +182,14 @@ async def _catalog_seed_for_new_agent(db, user_id: str) -> dict:
             if shared_key in available:
                 default_id = shared_key
             else:
-                default_id = next((entry_id for entry_id, row in available.items()
-                                   if row.get("provider") == shared_row.get("provider")
-                                   and row.get("model") == shared_row.get("model")), "")
+                resolved = select_roster_entry(
+                    available.values(),
+                    entry_id=shared_key,
+                    provider=shared_row.get("provider"),
+                    model=shared_row.get("model"),
+                )
+                if resolved:
+                    default_id = str(resolved.get("entry_id") or "")
 
     if default_id not in available:
         return {}
@@ -1272,7 +1277,7 @@ async def create_agent(req: CreateAgentRequest, request: Request):
     safe = _safe_agent(agent)
     # Live-sync every open tab/device for this user so the Agents grid shows the
     # new agent without a manual refresh.
-    from app.api.chat import notify_user
+    from app.events.delivery import notify_user
     await notify_user(req.user_id, {
         "type": "agent_created", "user_id": req.user_id, "agent": safe,
     })
@@ -1304,7 +1309,7 @@ async def ensure_default_agent(req: EnsureDefaultRequest, request: Request):
     safe = _safe_agent(agent)
     # Live-sync open tabs/devices (harmless if the agent already existed).
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(req.user_id, {
             "type": "agent_created", "user_id": req.user_id, "agent": safe,
         })
@@ -2043,7 +2048,7 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest, request: Request)
         # A roster/role edit must immediately converge in every open chat for
         # this agent. The client re-fetches slots; running loops resolve config
         # again before their next provider invocation.
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(req.user_id, {
             "type": "agent_model_roster_changed",
             "agent_id": agent_id,
@@ -2848,7 +2853,7 @@ async def delete_agent(request: Request, agent_id: str, user_id: str = Query(...
     # bin view; a soft delete moves it out of the main grid into the bin.
     # Either way, stop serving the deleted/trashed agent's display fields.
     _invalidate_agent_display_cache(agent_id)
-    from app.api.chat import notify_user
+    from app.events.delivery import notify_user
     await notify_user(user_id, {
         "type": "agent_deleted" if permanent else "agent_trashed",
         "user_id": user_id, "agent_id": agent_id, "permanent": permanent,
@@ -2882,7 +2887,7 @@ async def restore_agent(request: Request, agent_id: str, user_id: str = Query(..
     if not restored:
         raise HTTPException(status_code=404, detail="Agent not found in the bin, or not owned by this user.")
     # Live-sync: the agent leaves the bin and reappears on the main grid.
-    from app.api.chat import notify_user
+    from app.events.delivery import notify_user
     await notify_user(user_id, {
         "type": "agent_restored", "user_id": user_id, "agent_id": agent_id,
     })
@@ -4878,7 +4883,7 @@ async def agent_ui_asset(agent_id: str, asset_path: str, request: Request):
     agent = await db.fetch_agent_by_id_with_context(agent_id, [], user_id=user_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent UI not found")
-    from app.api.chat import _enforce_agent_access_policy
+    from app.chat.execution import _enforce_agent_access_policy
     await _enforce_agent_access_policy(db, agent, user_id)
     path = resolve_ui_asset(agent_id, asset_path or "index.html")
     if path is None or not path.is_file():

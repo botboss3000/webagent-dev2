@@ -355,7 +355,7 @@ async def _ensure_voice_chat_session(
         # The browser creates a session ID before the first durable message.
         # Voice can be that first interaction, so use the same creation path as
         # text chat and verify ownership again before authorizing the socket.
-        from app.api.chat import _ensure_session
+        from app.chat.execution import _ensure_session
 
         try:
             await _ensure_session(db, user_id, session_id)
@@ -367,7 +367,7 @@ async def _ensure_voice_chat_session(
     if not requested_agent_id:
         return
 
-    from app.api.chat import _require_chat_agent_access
+    from app.chat.execution import _require_chat_agent_access
 
     try:
         agent = await _require_chat_agent_access(

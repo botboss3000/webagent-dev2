@@ -1,3 +1,10 @@
+
+> **V2 integration note:** This widget is an existing integration and still
+> uses legacy `/api/v1/chat` transport and session-tail behavior. Its output
+> must be treated as an integration surface pending migration through
+> `app/chat/api.py` and the V2 publication service. Do not add a second public
+> transcript authority here. Once migrated, the widget must consume the same
+> typed public items and cursor/replay contract as the main panel.
 # Chat widget (`ui/chat-widget/`)
 
 A **floating mini chat** any page can spawn to run a *task-scoped* agent session

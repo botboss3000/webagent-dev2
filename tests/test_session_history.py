@@ -461,7 +461,7 @@ class CompactionSummariserResolutionTests(unittest.IsolatedAsyncioTestCase):
 
 class LargeSessionAssemblyTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_command_returns_canonical_result_for_http_delivery(self) -> None:
-        from app.api.chat import _handle_compact_command
+        from app.chat.execution import _handle_compact_command
 
         class FakeDB:
             async def get_session_agent_id(self, _session_id):

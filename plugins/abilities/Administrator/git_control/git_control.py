@@ -471,7 +471,7 @@ async def _deliver_notice(db, agent_id: str, uncommitted: int, ahead: int) -> No
     except Exception as e:
         logger.debug("git_control watcher: could not persist notice for %s: %s", agent_id, e)
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(user_id, {
             "type": "repo_change_notice",
             "session_id": session_id,

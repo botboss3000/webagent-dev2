@@ -57,7 +57,7 @@ def test_voice_authorization_creates_a_brand_new_chat_session(monkeypatch) -> No
 
     from app import db as db_module
     from app.admin import settings
-    from app.api import chat
+    from app.chat import execution as chat
     from app.entitlements import service
 
     async def capabilities(_user_id, *, db):
@@ -100,7 +100,7 @@ def test_voice_authorization_rejects_switching_a_bound_session_agent(
         assert (agent_id, user_id) == ("agent-2", "user-1")
         return {"id": agent_id}
 
-    from app.api import chat
+    from app.chat import execution as chat
     monkeypatch.setattr(chat, "_require_chat_agent_access", require_agent)
 
     with pytest.raises(PermissionError, match="different agent"):

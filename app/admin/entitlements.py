@@ -19,6 +19,7 @@ from app.entitlements.policy import (
 )
 from app.entitlements.rosters import (
     RosterError,
+    assign_entry_ids,
     delete_roster_entry_credential,
     load_platform_roster_config,
     roster_credential_states,
@@ -229,6 +230,21 @@ def _slug(value: str) -> str:
     return result
 
 
+async def _assign_roster_entry_ids(
+    entries: list[dict[str, Any]], existing_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Accept only server-owned identities and issue UUIDs for genuinely new rows."""
+    from app import openai_subscription
+
+    accepted = await openai_subscription.existing_entries_with_reservations(
+        entries, existing_entries, scope="platform",
+    )
+    try:
+        return assign_entry_ids(entries, existing_entries=accepted)
+    except RosterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _entries(value: Any, default_id: Optional[str], *, publishing: bool) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise HTTPException(status_code=422, detail="entries must be a list")
@@ -382,10 +398,11 @@ async def get_roster(roster_id: str, requesting_user_id: str = Query(...)):
 @router.post("/rosters", status_code=201)
 async def create_roster(req: RosterCreateRequest):
     actor, db, roster_id = await _admin_actor(req.requesting_user_id), get_app_db(), str(req.id or uuid.uuid4())
+    assigned_entries = await _assign_roster_entry_ids(req.entries, [])
     try:
         row = await db.upsert_model_roster(
             roster_id, slug=_slug(req.slug), name=req.name.strip(), description=req.description,
-            entries_json=_entries(req.entries, req.default_entry_id, publishing=False),
+            entries_json=_entries(assigned_entries, req.default_entry_id, publishing=False),
             default_entry_id=req.default_entry_id, status="draft", source="admin",
             created_by=actor, updated_by=actor,
         )
@@ -408,7 +425,10 @@ async def update_roster(roster_id: str, req: RosterUpdateRequest):
         fields["slug"] = _slug(fields["slug"])
     if "entries" in fields:
         default_id = fields.get("default_entry_id", previous.get("default_entry_id"))
-        fields["entries_json"] = _entries(fields.pop("entries"), default_id, publishing=False)
+        submitted_entries = fields.pop("entries")
+        previous_entries = _parse_json(previous.get("entries_json"), [])
+        assigned_entries = await _assign_roster_entry_ids(submitted_entries, previous_entries)
+        fields["entries_json"] = _entries(assigned_entries, default_id, publishing=False)
     if fields:
         fields["source"] = "admin"
     fields["updated_by"] = actor

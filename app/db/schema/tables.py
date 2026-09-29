@@ -145,6 +145,7 @@ TABLES: List[Table] = [
         Column("session_seq", "INTEGER"),
         Column("turn_id", "TEXT"),
         Column("turn_seq", "INTEGER"),
+        Column("chat_render_kind", "TEXT", nullable=False, default="'activity'"),
         # Message lifecycle (added 2026-05-29). Legacy + finished rows are
         # 'complete'; an assistant answer is 'streaming' while being generated,
         # then 'complete' / 'interrupted' / 'error'. Makes the partial answer
@@ -1655,4 +1656,10 @@ TRIGGERS: List[Trigger] = [
 
 # Dependency-order list for migration / bootstrap / delete operations.
 # Children before parents on delete; parents before children on insert.
+from app.chat.schema import definitions as _chat_definitions
+_chat_tables, _chat_indexes = _chat_definitions(Column, Table, Index)
+TABLES.extend(_chat_tables)
+INDEXES.extend(_chat_indexes)
+
+
 TABLE_ORDER = [t.name for t in TABLES]

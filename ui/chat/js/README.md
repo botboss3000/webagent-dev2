@@ -1,3 +1,11 @@
+
+> **V2 ownership:** New controlled-chat state, publication delivery, cursor
+> replay, and public-item reconciliation live in `ui/chat/core/`. The modules
+> below are the existing panel and integration layer. They may continue to
+> call legacy `/api/v1/chat` endpoints for capabilities that have not yet been
+> migrated, but they must not promote raw stream, tool, or diagnostic events
+> into the customer transcript. The V2 public transcript is owned by the core
+> reducer and projection.
 # `ui/chat/js/` — chat and session management modules
 
 Split from the original monolithic `chat.js` (1637 lines) and `sessions.js` (2468 lines) into focused modules, each under ~520 lines. Everything flows one direction — no circular imports.

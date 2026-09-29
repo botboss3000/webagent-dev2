@@ -1,3 +1,23 @@
+
+## V2 development deployment
+
+For current development work, use the isolated V2 deployment rather than the
+legacy VM details below:
+
+- Checkout: `/home/ar/webagent-dev-v2`
+- Entrypoint: `app.v2:app`
+- Container: `webagent-dev-v2`
+- Container port: `8080`; host origin: `100.112.23.15:8081`
+- Public development URL: `https://dev.webagent.live/app`
+- Named connector: `cloudflared-webagent-dev-named`
+- Private forwarding: `ssh -N -L 18082:127.0.0.1:8082 ar@100.112.23.15`
+
+The legacy production VM instructions in this document apply only to the
+production checkout and must not be used to operate V2 development. V2 uses
+fresh checkout-local split storage and its own credentials, uploads, cache, and
+instance identity. Start the application, wait for `/health/ready`, then start
+the named connector. Do not recreate or replace the connector for ordinary
+source changes.
 # Deployment & runtime state guidance
 
 Read this before touching deploy config, OAuth/secure-context code, or introducing any file the app writes at runtime.

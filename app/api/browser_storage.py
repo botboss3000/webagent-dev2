@@ -341,7 +341,7 @@ async def get_browser_config(agent_id: str, fastapi_request: Request):
     agent = await _get_agent_config(agent_id, user_id)
 
     db = get_db()
-    from app.api.chat import _enforce_agent_access_policy
+    from app.chat.execution import _enforce_agent_access_policy
     await _enforce_agent_access_policy(db, agent, user_id)
     tools = []
     try:
@@ -436,7 +436,7 @@ async def browser_chat(request: BrowserChatRequest, fastapi_request: Request):
     await enforce_tier_chat(
         user_id, fastapi_request, db=db, message=request.new_message or "",
     )
-    from app.api.chat import _enforce_agent_access_policy, _enforce_billing_access
+    from app.chat.execution import _enforce_agent_access_policy, _enforce_billing_access
     await _enforce_agent_access_policy(db, agent, user_id)
     await _enforce_billing_access(db, agent, user_id)
     try:
@@ -649,7 +649,7 @@ async def browser_chat(request: BrowserChatRequest, fastapi_request: Request):
             # Legacy turn hooks accept a raw DB and can update same-ID server
             # sessions. Browser authority instead emits a deterministic local
             # title without invoking that persistence surface.
-            from app.api.chat import _session_title_from_message
+            from app.chat.execution import _session_title_from_message
             title = _session_title_from_message(request.new_message)
             if request.history_revision == 0 and title:
                 yield _sse({'type': 'session_title', 'session_id': session_id, 'status': 'done', 'title': title})

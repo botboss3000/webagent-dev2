@@ -63,8 +63,8 @@ async def publish_browser_event(
     """
     try:
         # Lazy import — keep ability scan cheap + avoid the circular import that a
-        # top-level `from app.api.chat import notify_user` would create.
-        from app.api.chat import notify_user
+        # top-level `from app.chat.execution import notify_user` would create.
+        from app.events.delivery import notify_user
 
         event: Dict[str, Any] = {
             "type": "browser_live",

@@ -316,7 +316,19 @@ function renderUserDropdown() {
           });
           if (!res.ok) {
             errorEl.style.display = 'block';
-            errorEl.textContent = res.status === 403 ? 'Account pending approval' : 'Invalid email or password';
+            if (res.status === 429) {
+              const seconds = Number(res.headers.get('Retry-After'));
+              const wait = Number.isFinite(seconds) && seconds > 0
+                ? ` Wait about ${Math.ceil(seconds / 60)} minute(s) before trying again.`
+                : ' Please wait before trying again.';
+              errorEl.textContent = 'Too many sign-in attempts.' + wait;
+            } else if (res.status === 401) {
+              errorEl.textContent = 'Invalid email or password';
+            } else if (res.status === 403) {
+              errorEl.textContent = 'Account pending approval';
+            } else {
+              errorEl.textContent = 'Sign-in is temporarily unavailable. Please try again later.';
+            }
             loginBtn.disabled = false;
             loadingEl.style.display = 'none';
             return;

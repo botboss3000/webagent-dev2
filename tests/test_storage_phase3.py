@@ -500,7 +500,7 @@ class DevicePurgeTests(unittest.TestCase):
 
 class DeviceLogoutTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_socket_revocation_closes_only_selected_device(self):
-        from app.api import chat
+        from app.events import delivery as chat
 
         selected_socket = SimpleNamespace(
             send_text=AsyncMock(), close=AsyncMock()
@@ -535,7 +535,7 @@ class DeviceLogoutTests(unittest.IsolatedAsyncioTestCase):
             jwt.create_access_token("person", "user-1", device_id="second-device")
             disconnect = AsyncMock()
             with patch("app.auth._require_auth", return_value=("person", "user-1")), patch(
-                "app.api.chat.revoke_user_device_connections", new=disconnect
+                "app.events.delivery.revoke_user_device_connections", new=disconnect
             ):
                 response = await auth.revoke_my_devices(
                     SimpleNamespace(headers={}),

@@ -381,6 +381,45 @@ def _secret_entries(secret_ref: str) -> dict[str, str]:
     return {str(key): str(value) for key, value in entries.items() if value}
 
 
+def select_roster_entry(
+    entries: Iterable[Mapping[str, Any]], *, entry_id: str = "",
+    provider: str = "", model: str = "",
+) -> dict[str, Any] | None:
+    """Resolve one roster row by stable ID, with an unambiguous legacy fallback."""
+    candidates: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in entries or []:
+        if not isinstance(raw, Mapping):
+            continue
+        item = dict(raw)
+        candidate_id = str(item.get("entry_id") or "").strip()
+        # Runtime projections can repeat the assigned row outside multi_providers.
+        # Collapse only those repeated IDs; distinct IDs are always distinct rows.
+        if candidate_id and candidate_id in seen_ids:
+            continue
+        if candidate_id:
+            seen_ids.add(candidate_id)
+        candidates.append(item)
+
+    wanted_id = str(entry_id or "").strip()
+    if wanted_id:
+        exact = [item for item in candidates
+                 if str(item.get("entry_id") or "").strip() == wanted_id]
+        if len(exact) == 1:
+            return exact[0]
+
+    wanted_model = str(model or "").strip()
+    wanted_provider = str(provider or "").strip()
+    if not wanted_model:
+        return None
+    legacy = [
+        item for item in candidates
+        if str(item.get("model") or "").strip() == wanted_model
+        and (not wanted_provider or str(item.get("provider") or "").strip() == wanted_provider)
+    ]
+    return legacy[0] if len(legacy) == 1 else None
+
+
 def roster_to_config(row: Mapping[str, Any], secret_ref: str = "") -> dict[str, Any]:
     """Rehydrate a named roster into the runtime's legacy provider shape."""
     roster_id = str(row.get("id") or row.get("slug") or PLATFORM_DEFAULT_ROSTER_ID)

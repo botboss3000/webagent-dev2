@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.api import chat
+from app.chat import execution as chat
 
 
 class FakeDB:

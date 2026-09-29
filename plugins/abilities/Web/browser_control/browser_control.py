@@ -795,7 +795,7 @@ def build_tools(*, user_id: str = "", session_id: str = "", agent_id: str = "",
         if m == "close":
             event = {"type": "ui_command", "action": "browser_popup", "mode": "close"}
             try:
-                from app.api.chat import _emit_to_visualizers
+                from app.chat.execution import _emit_to_visualizers
                 await _emit_to_visualizers(session_id, event, user_id=user_id)
             except Exception as e:  # noqa: BLE001 — reaching the screen is best-effort
                 return f"Couldn't reach the user's screen to close the popup: {e}"
@@ -827,7 +827,7 @@ def build_tools(*, user_id: str = "", session_id: str = "", agent_id: str = "",
             "bs_id": bs_id,
         }
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, event, user_id=user_id)
         except Exception as e:  # noqa: BLE001
             return f"Couldn't reach the user's screen to open the popup: {e}"

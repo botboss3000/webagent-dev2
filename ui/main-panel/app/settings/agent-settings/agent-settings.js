@@ -24,6 +24,7 @@ import { isAdmin, showRestrictedModal } from '../../../../shared/js/left-login.j
 import { build as buildAdminAbilityTable } from '../../../../shared/js/admin-ability-table.js';
 import { wireChatPillUploads, uploadPendingAttachments } from '../../../../shared/js/attachments.js';
 import { mountModelTable, capabilityFlagsHtml } from '../../../../shared/js/model-table.js?v=15';
+import { reconcileSavedModelRows } from '../../../../shared/js/model-roster-reconcile.js';
 import { initModelAnalytics } from './model-analytics.js?v=7';
 // Automation Engine panels (relocated from the standalone App Config "Automation"
 // and "Event Sources" tabs) — the scheduler + event-sources halves rendered in
@@ -128,9 +129,7 @@ function _liveAdminModelAdapter() {
       const r = await _fetch(apiPath('/admin/settings/multi-providers'), { method: 'POST', headers, body: JSON.stringify(payload) });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-      (data.providers || []).forEach((saved, index) => {
-        if (providers[index]) Object.assign(providers[index], saved);
-      });
+      reconcileSavedModelRows(providers, data.providers || []);
       return data;
     },
     // Provider presets — try the server first, fall back to a hardcoded mirror
@@ -222,9 +221,8 @@ function _markModelScopeDirty() {
 }
 
 function _modelRosterEntry(provider) {
-  if (!provider.entry_id) provider.entry_id = globalThis.crypto?.randomUUID?.() || `entry-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return {
-    entry_id: provider.entry_id,
+    entry_id: provider.entry_id || '',
     display_name: provider.display_name || '',
     provider: provider.provider === '_custom' ? 'custom' : provider.provider,
     auth_mode: provider.auth_mode || (provider.provider === 'openai_subscription' ? 'chatgpt' : 'api_key'),
@@ -381,10 +379,12 @@ async function _saveModelScopeDraft() {
       method: 'PUT',
       body: { entries, default_entry_id: catalogDefault?.entry_id || null },
     });
-    for (let index = 0; index < providers.length; index += 1) {
-      const credential = String(providers[index].api_key || '').trim();
+    reconcileSavedModelRows(providers, row.entries || []);
+    for (const provider of providers) {
+      const credential = String(provider.api_key || '').trim();
       if (!credential) continue;
-      await _modelScopeRequest(`/admin/entitlements/rosters/${encodeURIComponent(_modelScopeId)}/credentials/${encodeURIComponent(entries[index].entry_id)}`, {
+      if (!provider.entry_id) throw new Error('The server did not assign this model an ID');
+      await _modelScopeRequest(`/admin/entitlements/rosters/${encodeURIComponent(_modelScopeId)}/credentials/${encodeURIComponent(provider.entry_id)}`, {
         method: 'PUT', body: { credential },
       });
     }
@@ -605,7 +605,8 @@ function _userCatalogModelAdapter() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.detail?.message || payload?.detail || `HTTP ${response.status}`);
-      return { providers: payload.entries || [] };
+      reconcileSavedModelRows(providers, payload.entries || []);
+      return { providers };
     },
     // Available models supports the same explicit BYO providers as the admin
     // model editor. WebAgent Catalog stays first; the shared table puts Custom

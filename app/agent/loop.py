@@ -1059,12 +1059,17 @@ def _house_credit_charge(
     llm_config: dict, input_tokens: Optional[int], output_tokens: Optional[int], cost_usd: float,
 ) -> tuple[float, str]:
     """Lock house credits from the active model entry's published token schedule."""
+    from app.entitlements.rosters import select_roster_entry
+
     providers = llm_config.get("multi_providers") or []
     active_model = str(llm_config.get("model") or "")
     active_provider = str(llm_config.get("provider") or "")
-    active_entry = next((entry for entry in providers
-                         if str(entry.get("model") or "") == active_model
-                         and (not active_provider or str(entry.get("provider") or "") == active_provider)), {})
+    active_entry = select_roster_entry(
+        providers,
+        entry_id=str(llm_config.get("entry_id") or ""),
+        provider=active_provider,
+        model=active_model,
+    ) or {}
     try:
         input_rate = float(llm_config.get("credit_input_per_million") or
                            active_entry.get("credit_input_per_million") or 0)
@@ -3497,7 +3502,7 @@ async def _stream_agent_events_impl(
             if _closing_latch:
                 return _closing_latch[0]
             try:
-                from app.agent.closing_message import durable_attempts as _durable
+                from app.chat.closing import durable_attempts as _durable
                 _prior = await _durable(db, user_id, session_id)
             except Exception:  # noqa: BLE001 — the latch must never fail a run
                 logger.debug("closing message: tally latch probe failed", exc_info=True)
@@ -3708,7 +3713,7 @@ async def _stream_agent_events_impl(
                 _contract_state["closing_advisory_delivered"] = True
                 _closing_advisory = ""
                 try:
-                    from app.agent.closing_message import resolve as _resolve_advisory
+                    from app.chat.closing import resolve as _resolve_advisory
                     _closing_advisory = str(
                         (_resolve_advisory(_agent_rec, execution_mode) or {}).get(
                             "advisory") or "").strip()
@@ -3855,7 +3860,7 @@ async def _stream_agent_events_impl(
                 tool_definitions = []
                 if _closing_status_pending and _closing_status_policy:
                     try:
-                        from app.agent.closing_message import status_tool_definition
+                        from app.chat.closing import status_tool_definition
                         _status_definition = status_tool_definition(_closing_status_policy)
                         tool_definitions = [_status_definition] if _status_definition else []
                     except Exception:
@@ -3866,7 +3871,7 @@ async def _stream_agent_events_impl(
             # appear in permissions, activity rows, or the user-facing tool list.
             if _message_visibility_active and not _closing_retry_terminal:
                 try:
-                    from app.agent.message_visibility import main_message_tool_definition
+                    from app.chat.visibility import main_message_tool_definition
                     tool_definitions = [*tool_definitions, main_message_tool_definition()]
                     logger.info(
                         "DEBUG-TAG: message visibility publisher schema offered session=%s turn=%s",
@@ -4022,7 +4027,7 @@ async def _stream_agent_events_impl(
                 # never reaching attempts_exhausted.
                 if int(_contract_state.get("closing_message_completion_retries") or 0):
                     try:
-                        from app.agent.closing_message import attempt_marker as _marker
+                        from app.chat.closing import attempt_marker as _marker
                         meta = json.loads(meta_json)
                         meta.update(_marker(
                             _contract_state.get("closing_message_completion_retries"),
@@ -4032,7 +4037,7 @@ async def _stream_agent_events_impl(
                             _closing_metadata_candidate is not None
                             and _closing_metadata_candidate.get("interaction_id") == _attempt_id
                         ):
-                            from app.agent.closing_message import METADATA_CANDIDATE_KEY
+                            from app.chat.closing import METADATA_CANDIDATE_KEY
                             meta[METADATA_CANDIDATE_KEY] = True
                         meta_json = json.dumps(meta)
                     except Exception:  # noqa: BLE001 — a mark must never fail a run
@@ -4380,9 +4385,17 @@ async def _stream_agent_events_impl(
 
             _pending_inbox = []
             try:
-                from app.agent.session_inbox import claim_pending as _claim_inbox
-                _pending_inbox = _claim_inbox(db, session_id)
-            except Exception:
+                from app.chat.context import current as _chat_execution
+                _execution = _chat_execution.get()
+                if _execution is not None:
+                    _pending_inbox = await _execution.consume_inbox(db, session_id)
+                else:
+                    from app.agent.session_inbox import claim_pending as _claim_inbox
+                    _pending_inbox = _claim_inbox(db, session_id)
+            except Exception as _inbox_error:
+                from app.chat.contracts import Fenced as _ControlledFenced
+                if isinstance(_inbox_error, _ControlledFenced):
+                    raise
                 logger.debug("session inbox claim failed for %s", session_id[:12], exc_info=True)
             if _pending_inbox:
                 messages.extend({"role": "user", "content": item["content"]}
@@ -5742,7 +5755,7 @@ async def _stream_agent_events_impl(
             # notice publisher below creates the sole user-visible record.
             if _message_visibility_active and collected_tool_calls:
                 try:
-                    from app.agent.message_visibility import (
+                    from app.chat.visibility import (
                         MAIN_MESSAGE_TOOL_NAME, main_message_text,
                     )
                     _remaining_visibility_calls: Dict[int, Any] = {}
@@ -5798,7 +5811,7 @@ async def _stream_agent_events_impl(
                     _validated_status = None
                     _status_failures: List[str] = []
                     try:
-                        from app.agent.closing_message import validate_status
+                        from app.chat.closing import validate_status
                         for _status_call in _status_calls:
                             try:
                                 _raw_status = json.loads(
@@ -5828,6 +5841,22 @@ async def _stream_agent_events_impl(
                     # Remove every private call before all standard call handling.
                     collected_tool_calls = _remaining_calls
                     tool_calls_data = list(collected_tool_calls.values()) or None
+
+            # A closer repair cannot reopen ordinary tool execution, even if
+            # a provider returns a call that was absent from its offered schemas.
+            from app.chat.context import current as _controlled_context
+            _controlled_execution = _controlled_context.get()
+            if _controlled_execution is not None:
+                with _controlled_execution.repo.transaction(write=False) as _conn:
+                    _controlled_run = _controlled_execution.repo._run(
+                        _conn, _controlled_execution.run_id, _controlled_execution.generation,
+                        {"running", "finalizing"})
+                if _controlled_run["state"] == "finalizing" and collected_tool_calls:
+                    yield {"type":"private_control_rejected", "reason":"finalization_has_no_ordinary_tools",
+                           "calls":[{"name":tc.function.name,"arguments":tc.function.arguments}
+                                    for tc in collected_tool_calls.values()]}
+                    collected_tool_calls = {}
+                    tool_calls_data = None
 
             # ── Handle tool calls ──
             # A notice-only provider response is complete enough to replay, but
@@ -5985,7 +6014,7 @@ async def _stream_agent_events_impl(
                     # where the gate delivers its instruction and decides
                     # promotion. A run with no closing policy is unchanged.
                     try:
-                        from app.agent.closing_message import (
+                        from app.chat.closing import (
                             missing_requirements as _cu_missing,
                             resolve as _cu_resolve,
                         )
@@ -7904,10 +7933,20 @@ async def _stream_agent_events_impl(
             # pending may not close as ``complete``. Recomputed every completion
             # path so a run that DID satisfy its work clears the gap.
             _contract_state["work_policy_pending"] = bool(_work_policy.requires_tool)
+            from app.chat.context import current as _controlled_context
+            _controlled_execution = _controlled_context.get()
+            if _controlled_execution is not None:
+                if not await _controlled_execution.freeze_finalization(_final_content, _closer_status or {}):
+                    # Input accepted before the freeze belongs to this run. Fold
+                    # this draft privately and consume that input at the next boundary.
+                    yield await _finalize_progress_attempt(_final_content)
+                    messages.append({"role":"assistant", "content":_final_content})
+                    turn_count -= 1
+                    continue
             _closing_policy = None
             _closing_per_requirement: Dict[str, int] = {}
             try:
-                from app.agent.closing_message import (
+                from app.chat.closing import (
                     attempts_exhausted as _closing_exhausted,
                     classify_missing_requirements as _classify_closing_missing,
                     completion_gaps as _closing_gaps,
@@ -7923,6 +7962,9 @@ async def _stream_agent_events_impl(
             except Exception:
                 logger.debug("closing message: policy resolution failed", exc_info=True)
                 _closing_policy = None
+            if _controlled_execution is not None:
+                _controlled_run = await _controlled_execution.repo.run(_controlled_execution.run_id)
+                _closing_policy = _controlled_run["policy"]
             _closing_retries = 0
             if _closing_policy:
                 _closing_retries = int(
@@ -8372,6 +8414,8 @@ async def _stream_agent_events_impl(
                    "content": prefix_content(_final_content), "asst_id": inter_id,
                    "closing_promoted": _final_promoted,
                    "closing_failed": list(_closing_failed),
+                   "terminal_candidate": True,
+                   "private_closer_status": _closer_status or {},
                    "closing_message": meta_final_data.get("closing_message")}
             if _final_promoted:
                 _schedule_output_closer(

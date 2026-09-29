@@ -1,3 +1,18 @@
+
+> **V2 development note (2026-09-29):** The development target runs the
+> isolated controlled-chat application from `/home/ar/webagent-dev-v2` through
+> `app.v2:app`. The authoritative chat architecture is documented in
+> [`docs/chat-v2.md`](docs/chat-v2.md). Customer-visible transcript items come
+> only from the validated `/api/v2/chat` publication path; execution output,
+> tool bodies, and rejected drafts remain private activity data.
+>
+> This README still documents the broader WebAgent platform and includes
+> legacy `/api/v1/chat` routes used by existing integrations. Those routes are
+> compatibility surfaces during V2 adaptation, not the authority for the
+> customer transcript. New chat work belongs in `app/chat/` and
+> `ui/chat/core/`. Do not use the old `app/api/chat.py`,
+> `app/agent/closing_message.py`, `app/agent/message_visibility.py`, or
+> `plugins/gates/` paths; those responsibilities moved into the chat core.
 # WebAgent
 
 A **FastAPI** service with a **tool-calling** LLM agent (OpenRouter), optional **Supabase** or **local SQLite** persistence, and a **vanilla JS** UI at **`/index.html`** (static assets under `/ui/`).

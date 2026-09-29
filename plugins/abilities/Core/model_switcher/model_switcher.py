@@ -272,7 +272,7 @@ def build_tools(*, user_id: str = "", session_id: str = "", agent_id: str = "",
         if not session_id:
             return
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, {
                 "type": "model_override",
                 "active": bool(active),

@@ -73,7 +73,7 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Reuse the exact authenticated chat implementation without a loopback HTTP
     # request.  The worker clone/session already carries the clamped abilities.
     from starlette.requests import Request
-    from app.api.chat import ChatRequest, run_internal_session_turn
+    from app.chat.execution import ChatRequest, run_internal_session_turn
     from app.auth.jwt import create_access_token
 
     # Contract turns cannot launch grandchildren. Permission profiles deny the

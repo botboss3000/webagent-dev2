@@ -84,7 +84,7 @@ async def _emit_agent_created(user_id: str, agent: dict) -> None:
     if not user_id or not agent:
         return
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(user_id, {
             "type": "agent_created", "user_id": user_id, "agent": agent,
         })
@@ -1450,7 +1450,7 @@ async def kick_user_session(
 
         # Live broadcast so an open session updates in real time, like automation.
         try:
-            from app.api.chat import _emit_to_visualizers as _emit_live
+            from app.chat.execution import _emit_to_visualizers as _emit_live
         except Exception:
             _emit_live = None
 
@@ -1541,7 +1541,7 @@ async def kick_user_session(
         # so this kicked run starts on the agent's default model. (The user's
         # own footer-picker selection survives.)
         try:
-            from app.api.chat import _reset_agent_model_switcher as _reset_ms
+            from app.chat.execution import _reset_agent_model_switcher as _reset_ms
             await _reset_ms(db, session_id)
         except Exception as _ms_err:
             logger.debug("kick_user_session: model-switcher reset failed: %s", _ms_err)

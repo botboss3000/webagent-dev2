@@ -11,12 +11,14 @@ import { app } from '../../shared/js/state.js';
 import { apiPath } from '../../shared/js/config.js';
 import { authHeaders } from '../../shared/js/left-login.js';
 import { icon, componentTypeIcon } from '../../shared/js/icons.js';
+import { watchComponents, reconcileComponents } from '../core/components.js';
 
 let host;
 let panel;
 let components = new Map();
 let panelUserClosed = false;   // user collapsed the panel; live content stays silent unless configuration opts in
 let activeComponentId = null;  // which component the panel displays (tabs switch it)
+let componentSession = null, componentUser = null, watcher = null, restoring = false, batching = false;
 
 function _autoOpenOnPresent() {
   const ui = window.__chatUiSnapshot || {};
@@ -100,11 +102,21 @@ function _syncPanel() {
   }
 }
 
-// CHAT-COMPONENT-FULL-VIEW: measure the chat column and pin the full-height
-// overlay below the chat header tabs and ABOVE the composer. Width follows the
-// transcript's content width — the live --chat-surface-max-width the chat
-// surface sets from chat_ui.json chat_common.content_max_width — so the panel
-// lines up with the transcript's max width instead of a narrow drawer.
+// CHAT-COMPONENT-FULL-VIEW: copy the transcript's rendered horizontal bounds.
+// The transcript already resolves chat_common.content_max_width through CSS,
+// including unit-bearing values such as `100%` on mobile and `1000px` on
+// desktop. Do not parse that token again here: parseFloat('100%') is 100 and
+// used to collapse the mobile panel to 100px, leaving large side clearances.
+export function _fullViewHorizontalBounds(chatPanel, inner, gap = 4) {
+  const ir = inner?.getBoundingClientRect();
+  if (ir && ir.width > 0) return { left: ir.left, width: ir.width };
+  const pr = chatPanel.getBoundingClientRect();
+  return {
+    left: pr.left + gap,
+    width: Math.max(0, pr.width - gap * 2),
+  };
+}
+
 function _positionFullView() {
   const p = _panel();
   const chatPanel = document.getElementById('chat-panel');
@@ -130,27 +142,11 @@ function _positionFullView() {
     : panelBottom;
   const availableHeight = Math.max(0, safeBottom - panelTop);
   const height = Math.min(Math.max(0, pr.height * 0.75), availableHeight);
-  // Width: the transcript content cap. Read the live CSS var the chat surface
-  // sets from content_max_width; fall back to the config snapshot, then 1000px.
-  let maxW = parseFloat(getComputedStyle(chatPanel).getPropertyValue('--chat-surface-max-width'));
-  if (!Number.isFinite(maxW) || maxW <= 0) {
-    const snap = (window.__chatUiSnapshot || {}).chat_common || {};
-    maxW = parseFloat(snap.content_max_width) || 1000;
-  }
-  // Align to the transcript itself when it is mounted: #chat-messages-inner's
-  // content box IS the width the messages render at, so the panel lines up flush
-  // with the transcript (the composer column can be a few px wider because of the
-  // scroller gutter). Fall back to the centred column calculation when absent.
+  // The transcript owns all responsive width resolution. Copy its rendered
+  // box instead of interpreting CSS units in JavaScript; this works for both
+  // mobile `100%` and desktop pixel caps and follows future layout changes.
   const inner = document.getElementById('chat-messages-inner');
-  let width, left;
-  if (inner && inner.getBoundingClientRect().width > 0) {
-    const ir = inner.getBoundingClientRect();
-    width = Math.min(maxW, ir.width);
-    left = ir.left + (ir.width - width) / 2;
-  } else {
-    width = Math.max(0, Math.min(maxW, pr.width - gap * 2));
-    left = pr.left + (pr.width - width) / 2;
-  }
+  const { width, left } = _fullViewHorizontalBounds(chatPanel, inner, gap);
   // Preserve the original chat-element placement: start just below the visible
   // header stack. Height is explicit, so leave bottom automatic rather than
   // over-constraining the fixed box and losing the 75% target.
@@ -182,6 +178,7 @@ function _isCompleted(component) {
 // deleted). The sub-agent tab bar listens and re-fetches so component tabs
 // appear and clear live.
 function _notifyChanged() {
+  if(batching) return;
   // PREVENTIVE-COMMENTS: `bubbles: true` is REQUIRED, not decorative. The chip
   // strip listens on `window` (session-dropdown/list.js), and a NON-bubbling
   // event dispatched on `document` never reaches a window listener. Without it
@@ -189,7 +186,7 @@ function _notifyChanged() {
   // appears once the 15s chip cache lapses.
   document.dispatchEvent(new CustomEvent('chat-components-changed', {
     bubbles: true,
-    detail: { sessionId: app.currentSessionId },
+    detail: { sessionId: componentSession, components: [...components.values()] },
   }));
 }
 
@@ -217,8 +214,9 @@ function _scheduleUiSave() {
 }
 
 async function _saveUiState() {
-  const sid = app.currentSessionId;
-  if (!sid || !components.size) return;   // empty panel: nothing layout-worthy to keep
+  const sid = componentSession;
+  if (!sid || sid !== app.currentSessionId || componentUser !== app.currentUserId
+      || !components.size) return;
   try {
     await fetch(apiPath('/api/v1/chat/components/ui-state?session_id=' + encodeURIComponent(sid)), {
       method: 'PUT', keepalive: true,
@@ -392,7 +390,12 @@ function _approval(component) {
 // can never race each other into a lost update.
 let _scratchpadChain = Promise.resolve();
 function _scratchpadAct(id, action, payload) {
-  const run = () => act(id, action, payload);
+  const sid=componentSession, user=componentUser, activeWatcher=watcher;
+  const run = () => {
+    if(sid!==app.currentSessionId || user!==app.currentUserId || watcher!==activeWatcher)
+      throw new Error('The active session changed before the edit was saved');
+    return act(id, action, payload);
+  };
   const next = _scratchpadChain.then(run, run);
   _scratchpadChain = next.then(() => {}, () => {});
   return next;
@@ -513,41 +516,85 @@ async function persist(component) {
 }
 
 async function act(id, action, payload) {
-  const response = await fetch(apiPath('/api/v1/chat/components/' + encodeURIComponent(id) + '/actions?session_id=' + encodeURIComponent(app.currentSessionId)), {
+  const sid=componentSession, user=componentUser, activeWatcher=watcher;
+  if(!sid || sid!==app.currentSessionId || user!==app.currentUserId)
+    throw new Error('The active session changed before the action');
+  const response = await fetch(apiPath('/api/v1/chat/components/' + encodeURIComponent(id) + '/actions?session_id=' + encodeURIComponent(sid)), {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ action, payload }),
   });
   if (!response.ok) throw new Error('Could not update component');
   const component = (await response.json()).component;
-  render(component); return component;
+  if(sid===app.currentSessionId && user===app.currentUserId && watcher===activeWatcher) {
+    render(component);
+    // Invalidate any older in-flight snapshot before it can undo this action.
+    void watcher?.refresh();
+  }
+  return component;
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-async function load(sessionId) {
-  // Start background resources collapsed. A saved open plan must never take
-  // over the composer when its session is reopened.
+function clear() {
+  if (_uiSaveTimer) { clearTimeout(_uiSaveTimer); _uiSaveTimer=null; }
   components = new Map(); panelUserClosed = true; activeComponentId = null;
-  const p = _panel();
-  if (p) {
-    p.classList.remove('open');
-    p.style.width = ''; p.style.height = '';
-    p.style.top = ''; p.style.left = ''; p.style.right = ''; p.style.bottom = '';
-  }
-  const body = _host(); if (body) body.innerHTML = '';
+  const body = _host(); if (body) body.replaceChildren();
   _syncPanel();
-  if (!sessionId) return;
+  _notifyChanged();
+}
+
+function syncSnapshot(snapshot) {
+  if(snapshot.session_id!==componentSession) throw new Error('Foreign elements snapshot');
+  const rows=snapshot.components.filter(row=>!row.deleted && !_isCompleted(row));
+  const fresh=rows.some(row=>!components.has(row.id));
+  const before=JSON.stringify([...components.values()]);
+  batching=true;
   try {
-    const [compRes, uiRes] = await Promise.all([
-      fetch(apiPath('/api/v1/chat/components?session_id=' + encodeURIComponent(sessionId)), { headers: authHeaders() }),
-      fetch(apiPath('/api/v1/chat/components/ui-state?session_id=' + encodeURIComponent(sessionId)), { headers: authHeaders() }),
-    ]);
-    if (compRes.ok) {
-      for (const component of (await compRes.json()).components || []) render(component);
-    }
-    if (uiRes.ok && typeof _applyUiState === 'function') {
-      try { _applyUiState((await uiRes.json()).ui || {}); } catch (_) { /* layout restore optional */ }
-    }
-  } catch (_) { /* chat components are optional */ }
+    reconcileComponents(components,rows,{
+      render,
+      remove:removeLocal,
+      focused:id=>{
+        const card=_host()?.querySelector('[data-chat-component-id="'+CSS.escape(id)+'"]');
+        return !!card?.contains(document.activeElement);
+      },
+    });
+  } finally { batching=false; }
+  if(restoring) {
+    _applyUiState?.(snapshot.ui || {});
+    restoring=false;
+  } else if(fresh && _autoOpenOnPresent()) {
+    panelUserClosed=false;
+  }
+  _syncPanel();
+  // The menu receives the same committed snapshot as the panel.
+  if(before!==JSON.stringify([...components.values()])) _notifyChanged();
+}
+
+async function load(sessionId) {
+  if(sessionId && sessionId===componentSession && componentUser===app.currentUserId && watcher)
+    return watcher.refresh();
+  watcher?.stop();watcher=null;
+  componentSession=sessionId;componentUser=app.currentUserId;restoring=true;
+  clear();
+  if(!sessionId || sessionId!==app.currentSessionId || !componentUser) return;
+  const user=componentUser;
+  watcher=watchComponents({
+    current:()=>sessionId===app.currentSessionId && user===app.currentUserId,
+    read:signal=>fetch(apiPath('/api/v2/chat/sessions/'+encodeURIComponent(sessionId)+'/components'),
+      {headers:authHeaders(),cache:'no-store',signal}),
+    apply:syncSnapshot,
+    clear,
+    onError:message=>{
+      const body=_host();if(!body) return;
+      let status=body.querySelector('[data-component-sync-status]');
+      if(!message) {status?.remove();return;}
+      if(!status) {
+        status=document.createElement('p');status.dataset.componentSyncStatus='';
+        status.setAttribute('role','status');body.appendChild(status);
+      }
+      status.textContent=message;
+    },
+  });
+  return watcher.refresh();
 }
 
 async function present(component) {
@@ -639,4 +686,8 @@ export function initChatComponents() {
   });
 
   app.loadChatComponents = load; app.presentChatComponent = present; app.attachPendingChatComponents = attachPendingInline;
+  app.ensureChatComponents = sid => {
+    if(sid!==componentSession || componentUser!==app.currentUserId) void load(sid);
+  };
+  document.addEventListener('webagent-auth-transition-start',()=>load(null));
 }

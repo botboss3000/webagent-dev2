@@ -221,7 +221,7 @@ def test_create_uses_the_persisted_update_schema_for_initial_config(monkeypatch)
         "agent": {"id": "new-agent", "name": "Configured", "source": "custom"},
     })
     monkeypatch.setattr(agents, "update_agent", apply_update)
-    monkeypatch.setattr("app.api.chat.notify_user", AsyncMock())
+    monkeypatch.setattr("app.events.delivery.notify_user", AsyncMock())
     req = agents.CreateAgentRequest(
         user_id="free-user",
         name="Configured",

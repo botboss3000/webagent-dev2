@@ -348,7 +348,7 @@ async def _notify_owner_browsers(job: dict, engaged: bool) -> None:
         owner = (job or {}).get("owner_user_id")
         if not owner:
             return
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(owner, {"type": "kill_switch", "engaged": engaged})
     except Exception:  # noqa: BLE001
         pass

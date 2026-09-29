@@ -486,7 +486,7 @@ async def _inject_manager_note(
             source=_MANAGER_SOURCE, session_seq=seq,
         )
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, {
                 "type": "response", "level": "agent",
                 "content": content, "asst_id": turn_uid,
@@ -569,21 +569,25 @@ async def _resolve_llm(
         try:
             from app.admin.settings import load_llm_capabilities_for_user
             caps = await load_llm_capabilities_for_user(user_id, agent_rec=agent_rec)
-            entries = [caps.get("default") or {}, *(caps.get("racers") or [])]
-            match = next((entry for entry in entries
-                          if isinstance(entry, dict)
-                          and entry.get("model") == wanted
-                          and entry.get("enabled", True) is not False
-                          and entry.get("text_capable", True) is not False
-                          and entry.get("base_url")
-                          and (entry.get("api_key")
-                               or entry.get("provider") == "openai_subscription")), None)
+            entries = [
+                entry for entry in [caps.get("default") or {}, *(caps.get("racers") or [])]
+                if isinstance(entry, dict)
+                and entry.get("enabled", True) is not False
+                and entry.get("text_capable", True) is not False
+                and entry.get("base_url")
+                and (entry.get("api_key") or entry.get("provider") == "openai_subscription")
+            ]
+            from app.entitlements.rosters import select_roster_entry
+            # Stable entry identity is authoritative. A model-name reference remains
+            # valid only when it identifies exactly one eligible legacy row.
+            match = select_roster_entry(entries, entry_id=wanted, model=wanted)
             if match:
+                model = str(match.get("model") or "")
                 provider = str(match.get("provider") or "")
                 if provider == "openai_subscription":
                     from app.agent.provider_completion import SubscriptionResponseClient
                     return (
-                        wanted, provider,
+                        model, provider,
                         SubscriptionResponseClient(
                             scope=str(match.get("credential_scope") or "platform"),
                             entry_id=str(match.get("entry_id") or ""),
@@ -592,7 +596,7 @@ async def _resolve_llm(
                         ),
                     )
                 return _build_client(
-                    wanted, str(match.get("base_url") or ""),
+                    model, str(match.get("base_url") or ""),
                     str(match.get("api_key") or ""), provider,
                 )
             logger.info("run manager: configured model %r is unavailable; using standard", wanted)

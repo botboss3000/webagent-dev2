@@ -1,0 +1,9 @@
+FROM webagent:dev-codex
+USER root
+WORKDIR /app
+COPY --chown=appuser:appgroup . /app
+ENV WEBAGENT_V2_ISOLATED=1 WEBAGENT_ENCRYPTION_LEVEL=field WEBAGENT_SECRETS_PROVIDER=inline_db WEBAGENT_DB_MODE=local
+USER appuser:appgroup
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD curl --fail http://localhost:8080/health/ready || exit 1
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python","-m","app.server_supervisor"]

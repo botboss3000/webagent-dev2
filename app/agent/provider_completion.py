@@ -74,12 +74,14 @@ async def _subscription_completion(
         provider_family_name="openai",
         session_key=f"wa-background-{client.user_id}",
     )
-    # Stateless subscription completions still honor the caller's bounded
-    # ``max_output_tokens`` value; a finalizer relies on that hard ceiling.
+    # The ChatGPT subscription endpoint rejects max_output_tokens. Keep the
+    # requested bound in caller-side validation instead of sending an unsupported
+    # transport parameter.
     body["store"] = False
     body["include"] = ["reasoning.encrypted_content"]
     if extra_body:
         body.update(dict(extra_body))
+    body.pop("max_output_tokens", None)
     headers = {
         "originator": "webagent",
         "User-Agent": "webagent/1.0",

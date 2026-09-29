@@ -181,10 +181,12 @@ def _load_module(path: Path) -> Optional[Any]:
 
 def _discover() -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
-    if not _GATES_DIR.is_dir():
-        return found
-    # Markdown is canonical and wins any temporary duplicate during migration.
-    for path in sorted(_GATES_DIR.glob(f"*{MARKDOWN_GATE_SUFFIX}")):
+    # Core chat policy descriptors retain the existing editable settings UI.
+    # Their validation/publication implementation is mandatory in app.chat.
+    core_dir = Path(__file__).resolve().parents[1] / "chat" / "policies"
+    paths = sorted(_GATES_DIR.glob(f"*{MARKDOWN_GATE_SUFFIX}"))
+    paths += sorted(core_dir.glob(f"*{MARKDOWN_GATE_SUFFIX}"))
+    for path in paths:
         descriptor = _load_markdown(path)
         if descriptor is not None:
             found[descriptor["id"]] = descriptor

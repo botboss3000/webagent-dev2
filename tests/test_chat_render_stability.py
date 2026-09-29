@@ -321,6 +321,26 @@ def test_session_switch_uses_same_agent_and_stale_while_revalidate_fast_paths():
     assert "_refreshCachedTranscript(sessionId);" in load
 
 
+def test_sessions_table_repaints_preserve_bulk_selection_until_action_finishes():
+    sessions = _source("ui/main-panel/agents/sessions/js/sessions-page.js")
+    render_start = sessions.index("function _renderTable(rows)")
+    render_end = sessions.index("// Build one table row", render_start)
+    render = sessions[render_start:render_end]
+
+    capture = render.index("const checkedSessionIds = new Set(Array.from(")
+    replace = render.index("tbody.innerHTML = html;")
+    restore = render.index("if (checkedSessionIds.size)")
+
+    assert capture < replace < restore
+    assert "tbody.querySelectorAll('.sessions-check-cell.checked')" in render
+    assert "checkedSessionIds.has(cell.dataset.sessionId)" in render
+    assert "cell.closest('tr')?.classList.add('selected');" in render
+    # Once the recycle mutation removes those rows, this durable bin-only context
+    # still drives the Undo / Permanent delete stage in the active-only view.
+    assert "if (origins.size === 0 && _postBinSessionIds.length) origins.add('bin');" in sessions
+    assert "_postBinSessionIds = recycledIds;" in sessions
+
+
 def test_agents_sessions_avatar_disclosure_matches_session_dropdown():
     sessions = _source("ui/main-panel/agents/sessions/js/sessions-page.js")
     dropdown = _source("ui/chat/elements/session-dropdown/list.js")

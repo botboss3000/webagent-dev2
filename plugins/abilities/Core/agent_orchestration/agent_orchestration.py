@@ -1501,7 +1501,7 @@ async def _create_delegation(*, user_id, orchestrator_session_id, orchestrator_a
 async def _notify_orchestrator(user_id: str, orchestrator_session_id: str, note: str) -> None:
     """Deliver spawn status without creating a chat turn or resuming an agent."""
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(user_id, {
             "type": "spawn_status",
             "session_id": orchestrator_session_id,

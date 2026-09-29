@@ -55,9 +55,12 @@ def main_message_tool_definition() -> dict[str, Any]:
 
 def main_message_text(arguments: Any) -> str:
     """Return validated visible text or an empty string for a malformed control call."""
-    if not isinstance(arguments, dict):
+    if not isinstance(arguments, dict) or set(arguments) != {"text"}:
         return ""
-    return str(arguments.get("text") or "").strip()
+    text = arguments["text"]
+    if not isinstance(text, str) or len(text) > 100000:
+        return ""
+    return text.strip()
 
 
 @dataclass(frozen=True)

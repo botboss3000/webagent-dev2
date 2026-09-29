@@ -593,7 +593,7 @@ async def _finish_run(
                 # now that the run is over (see model_switcher.py
                 # _emit_override_state). Best-effort — never break teardown.
                 try:
-                    from app.api.chat import _emit_to_visualizers
+                    from app.chat.execution import _emit_to_visualizers
                     await _emit_to_visualizers(session_id, {
                         "type": "model_override", "active": False, "model": "",
                     }, user_id=(_row or {}).get("user_id") or "")
@@ -1129,7 +1129,7 @@ async def resume_orphans_at_boot(max_concurrent: int = BOOT_RESUME_CONCURRENCY) 
     # /compact itself is also retried from the browser outbox, which re-runs
     # the fold properly.) Best-effort: a failure here must not break boot.
     try:
-        from app.api.chat import (
+        from app.chat.execution import (
             _list_compaction_queued_sessions, _drain_compaction_queue,
         )
         _cqs = _list_compaction_queued_sessions(db)

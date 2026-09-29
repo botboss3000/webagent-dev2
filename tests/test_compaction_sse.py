@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.api.chat import chat_stream
+from app.chat.execution import chat_stream
 from app.models.schemas import ChatRequest
 
 
@@ -32,7 +32,7 @@ class CompactionSseTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "app.api.chat._prepare_send", AsyncMock(return_value=prepared),
+            "app.chat.execution._prepare_send", AsyncMock(return_value=prepared),
         ):
             response = await chat_stream(request, object())
 

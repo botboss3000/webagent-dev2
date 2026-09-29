@@ -373,7 +373,7 @@ def test_hard_anonymous_budget_caps_distributed_chat(monkeypatch, tmp_path):
 
 
 def test_blocking_chat_preserves_anonymous_budget_http_error(monkeypatch):
-    from app.api import chat as chat_api
+    from app.chat import execution as chat_api
 
     async def caller(_request, claimed_user_id):
         return claimed_user_id

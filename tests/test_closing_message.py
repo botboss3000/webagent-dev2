@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import closing_message, gate_registry
+from app.agent import gate_registry
+from app.chat import closing as closing_message
 from app.agent.contracts import active_rules, contract_prompt_block, parse_contract
 
 
@@ -1101,7 +1102,7 @@ def test_cleanup_final_cannot_bypass_the_gate():
     With an active closing policy that the step's content does not satisfy, the
     early exit must stand down so the run reaches the terminal block."""
     source = _loop_source()
-    assert "from app.agent.closing_message import (" in source
+    assert "from app.chat.closing import (" in source
     assert "if _cu_policy and _cu_missing(assistant_content, _cu_policy):" in source
     assert "cleanup_final = False" in source
     # The demotion must be guarded so a gate failure can never fail a run.
@@ -1169,7 +1170,7 @@ def test_exhausted_work_contract_hands_off_to_the_gate_only_when_active():
     # The handoff step and the gate probe live inside the completion path.
     assert '"step": "work_policy_closer_handoff"' in region
     assert (
-        "from app.agent.closing_message import resolve as _resolve_work_closer"
+        "from app.chat.closing import resolve as _resolve_work_closer"
         in region
     )
     # The probe is fail-open, so a gate lookup can never fail a run.
@@ -1396,7 +1397,7 @@ def test_closing_tally_is_stamped_durably_and_continues_after_a_resume():
     assert "await _closing_prior_attempts()" in source
     assert '_closing_retries = max(' in source
     assert 'int(_prior_closing.get("total") or 0)' in source
-    assert "closing_message import attempt_marker as _marker" in source
+    assert "app.chat.closing import attempt_marker as _marker" in source
     # Both backends expose the probe: the base class's Python fallback keeps
     # Postgres in step with the SQLite override.
     from app.db.interface import StorageBackend

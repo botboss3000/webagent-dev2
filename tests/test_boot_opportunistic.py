@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_hung_optional_section_is_omitted_without_blocking_boot(monkeypatch):
-    from app.api import agents, boot as boot_api, chat, features
+    from app.api import agents, boot as boot_api, features
+    from app.chat import execution as chat
     from app.auth import identity
     from app.entitlements import service as entitlements
 

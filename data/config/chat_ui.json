@@ -703,6 +703,7 @@
       "bottom_offset": 0
     },
     "show_tool_calls": true,
+    "show_activity_groups": true,
     "show_activity_preview": false,
     "classify_main_messages": true,
     "fold_main_messages": false,

@@ -1325,9 +1325,9 @@ body.light-mode #chat-sub-header .chip-sep { background: var(--border); }
   }
   /* After an idle→active transition, block clicks on newly-appeared
      buttons for a brief window so the user's finger can't hit them. */
-  /* Stop / continue buttons are already visible in idle mode and don't
-     need click protection — they'd eat a natural double-click otherwise. */
-  #chat-input-row.pill-no-clicks button:not(.chat-pill-stop):not(.chat-pill-continue),
+  /* Send, Stop, and Continue can be the intended first click after typing;
+     keep them responsive while the other newly-appeared controls settle. */
+  #chat-input-row.pill-no-clicks button:not(.chat-pill-stop):not(.chat-pill-continue):not(.chat-pill-send),
   #chat-input-row.pill-no-clicks [role="button"]:not(.chat-pill-stop):not(.chat-pill-continue) {
     pointer-events: none;
   }

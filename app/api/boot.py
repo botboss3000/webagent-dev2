@@ -70,7 +70,7 @@ async def boot(request: Request):
     from app.auth.identity import request_user_id
     from app.auth import access_mode as _access_mode, ui_config as _ui_config
     from app.api.features import get_app_prompts
-    from app.api.chat import get_suggestions_config
+    from app.chat.execution import get_suggestions_config
     from app.api.agents import (
         get_abilities_catalog,
         get_pages_catalog,

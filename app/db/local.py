@@ -106,7 +106,7 @@ async def _emit_agent_run_status(user_id, agent_id, session_id, status: str,
     if not user_id or not agent_id:
         return
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         payload: Dict[str, Any] = {
             "type": "agent_status", "status": status,
             "agent_id": agent_id, "session_id": session_id,
@@ -12003,6 +12003,12 @@ class LocalBackend(StorageBackend):
                                   social_links: Optional[dict] = None) -> Optional[dict]:
         """Insert a new account. Returns the row, or None if the username or
         user_id is already taken (mirrors the old register_user contract)."""
+        # A new account must have a fresh user authority before becoming visible.
+        # This is initialization through the canonical storage factory, not migration.
+        from app.db.storage_layout import is_layout_active
+        if is_layout_active():
+            from app.db import get_user_db
+            get_user_db(user_id)
         async with self._write_lock:
             conn = self._get_conn()
             try:

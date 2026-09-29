@@ -158,7 +158,7 @@ def build_app_control_tools(user_id: str, session_id: str) -> Dict[str, Callable
             "chat_width": width,     # int or None
         }
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, event, user_id=user_id)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("set_app_view emit failed: %s", e)

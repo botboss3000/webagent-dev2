@@ -1,5 +1,6 @@
 import { getActive } from './accounts.js';
 import { mountModelTable } from './model-table.js?v=15';
+import { reconcileSavedModelRows } from './model-roster-reconcile.js';
 
 function authHeaders() {
   const active = getActive();
@@ -62,9 +63,7 @@ export async function mountMyModels(slot) {
       if (!response.ok) {
         throw new Error(data?.detail?.message || data?.detail || `HTTP ${response.status}`);
       }
-      (data.entries || []).forEach((saved, index) => {
-        if (providers[index]) Object.assign(providers[index], saved);
-      });
+      reconcileSavedModelRows(providers, data.entries || []);
       return data;
     },
     loadPresets: async () => ({

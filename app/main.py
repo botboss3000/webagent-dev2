@@ -19,7 +19,7 @@ from fastapi import APIRouter
 
 # ── Load .env BEFORE any imports that need environment variables ──
 # The .env file lives in the project root (parent of app/).
-# This must happen before importing app.api.chat (which imports loop.py,
+# This must happen before importing app.chat.execution (which imports loop.py,
 # which creates an AsyncOpenAI client at module level using OPENROUTER_API_KEY).
 _APP_DIR = Path(__file__).resolve().parent
 _DOTENV_PATH = _APP_DIR.parent / ".env"
@@ -148,7 +148,7 @@ class StaticGzipMiddleware:
 
         await self.app(scope, receive, _send)
 
-from app.api.chat import router as chat_router
+from app.chat.execution import router as chat_router
 from app.api.agent import router as agent_router
 from app.api.agents import router as agents_router, agent_pages_router
 from app.api.agent_profiles import router as agent_profiles_router
@@ -218,6 +218,14 @@ def _queue_deferred_startup(label: str, operation) -> None:
     same SQLite files and vaults. A failure is recorded and the next item still
     runs, so one optional integration cannot keep the app in "connecting".
     """
+    if os.environ.get("WEBAGENT_V2_ISOLATED") == "1" and label in {
+        "communications", "hybrid_sync", "leader_services", "device_worker",
+        "p2p_worker", "orphaned_run_recovery", "activity_summary_backfill",
+        "accounts_and_admin_repair", "agent_admin_backfill",
+        "jwt_secret_reconcile",
+    }:
+        logger.info("Isolated V2: suppressed startup service %s", label)
+        return
     app.state.startup_deferred_queue.append((label, operation))
 
 

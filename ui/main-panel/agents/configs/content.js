@@ -30,6 +30,7 @@ import { app } from '../../../shared/js/state.js';
 import { icon } from '../../../shared/js/icons.js';
 import { authHeaders, isAnonGuest } from '../../../shared/js/left-login.js';
 import { advanceDeleteBtn, resetDeleteBtn } from '../../../shared/js/delete-control.js';
+import { reconcileSavedModelRows } from '../../../shared/js/model-roster-reconcile.js';
 import { NODE_PANEL_INFO } from '../agent-loop/js/loop-node-data.js';
 import {
   _agents, _isMockAgent, MOCK_AGENT_ID,
@@ -1168,9 +1169,7 @@ export function _renderConfigTab(body, agent, panelEl, _renderList, { onPageChan
           'voice_capable', 'high_effort_capable', 'routing_mode'].forEach(k => delete agentCfg[k]);
         return persistLlm().then(() => {
           const saved = agent.llm_config?.multi_providers || [];
-          saved.forEach((row, index) => {
-            if (providers[index]) Object.assign(providers[index], row);
-          });
+          reconcileSavedModelRows(providers, saved);
           agentCfg.multi_providers = providers;
           return { providers };
         });

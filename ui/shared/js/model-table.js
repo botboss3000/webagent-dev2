@@ -2749,21 +2749,32 @@ export function mountModelTable(host, opts = {}) {
     if (!free && !S.selectedModel) return setModelStatus('Please select a model');
     let savedRow = null;
     const capText = S.selCaps.text !== false, capImage = !!S.selCaps.image, capImageOut = !!S.selCaps.imageOut, capVoice = !!S.selCaps.voice;
-    // The first roster model claims Standard so the app has an explicit chat
-    // model. There is no separately persisted default.
-    const becomesStandard = !subscription && !S.providers.length;
+    // The first agent-roster model claims Standard so the app has an explicit chat
+    // model. Catalog-only mounts have no roles, and subscription entries already
+    // carry a server-reserved ID before they can be added.
+    const becomesStandard = !catalogOnly && !subscription && !S.providers.length;
     const dupe = null;
     if (!dupe) {
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
-      const localEntryId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `local-${Date.now()}-${S.uid + 1}`;
-      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : localEntryId), display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!pendingSubscriptionRow?.credential_configured : true, credential_email: subscription ? (pendingSubscriptionRow?.credential_email || '') : '', credential_plan_type: subscription ? (pendingSubscriptionRow?.credential_plan_type || '') : '', _uid: ++S.uid };
-      // Only the first-ever add receives an explicit Standard assignment; every later
-      // add is role-neutral and never displaces an existing holder. Assigned
-      // roles live only in roleAssignments; inherited rows are never rewritten.
-      if (becomesStandard) S.roleAssignments.standard = String(newP.entry_id || '');
+      // Persisted IDs are owned by the server. `_uid` is the only client-side row
+      // identity; adapters hydrate `entry_id` into this same object after save.
+      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!pendingSubscriptionRow?.credential_configured : true, credential_email: subscription ? (pendingSubscriptionRow?.credential_email || '') : '', credential_plan_type: subscription ? (pendingSubscriptionRow?.credential_plan_type || '') : '', _uid: ++S.uid };
+      const previousRoles = { ...S.roleAssignments };
       S.providers.push(newP);
-      const saves = [saveRoster()];
-      await Promise.all(saves);
+      try {
+        await saveRoster();
+        // Role assignments may only reference persistent IDs. Save the new row
+        // first, let the adapter merge the server UUID, then persist Standard.
+        if (becomesStandard) {
+          if (!newP.entry_id) throw new Error('The server did not assign a model entry ID');
+          S.roleAssignments.standard = String(newP.entry_id);
+          await saveRoster();
+        }
+      } catch (error) {
+        S.providers = S.providers.filter(row => row !== newP);
+        S.roleAssignments = previousRoles;
+        throw error;
+      }
       // Rebuild into the role-sorted position. Stable row ids let renderSaved
       // slide existing rows around the insertion while the new row fades in.
       renderSaved({ animate: true, enteringUids: [newP._uid] });
@@ -2773,9 +2784,9 @@ export function mountModelTable(host, opts = {}) {
       await saveRoster();
       savedRow = dupe;
     }
-      if (subscription && pendingSubscriptionRow?.entry_id === newP.entry_id) {
-        pendingSubscriptionRow = null;
-      }
+    if (subscription && pendingSubscriptionRow?.entry_id === savedRow?.entry_id) {
+      pendingSubscriptionRow = null;
+    }
     setModelStatus('Saved', true);
     displayNameInput.value = '';
     renderSubscriptionAuth();

@@ -806,7 +806,7 @@ def install_log_handler(level: int = logging.INFO) -> None:
 def tap_loop_event(session_id: str, event: Dict[str, Any]) -> None:
     """Record an interesting agent-loop / visualizer event. Never raises.
 
-    Called from ``app.api.chat._emit_to_visualizers`` for every emitted event;
+    Called from ``app.chat.execution._emit_to_visualizers`` for every emitted event;
     this function decides what (if anything) is worth keeping.
     """
     try:

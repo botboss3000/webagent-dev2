@@ -13,7 +13,7 @@
  * Bump CACHE after every repository change so clients receive the new generation.
  */
 
-const CACHE = "webagent-v1376";
+const CACHE = "webagent-v1379";
 const STATIC_PATTERN = /\.(css|js|json|svg|png|ico|woff2?)$/;
 const CODE_PATTERN = /\.(css|js|json)$/;
 const HTML_PATTERN = /\.html$/;

@@ -182,6 +182,14 @@ def tables_for_plane(plane: StoragePlane | str) -> tuple[str, ...]:
     return tuple(name for name, policy in TABLE_POLICIES.items() if policy.plane == selected)
 
 
+from app.chat.schema import TABLE_NAMES as _CHAT_TABLE_NAMES
+TABLE_POLICIES.update(_policies(
+    StoragePlane.USER, _CHAT_TABLE_NAMES, owner_key="user_id",
+    sensitive=True,
+))
+
+
+
 def validate_table_policies(table_names: Iterable[str]) -> None:
     canonical = set(table_names)
     declared = set(TABLE_POLICIES)

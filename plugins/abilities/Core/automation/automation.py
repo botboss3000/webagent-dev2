@@ -507,7 +507,7 @@ def build_automation_tools(user_id: str, agent_id: str, session_id: str,
             # Notify the user's open tabs so the Automation tab re-fetches
             # without a manual refresh.
             try:
-                from app.api.chat import _emit_to_user_listeners
+                from app.events.delivery import _emit_to_user_listeners
                 await _emit_to_user_listeners(user_id, {
                     "type": "automation_updated",
                     "agent_id": agent_id,
@@ -561,7 +561,7 @@ def build_automation_tools(user_id: str, agent_id: str, session_id: str,
         ok = await db.delete_event_subscription(subscription_id)
         if ok:
             try:
-                from app.api.chat import _emit_to_user_listeners
+                from app.events.delivery import _emit_to_user_listeners
                 await _emit_to_user_listeners(user_id, {
                     "type": "automation_updated",
                     "agent_id": agent_id,
@@ -580,7 +580,7 @@ def build_automation_tools(user_id: str, agent_id: str, session_id: str,
 
     async def _emit_automation_updated(action: str, automation_id: str):
         try:
-            from app.api.chat import _emit_to_user_listeners
+            from app.events.delivery import _emit_to_user_listeners
             await _emit_to_user_listeners(user_id, {
                 "type": "automation_updated", "agent_id": agent_id,
                 "action": action, "kind": "automation",

@@ -9,21 +9,9 @@
 // task finishes (click the chip to re-expand). The card is draggable by its
 // header and resizable from any edge or corner.
 //
-// How it gets its events: ONE global WebSocket (ui/shared/js/agentWs.js)
-// carries every session's events for the user. The widget claims its session
-// via registerSessionSubscriber(sessionId, handler); unclaimed sessions
-// behave exactly as before. One handler per session — two widgets on the
-// same session is unsupported (last registration wins). Each widget owns a
-// fresh UUID session, so this never collides in practice.
-//
-// RELIABILITY — the WS is the smooth path, the DB is the durable one. Just
-// like the main panel (ui/chat/js/chat-reconcile.js), the WS only
-// delivers when the browser socket and the running agent live in the SAME
-// server process. When they don't (dev port-stacking, prod multi-worker), or
-// when the socket is briefly silent, the widget polls a cheap DB-tail endpoint
-// (/api/v1/db/session-tail) — gated on WS silence so there's ZERO overhead
-// while the socket is delivering — and renders the same bubbles. This is what
-// makes updates land reliably right after a send and after Stop/Continue.
+// The widget consumes the same committed V2 public items and durable
+// subscription as the main panel. Private execution output is never rendered
+// here. Its session is independent of the main panel's session.
 //
 // Close ≠ Stop: closing the widget only detaches it — a running task keeps
 // going server-side and the session stays in the normal session list. Stop
@@ -38,7 +26,7 @@ import { app } from '../../shared/js/state.js';
 import { apiPath } from '../../shared/js/config.js';
 import { authHeaders } from '../../shared/js/left-login.js';
 import { randomUUID } from '../../shared/js/uuid.js';
-import { registerSessionSubscriber } from '../../shared/js/agentWs.js';
+import * as controlledChat from '../../chat/core/client.js';
 import { icon } from '../../shared/js/icons.js';
 import { chatMsg } from '../../shared/js/app-prompts.js';
 import { _fillAgentBubble } from '../../chat/js/chat-bubble.js';
@@ -228,6 +216,11 @@ export function createChatWidget(opts = {}) {
     settled: true,             // current turn has reached a terminal state
     stopPending: false,        // stop clicked — pin "Stopping…" until a terminal state
     unregister: null,
+    unregisterPublic: null,
+    publicSeen: new Map(),
+    publicNodes: new Map(),
+    pendingBubbles: new Map(),
+    onSendStatus: null,
     ready: null,               // promise resolving when agentId is known
     turnBuffers: new Map(),    // key -> accumulated/absolute stream text
     bubbles: new Map(),        // key -> agent bubble element
@@ -317,7 +310,7 @@ export function createChatWidget(opts = {}) {
     contBtn.innerHTML = icon('play', { size: '18px' });
     contBtn.title = 'Ask the agent to keep going';
     contBtn.hidden = true;
-    contBtn.addEventListener('click', () => send('continue'));
+    contBtn.addEventListener('click', () => send('Continue'));
     const stopBtn = document.createElement('button');
     stopBtn.type = 'button';
     stopBtn.className = 'chat-pill-stop cw-stop-btn';
@@ -697,12 +690,6 @@ export function createChatWidget(opts = {}) {
     // profile refresh must never leave the row hidden with its chevron open.
     if (st.els.below?.classList.contains('expanded')) st.els.below.hidden = false;
     if (st.collapseTimer) { clearTimeout(st.collapseTimer); st.collapseTimer = null; }
-    // Prime WS-liveness from "now" so the DB poll counts its silence window
-    // from here; if the WS delivers it keeps this fresh and the poll stays
-    // dormant, otherwise the poll engages after WS_SILENCE_MS.
-    if (!app._lastWsEventAt) app._lastWsEventAt = {};
-    app._lastWsEventAt[st.sessionId] = Date.now();
-    _startReconcile();
   }
 
   function _removeStreamingKey(key) {
@@ -1039,6 +1026,85 @@ export function createChatWidget(opts = {}) {
     st.hadTurn = true;
   }
 
+  // Only committed V2 public items may become widget bubbles. The item ID is
+  // the reconciliation key across snapshots, replay, and live delivery.
+  function _renderPublic(state) {
+    if (st.closed || !st.els.root || state.sessionId !== st.sessionId) return;
+    if (state.revoked) {
+      _setStatus('error');
+      st.els.input.disabled = true;
+      return;
+    }
+    const currentIds = new Set(state.items.filter(item => !item.deleted).map(item => item.id));
+    for (const [id, node] of st.publicNodes) {
+      if (currentIds.has(id)) continue;
+      node.remove();
+      st.publicNodes.delete(id);
+      st.publicSeen.delete(id);
+      st.bubbles.delete(id);
+    }
+    for (const item of state.items) {
+      if (item.deleted || st.publicSeen.get(item.id) === item.revision) continue;
+      if (!['user', 'answer', 'notice', 'failure'].includes(item.kind)) continue;
+      if (typeof item.payload.text !== 'string') continue;
+      const previous = st.publicNodes.get(item.id);
+      if (previous) {
+        previous.remove();
+        st.publicNodes.delete(item.id);
+        st.bubbles.delete(item.id);
+      }
+      let bubble = item.kind === 'user'
+        ? st.pendingBubbles.get(item.payload.client_message_id) : null;
+      if (bubble) st.pendingBubbles.delete(item.payload.client_message_id);
+      else if (item.kind === 'user') bubble = _addBubble('user', item.payload.text);
+      else {
+        _finalizeKey(item.id, item.payload.text);
+        bubble = st.bubbles.get(item.id);
+      }
+      if (!bubble) continue;
+      bubble.dataset.publicId = item.id;
+      bubble.dataset.publicPosition = String(item.position);
+      bubble.dataset.publicRevision = String(item.revision);
+      const next = [...st.els.body.children].find(node =>
+        Number(node.dataset.publicPosition || 0) > item.position);
+      if (next) st.els.body.insertBefore(bubble, next);
+      st.publicSeen.set(item.id, item.revision);
+      st.publicNodes.set(item.id, bubble);
+      st.hadTurn = true;
+    }
+    const active = state.runs.some(run =>
+      ['queued', 'running', 'finalizing', 'stopping'].includes(run.state));
+    if (active) {
+      st.settled = false;
+      _setStatus('running');
+    } else if (!st.settled) {
+      const last = state.runs.at(-1);
+      if (last?.state === 'cancelled') {
+        st.settled = true;
+        st.usage?.finish();
+        _setStatus('interrupted');
+      } else if (last?.state === 'failed') {
+        st.settled = true;
+        st.usage?.finish();
+        _setStatus('error');
+      } else if (last?.state === 'completed') _settleTurn(st.lastAgentText);
+    }
+  }
+
+  function _sendStatus(event) {
+    const detail = event.detail;
+    if (st.closed || detail?.sessionId !== st.sessionId) return;
+    const bubble = st.pendingBubbles.get(detail.id);
+    if (!bubble) return;
+    const labels = {
+      pending: 'Pending acceptance', offline: 'Waiting for connection',
+      accepted: 'Accepted', rejected: 'Message was not accepted',
+    };
+    bubble.title = labels[detail.status] || '';
+    bubble.classList.toggle('pending', detail.status === 'pending' || detail.status === 'offline');
+    if (detail.status === 'rejected') _markFailed(bubble, bubble.textContent || '');
+  }
+
   // ── Send / interrupt ──
 
   async function send(text, attachmentIds) {
@@ -1052,6 +1118,9 @@ export function createChatWidget(opts = {}) {
     if (!st.agentId || st.closed) return;
     _beginTurn();
     const userBubble = _addBubble('user', msg || (atts.length ? '(file attached)' : ''));
+    const clientMessageId = randomUUID();
+    userBubble.dataset.clientMessageId = clientMessageId;
+    st.pendingBubbles.set(clientMessageId, userBubble);
     _setStatus('running');
     // The user bubble shows what they typed (`msg`); the agent may receive a
     // wrapped form (e.g. Gen UI tags it with the page header) via transformMessage.
@@ -1065,44 +1134,23 @@ export function createChatWidget(opts = {}) {
     // pointing at.
     const pickupFp = (app.elementPickupActive && app.elementPickupFingerprint) || null;
     try {
-      const resp = await fetch(apiPath('/api/v1/chat/send'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
-          message: outgoing,
-          session_id: st.sessionId,
-          user_id: st.userId,
-          agent_id: st.agentId,
+      await controlledChat.queueMessage(st.sessionId, st.agentId, {
+          client_message_id: clientMessageId,
+          text: outgoing || '(file attached)',
+          display_text: msg || '(file attached)',
           execution_mode: executionMode,
-          ...(atts.length ? { attachment_ids: atts } : {}),
+          attachment_ids: atts,
           ...(pickupFp ? { app_control: pickupFp } : {}),
-        }),
       });
-      if (!resp.ok) { _markFailed(userBubble, msg); return; }
-      const data = await resp.json().catch(() => ({}));
-      // ── Session contract: title + remember after the first send ────────────
-      // A brand-new session row is only created on first send — now it exists,
-      // so we can PATCH its title to the declared target name (which also locks
-      // it against the auto-namer) and remember the id for follow-up widgets.
       if (!st._sessionInitialized) {
         st._sessionInitialized = true;
         if (st.rememberSessionKey && st.sessionId) {
           try { localStorage.setItem(st.rememberSessionKey, st.sessionId); } catch (_) {}
         }
-        if (st.sessionTargetName) {
-          const _title = st.sessionTargetName.slice(0, 120);
-          fetch(apiPath('/api/v1/db/sessions/' + encodeURIComponent(st.sessionId) + '?db=user.db'), {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ title: _title }),
-          }).catch(() => { /* best-effort; the auto-namer may fill it */ });
-        }
       }
-      // Synchronous reply path (no WS streaming for this turn).
-      if (data && data.status === 'ok' && data.reply) {
-        _finalizeKey(data.turn_id || '', data.reply);
-        _settleTurn(data.reply);
-      }
+      void controlledChat.drainOutbox().catch(() => {
+        if (!st.closed) userBubble.title = 'Waiting for connection';
+      });
     } catch (_) {
       _markFailed(userBubble, msg);
     }
@@ -1136,19 +1184,13 @@ export function createChatWidget(opts = {}) {
   }
 
   async function interrupt() {
-    // Optimistic: reflect "stopping" immediately; the interrupted WS event or
-    // the DB poll confirms the final state. Keep the reconcile loop running so
-    // a cross-process stop still lands.
     st.stopPending = true;   // pin "Stopping…" — no progress note may replace it
     if (st.els.statusEl) st.els.statusEl.textContent = 'Stopping…';
     _setActivity('Stopping…');
     try {
-      await fetch(apiPath('/api/v1/chat/interrupt'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ session_id: st.sessionId }),
-      });
-    } catch (_) { /* best-effort — the interrupted event/poll reflects state */ }
+      await controlledChat.command('/sessions/' + encodeURIComponent(st.sessionId) + '/stop', {});
+      await controlledChat.openSession(st.sessionId);
+    } catch (_) { /* the committed run state determines the final control state */ }
   }
 
   // ── Drag to move / resize from edges & corners ──
@@ -1226,31 +1268,33 @@ export function createChatWidget(opts = {}) {
     layer.appendChild(_build());
     _openWidgets.add(widget);
     _setStatus('starting');
-    // Claim the session BEFORE the first send so no events are missed.
-    st.unregister = registerSessionSubscriber(st.sessionId, _handleEvent);
+    st.onSendStatus = _sendStatus;
+    window.addEventListener('webagent-chat-send-status', st.onSendStatus);
     st.ready = (async () => {
       if (!st.agentId) {
         if (typeof ensureAgent !== 'function') throw new Error('No agent for chat widget');
         st.agentId = await ensureAgent();
       }
+      await controlledChat.initialize(st.userId);
+      await controlledChat.command('/sessions', {
+        id: st.sessionId, agent_id: st.agentId,
+        title: (st.sessionTargetName || 'New Session').slice(0, 120),
+      });
+      st.unregisterPublic = controlledChat.subscribe(st.sessionId, _renderPublic);
+      await controlledChat.openSession(st.sessionId);
       return st.agentId;
     })();
     st.ready
       .then(() => {
         if (st.closed) return;
-        if (hydrateExistingSession) {
-          _reconcileOnce().then(() => {
-            if (!st.closed && st.status === 'running') _startReconcile();
-          });
-        }
         if (initialMessage || (Array.isArray(initialAttachmentIds) && initialAttachmentIds.length)) {
           send(initialMessage, initialAttachmentIds);
         } else if (st.status === 'starting') _setStatus('idle');
       })
       .catch((e) => {
         if (st.closed) return;
-        _addBubble('agent', 'Could not start the agent: ' + (e && e.message || e)).classList.add('cw-error');
         _setStatus('error');
+        st.els.statusEl.title = 'Could not start the agent: ' + (e && e.message || e);
       });
     return widget;
   }
@@ -1289,6 +1333,8 @@ export function createChatWidget(opts = {}) {
     _clearActivity();
     _stopReconcile();
     if (st.unregister) { st.unregister(); st.unregister = null; }
+    if (st.unregisterPublic) { st.unregisterPublic(); st.unregisterPublic = null; }
+    if (st.onSendStatus) window.removeEventListener('webagent-chat-send-status', st.onSendStatus);
     if (st.els.root) st.els.root.remove();
     _maybeRemoveLayer();
     if (typeof onClose === 'function') {

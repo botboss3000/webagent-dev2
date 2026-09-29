@@ -327,7 +327,7 @@ async def run_turn(
     # invisible until a manual refresh. Falls back silently if the chat module
     # can't be imported (e.g. a stripped edition).
     try:
-        from app.api.chat import _emit_to_visualizers as _emit_live
+        from app.chat.execution import _emit_to_visualizers as _emit_live
     except Exception:
         _emit_live = None
 

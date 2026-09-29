@@ -104,231 +104,48 @@ if (typeof document !== 'undefined') {
   });
 }
 
-async function switchToSession(sid, { agentId = null } = {}) {
-  if (!sid || sid === app.currentSessionId) {
-    app._swipeFadeIn = false; // a swipe that lands on the same session gets no fade
-    /* closeMenu handled by caller */ return;
-  }
-  const targetSess = _sessionsCache.find(s => s.id === sid);
-  const targetAgentId = agentId || (targetSess && targetSess.agent_id) || app.currentAgentId;
-  const sameAgent = !targetAgentId || targetAgentId === app.currentAgentId;
-  const transcriptCacheHit = _messageCache.has(sid);
-  const previousSessionId = app.currentSessionId;
-  const canCacheCurrentProjection = !app.isProcessing;
-  const switchStartedAt = (typeof performance !== "undefined" && performance.now)
-    ? performance.now() : Date.now();
+async function switchToSession(sid,{agentId=null}={}) {
+  if(!sid || sid===app.currentSessionId) return;
+  const generation=++_sessionSwitchEpoch;
+  const panel=document.getElementById('chat-panel');
+  panel?.classList.add('session-transitioning');
   app.abortChatStream?.();
-  // Selecting an existing session must never qualify for starter prompts,
-  // including while its transcript is briefly empty during the load.
-  app.isNewSession = false;
-  // End the old visual projection synchronously, before changing any state
-  // that can cause the target session to render. The transition class keeps
-  // the target agent's header/footer rebuild hidden until its transcript and
-  // session identity are ready to reveal together.
-  const switchEpoch = ++_sessionSwitchEpoch;
-  const chatPanel = document.getElementById('chat-panel');
-  if (chatPanel) chatPanel.classList.add('session-transitioning');
-  const dropdown = document.getElementById('session-dropdown');
-  if (dropdown && dropdown._sessionDropdownController) {
-    dropdown._sessionDropdownController.close({ immediate: true });
-  }
-  document.querySelectorAll('.session-row-actions[data-source="session-list"]')
-    .forEach((popup) => popup.remove());
-  _clearSessionHeader();
   _teardownVirtualScroll();
-  if (canCacheCurrentProjection) _stashSessionProjection(previousSessionId);
-  if (app.chatMessages && app.chatMessages.childNodes.length) {
-    app.chatMessages.replaceChildren();
+  app._clearLanding?.();
+  _clearSessionHeader();
+  const target=_sessionsCache.find(row=>row.id===sid);
+  const targetAgent=agentId || target?.agent_id || app.currentAgentId;
+  app.isNewSession=false;
+  app.currentSessionId=sid;
+  localStorage.setItem('terminalSessionId',sid);
+  replaceRouteParams({session:sid});
+  if(targetAgent!==app.currentAgentId) {
+    const automatic=app._reapplyChatControls;
+    app._reapplyChatControls=null;
+    try {app.currentAgentId=targetAgent;} finally {app._reapplyChatControls=automatic;}
+    localStorage.setItem('selectedAgentId',targetAgent);
+    _refreshAgentAbilities(targetAgent);
+    const {reapplyChatControlsConfig}=await import('../../chat-controls/chat-controls-config.js');
+    await reapplyChatControlsConfig();
   }
-  // Reset the old session’s component panel before any target shell is revealed.
-  try { app.loadChatComponents?.(null); } catch (_) {}
-
-  // Set the target session BEFORE changing agents or rebuilding controls. The
-  // agent setter can trigger a controls reapply; letting it see the old session
-  // briefly painted that session's expanded composer into the new transcript.
-  app.currentSessionId = sid;
-  localStorage.setItem('terminalSessionId', app.currentSessionId);
-  replaceRouteParams({ session: app.currentSessionId });
-  if (!sameAgent) {
-    // The state setter normally reapplies controls automatically. Defer that
-    // fire-and-forget rebuild here so this switch can perform and await exactly
-    // one controlled rebuild before revealing the new agent projection.
-    const automaticReapply = app._reapplyChatControls;
-    app._reapplyChatControls = null;
-    try { app.currentAgentId = targetAgentId; }
-    finally { app._reapplyChatControls = automaticReapply; }
-    _refreshAgentAbilities(targetAgentId);
-    try { localStorage.setItem('selectedAgentId', targetAgentId); } catch (_) {}
-    try {
-      const { reapplyChatControlsConfig } = await import('../../chat-controls/chat-controls-config.js');
-      await reapplyChatControlsConfig();
-    } catch (_) {}
-  }
-  const controlsReadyAt = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
-  if (targetAgentId) {
-    _lastSessionPerAgent.set(targetAgentId, sid);
-    _saveLastSessionMap();
-  }
-
-  // Reload execution mode for this session (per-session key)
-  if (typeof app.reloadExecutionMode === 'function') app.reloadExecutionMode();
-  if (typeof app.reloadTargetDevice === 'function') app.reloadTargetDevice();
-  const settingsReadyAt = performance.now();
-
-  const cachedProjection = _takeSessionProjection(sid);
-  if (cachedProjection && app.chatMessages) {
-    app.chatMessages.appendChild(cachedProjection);
-  }
-  if (app.chatMessages && !transcriptCacheHit) {
-    app.chatMessages.innerHTML = loadingSkeletonMarkup();
-  }
-  const projectionReadyAt = performance.now();
-
-  // Reset prior-session activity before revealing the target shell.
-  chatActivitySessionChanged();
-  const activityReadyAt = performance.now();
-  _setTriggerLabel();
-  const labelReadyAt = performance.now();
-  if (chatPanel) chatPanel.classList.remove('session-transitioning');
-  const shellReadyAt = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
-  const visibleAt = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
-  const transcriptStartedAt = visibleAt;
-  await loadSessionChat(sid, { preserveProjection: !!cachedProjection });
-  const transcriptReadyAt = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
-  if (switchEpoch !== _sessionSwitchEpoch || sid !== app.currentSessionId) return;
-  // Native Portal transcripts do not carry WebAgent session metadata. Keep
-  // the title captured from the selected row if a concurrent cache refresh
-  // replaced it with the generic current-session stub while messages loaded.
-  if (targetSess?.title) {
-    const refreshedTarget = _sessionsCache.find(session => session.id === sid);
-    if (refreshedTarget) refreshedTarget.title = targetSess.title;
-  }
-  window.dispatchEvent(new CustomEvent("webagent-loop-session-changed"));
-
-  _renderSessionRows();
-  _setTriggerLabel();
-  const switchFinishedAt = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
-  const switchTiming = {
-    sessionId: sid,
-    sameAgent,
-    cacheHit: transcriptCacheHit,
-    projectionHit: !!cachedProjection,
-    controlsMs: Math.round(controlsReadyAt - switchStartedAt),
-    settingsMs: Math.round(settingsReadyAt - controlsReadyAt),
-    projectionMs: Math.round(projectionReadyAt - settingsReadyAt),
-    activityMs: Math.round(activityReadyAt - projectionReadyAt),
-    labelMs: Math.round(labelReadyAt - activityReadyAt),
-    shellMs: Math.round(shellReadyAt - switchStartedAt),
-    visibleMs: Math.round(visibleAt - switchStartedAt),
-    transcriptMs: Math.round(transcriptReadyAt - transcriptStartedAt),
-    commitMs: Math.round(switchFinishedAt - transcriptReadyAt),
-    totalMs: Math.round(switchFinishedAt - switchStartedAt),
+  if(generation!==_sessionSwitchEpoch) return;
+  _lastSessionPerAgent.set(targetAgent,sid);_saveLastSessionMap();
+  app.reloadExecutionMode?.();app.reloadTargetDevice?.();
+  chatActivitySessionChanged();_setTriggerLabel();
+  const reveal=()=>{
+    if(generation!==_sessionSwitchEpoch || sid!==app.currentSessionId) return;
+    panel?.classList.remove('session-transitioning');
+    _renderSessionRows();_setTriggerLabel();
   };
-  app.lastSessionSwitchTiming = switchTiming;
-  if (chatPanel) {
-    chatPanel.dataset.switchTotalMs = String(switchTiming.totalMs);
-    chatPanel.dataset.switchControlsMs = String(switchTiming.controlsMs);
-    chatPanel.dataset.switchSettingsMs = String(switchTiming.settingsMs);
-    chatPanel.dataset.switchProjectionMs = String(switchTiming.projectionMs);
-    chatPanel.dataset.switchActivityMs = String(switchTiming.activityMs);
-    chatPanel.dataset.switchLabelMs = String(switchTiming.labelMs);
-    chatPanel.dataset.switchVisibleMs = String(switchTiming.visibleMs);
-    chatPanel.dataset.switchTranscriptMs = String(switchTiming.transcriptMs);
-    chatPanel.dataset.switchCacheHit = String(switchTiming.cacheHit);
-    chatPanel.dataset.switchProjectionHit = String(switchTiming.projectionHit);
-    chatPanel.dataset.switchSameAgent = String(switchTiming.sameAgent);
-  }
   try {
-    window.dispatchEvent(new CustomEvent('session-switch-timing', {
-      detail: switchTiming,
-    }));
-  } catch (_) {}
-
-  // Drain replayed events
-  try {
-    const pending = consumeReplayedEventsFor(sid);
-    for (const ev of pending) {
-      if (ev.type === 'db' && ev.role === 'assistant' && ev.id
-          && (ev.op === 'insert_interaction' || ev.interaction_seq != null)) {
-        if (!app._interactionAnchors) app._interactionAnchors = new Map();
-        app._interactionAnchors.set(String(ev.id), {
-          id: ev.id,
-          // Durable row order ONLY. ev.session_seq is the WS replay cursor — it
-          // advances per event, not per row, so it sits far above the durable
-          // ledger and anchoring on it renders the node as the newest message in
-          // the transcript. With no durable number, leave the anchor unplaced
-          // (NaN) and let the DB reconcile stamp the node.
-          interactionSeq: ev.interaction_seq != null ? Number(ev.interaction_seq) : NaN,
-          turnId: ev.turn_id || null,
-          createdAt: ev.created_at || ev.emit_time,
-        });
-        continue;
-      }
-      const key = ev.asst_id || ev.turn_id;
-      const anchor = key && app._interactionAnchors
-        ? app._interactionAnchors.get(String(key)) : null;
-      const interactionSeq = Number(
-        ev.interaction_seq ?? (anchor && anchor.interactionSeq),
-      );
-      const ownerTurnId = ev.turn_id || (anchor && anchor.turnId) || '';
-      if (ev.type === 'stream' && typeof app.appendStreamToActiveBubble === 'function') {
-        app.appendStreamToActiveBubble(
-          ev.content || '', key, ev.created_at || ev.emit_time,
-          ownerTurnId, interactionSeq,
-        );
-      } else if (ev.type === 'agent_step_end' && typeof app.finalizeAgentStep === 'function') {
-        app.finalizeAgentStep(
-          ev.content || '', key, ev.created_at || ev.emit_time,
-          ownerTurnId, interactionSeq, ev.progress_kind || '',
-        );
-      } else if (ev.type === 'response' && typeof app.finalizeAgentResponse === 'function') {
-        app.finalizeAgentResponse(ev.content || '', key, true, ev.created_at || ev.emit_time, ownerTurnId, interactionSeq, ev.chat_render_kind || 'activity', !!ev.mid_run);
-      } else if ((ev.type === 'summary' || ev.type === 'overview') && typeof app.renderSummary === 'function') {
-        app.renderSummary(
-          ev.content || '', ev.id || ev.asst_id, ev.created_at || ev.emit_time,
-          ev.asst_id || '',
-        );
-      } else if (ev.type === 'interrupted' && typeof app.markAgentInterrupted === 'function') {
-        app.markAgentInterrupted(ev.asst_id, ev.created_at || ev.emit_time, interactionSeq, ownerTurnId);
-      }
-      if (ev.type === 'response' && ev.content) {
-        _cacheAppendMessage(sid, {
-          role: 'assistant', content: ev.content, id: ev.asst_id || ev.turn_id,
-          chat_render_kind: ev.chat_render_kind || 'activity',
-        });
-      }
+    await loadSessionChat(sid,{onReady:reveal});
+    reveal();
+    if(generation===_sessionSwitchEpoch) window.dispatchEvent(new CustomEvent('webagent-loop-session-changed'));
+  } catch(error) {
+    if(generation===_sessionSwitchEpoch) {
+      reveal();
+      app.chatActivityStart?.('Conversation unavailable. Please retry.');
     }
-    // If the WS replayed anything for this session, treat the socket as live so
-    // the DB-reconcile poll gives it a head start (WS_SILENCE_MS) before kicking
-    // in — avoids the poll racing a healthy same-process stream. If nothing was
-    // drained (a genuinely cross-worker run), the poll engages normally.
-    if (pending.length) {
-      if (!app._lastWsEventAt) app._lastWsEventAt = {};
-      app._lastWsEventAt[sid] = Date.now();
-    }
-  } catch (_pendErr) { /* never let drain break navigation */ }
-
-  try {
-    if (app.agentWs && app.agentWs.readyState === WebSocket.OPEN) {
-      const lastSeq = (app.lastSessionSeq && app.lastSessionSeq[sid]) || 0;
-      app.agentWs.send(JSON.stringify({
-        type: 'resume',
-        session_id: sid,
-        last_session_seq: lastSeq,
-      }));
-    }
-  } catch (_e) { /* socket may not be ready */ }
-
-  // If we switched into a session whose turn is still running (isProcessing is
-  // set from the DB `run` object by loadSessionChat), start the DB-reconcile
-  // loop so a cross-worker in-flight run keeps streaming here too.
-  if (app.isProcessing && typeof app.startReconcileLoop === 'function') {
-    app.startReconcileLoop();
   }
 }
 

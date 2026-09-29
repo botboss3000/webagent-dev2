@@ -70,9 +70,9 @@ _pumps_lock = asyncio.Lock()
 
 async def _emit(chat_session_id: str, user_id: str, event: Dict[str, Any]) -> None:
     """Push a control event to the chat session's listeners. Lazy import keeps
-    this module free of an app.api.chat import cycle."""
+    this module free of an app.chat.execution import cycle."""
     try:
-        from app.api.chat import _emit_to_visualizers
+        from app.chat.execution import _emit_to_visualizers
         await _emit_to_visualizers(chat_session_id, event, user_id=user_id)
     except Exception as e:  # pragma: no cover - defensive
         logger.debug("tunnel emit failed for %s: %s", chat_session_id, e)

@@ -1148,7 +1148,7 @@ class ContractSupervisor:
     async def _emit_pipeline(self, step: str, spec: ContractSpec,
                              result: Mapping[str, Any]) -> None:
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(self.session_id, {
                 "type": "pipeline", "level": "pipeline", "step": step,
                 "contract_id": spec.id,

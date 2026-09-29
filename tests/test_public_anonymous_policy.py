@@ -219,7 +219,7 @@ def test_public_agent_total_transcript_cap_is_enforced(tmp_path):
 
 
 def test_anonymous_billing_gate_reserves_agent_budget_not_visitor_wallet(monkeypatch):
-    from app.api import chat
+    from app.chat import execution as chat
 
     calls = []
 

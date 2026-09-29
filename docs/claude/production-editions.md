@@ -865,7 +865,7 @@ default** — for both **permission** (`auto`/`ask`/`deny`) and **visibility**
    module attribute (never a hardcoded ability id):
    - **`TURN_HOOK`** — `async hook(db, user_id, session_id, emit)` fired after
      every chat turn (`turn_hooks_for_agent` in `app/abilities/`, dispatched from
-     `app/api/chat.py`). Example: **Session Namer**.
+     `app/chat/execution.py`). Example: **Session Namer**.
    - **`CONTEXT_STRATEGY` (context-management, pick-one)** — an ability that sets
      `CONTEXT_STRATEGY = True` and exposes `CONTEXT_SETTINGS(db, agent_id)` /
      `CONTEXT_COMPACT(db, user_id, session_id, settings)` /

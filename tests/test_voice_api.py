@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import chat
+from app.chat import execution as chat
 from app.agent.voice_session import get_voice_session_registry
 
 

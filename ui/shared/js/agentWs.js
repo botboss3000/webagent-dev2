@@ -240,6 +240,12 @@ export function connectAgent() {
     }
 
     if (event.type === 'ping') return;
+    // This socket carries application events. Customer chat comes exclusively
+    // from the authenticated, durable /api/v2/chat subscription.
+    if (!new Set(['subscribed','device_revoked','repo_change_notice',
+      'agent_created','agent_trashed','agent_deleted','agent_restored',
+      'tunnel_state','terminal_chat_state','terminal_stream','terminal_step_end',
+      'session_title','session_deleted','kill_switch']).has(event.type)) return;
     // RECORDER-HOOK: plugins/recorder/frontend/recorder.js consumes this optional trace.
     // Removal: delete this comment and the following try block; keep application logic.
     try {

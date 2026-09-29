@@ -1,6 +1,6 @@
 import json
 
-from app.api.chat import _is_codex_portal_agent
+from app.chat.execution import _is_codex_portal_agent
 
 
 def test_only_codex_portal_agents_hit_persistence_fence():

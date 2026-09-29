@@ -1,3 +1,15 @@
+
+## V2 chat publication boundary
+
+The agent loop records all received model and tool output privately. It does
+not write customer-visible transcript items directly. Main-chat output must be
+submitted through `app/chat/visibility.py` and committed by
+`app/chat/publication.py`; final output is validated by
+`app/chat/finalization.py` and closer rules in `app/chat/closing.py`.
+
+The old `app/api/chat.py` and `app/agent/closing_message.py` references that
+appear in older loop notes are historical. The active V2 entrypoint is
+`app.v2:app`, and its chat routes are mounted from `app/chat/api.py`.
 # Agent loop guidance (read before changing loop nodes)
 
 Read this before adding, removing, or renaming any node in the agent loop pipeline or its diagram.
@@ -47,7 +59,7 @@ Neither layout is derived from the other. A node missing from one view simply wo
 
 ## The `attachment_describe` node is a capability-driven type-router
 
-`attachment_describe` (in `app/api/chat.py` `_maybe_describe_images`) is no longer
+`attachment_describe` (in `app/chat/execution.py` `_maybe_describe_images`) is no longer
 image-specific glue — it is the **attachment type-router**. It maps each attached
 file to the ability that handles its mime-type (today: images → Image Vision; future
 document/video abilities drop in the same way) via `app/agent/attachment_router.py`,

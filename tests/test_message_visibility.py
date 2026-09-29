@@ -1,5 +1,5 @@
 from app.agent.gate_registry import instances_for_agent, prompt_instructions_for_agent
-from app.agent.message_visibility import classify, leading_marker_pending
+from app.chat.visibility import classify, leading_marker_pending
 
 
 def test_leading_marker_classification_and_safe_fallback():

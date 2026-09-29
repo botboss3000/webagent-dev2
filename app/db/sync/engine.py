@@ -607,7 +607,7 @@ class SyncEngine:
         # in real time instead of waiting for a failed reconcile. Best-effort.
         for user_id, table_name, rid, affected_sids in notify:
             try:
-                from app.api.chat import notify_user
+                from app.events.delivery import notify_user
                 # An open chat drops its transcript on session_deleted. Emit one per
                 # erased session — for a session tombstone that's the row itself; for
                 # an agent tombstone it's each of the agent's now-deleted sessions.

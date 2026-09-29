@@ -6,6 +6,8 @@
 
 import { _refreshLucideIcons } from '../../shared/js/dom-utils.js';
 import { app } from '../../shared/js/state.js';
+import {queueSubmission,stopPanel,disconnectPanel,refreshPanel} from '../core/panel.js';
+import * as controlledChat from '../core/client.js';
 import { apiPath } from '../../shared/js/config.js';
 import { addAttachmentsToMessage, getPendingAttachments, renderAttachmentElement } from '../../shared/js/attachments.js';
 import { getAccessMode, fetchAccessMode, authHeaders, showLeftOverlay } from '../../shared/js/left-login.js';
@@ -969,19 +971,11 @@ function _appendPendingActions(bubble, entry) {
 
 let _outboxPollTimer = null;
 function _startOutboxPoll() {
-  if (_outboxPollTimer) return;
-  _outboxPollTimer = setInterval(async () => {
-    const n = await _flushOutbox();
-    if (n > 0) {
-      const remaining = _readOutbox();
-      if (remaining.length === 0) {
-        document.querySelectorAll('.chat-bubble.user.pending')
-          .forEach(el => { if (!el.hasAttribute('data-blocked-queued')) el.remove(); });
-      } else {
-        _renderPendingBubbles();
-      }
-    }
-  }, 5000);
+  if(_outboxPollTimer) return;
+  _outboxPollTimer=setInterval(()=>{
+    if(app.currentUserId) controlledChat.initialize(app.currentUserId)
+      .then(()=>controlledChat.drainOutbox()).catch(()=>{});
+  },5000);
 }
 function _stopOutboxPoll() {
   if (_outboxPollTimer) {
@@ -991,36 +985,16 @@ function _stopOutboxPoll() {
 }
 
 function _renderPendingBubbles() {
-  const queue = _readOutbox();
-  if (!app.isDebug) {
-    // Offline-queued messages are user-facing in every mode. Leave ordinary
-    // in-flight optimistic bubbles untouched; their debug rendering contract
-    // remains unchanged.
-    document.querySelectorAll('.chat-bubble.user.pending[data-offline-queued]')
-      .forEach(el => el.remove());
-    for (const entry of queue) {
-      if (entry.queued_offline) _renderOfflineQueuedBubble(entry);
-    }
-    return;
-  }
-  document.querySelectorAll('.chat-bubble.user.pending')
-    .forEach(el => { if (!el.hasAttribute('data-blocked-queued')) el.remove(); });
-  for (const entry of queue) {
-    // Deferred entries have their own visible "You (queued…)" bubble.
-    if (entry.defer_while_locked) continue;
-    if (entry.queued_offline) _renderOfflineQueuedBubble(entry);
-    else if (app.isDebug) _renderPendingBubble(entry);
-  }
+  // Pending rows belong to the controlled chat projection.
 }
 
-// ── chat draft persistence ──
-// Migrated from the localStorage blob 'webagent.chatDraft.v1' to the app_cache
-// row 'chat:draft' (a raw string — parseJson:false). Same mirror contract as
-// the outbox: synchronous localStorage write for crash durability, treated as
-// authoritative on the next boot, then migrated into IndexedDB.
+// The V2 send path still uses the composer draft cache until its own draft
+// store is installed. Keep these keys defined so clearing an accepted send
+// cannot throw after the message has already entered the durable outbox.
 const _DRAFT_LS_KEY = 'webagent.chatDraft.v1';
 const _DRAFT_CACHE_KEY = 'chat:draft';
 kvCache.registerLegacyValue(_DRAFT_LS_KEY, _DRAFT_CACHE_KEY, { parseJson: false });
+
 function _saveDraft() {
   _debouncedSaveDraft();
 }
@@ -1083,40 +1057,11 @@ if (typeof window !== 'undefined') {
 // ── Send / Stop / Abort ────────────────────────────────────────────────────
 
 async function sendStopMessage() {
-  // Stop is the escape hatch from a composer-locking command (e.g. /compact):
-  // hand control back to the user immediately, even if the server is still busy.
-  // Discard any deferred messages — the user chose to abort.
-  _discardDeferredMessages();
   _unlockComposer();
-
-  // Flag that a stop was requested so late-arriving WS stream events don't
-  // re-light the activity indicator or re-engage processing state.
-  app._stopPending = true;
-
-  // Immediate UI feedback: show "Stopping…" in the activity bar (the chip
-  // above the chat pill) so the user knows their stop request was received.
-  // The server will later emit an `interrupted` event which replaces it with
-  // "Stopped" and fades the bar.
-  if (typeof app.chatActivityStart === 'function') {
-    app.chatActivityStart('Stopping…');
-  }
-
-  try {
-    const isPortal = typeof app.currentSessionId === 'string' && app.currentSessionId.startsWith('codex:');
-    const response = await fetch(apiPath(isPortal
-      ? `/api/v1/engines/codex/portal/threads/${encodeURIComponent(app.currentSessionId)}/interrupt`
-      : '/api/v1/chat/interrupt'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(isPortal
-        ? { user_id: app.currentUserId, agent_id: app.currentAgentId }
-        : { session_id: app.currentSessionId }),
-    });
-    if (!response.ok) throw new Error("Stop request was not accepted");
-  } catch (_) {
-    // Keep the kill-switch state pinned. Reconcile/terminal state remains the
-    // authority; a transient network error must not revive finishing UI.
-  }
+  app._stopPending=true;
+  app.chatActivityStart?.('Stopping…');
+  try {await stopPanel();}
+  catch (_) {app.chatActivityStart?.('Stop could not be confirmed. Retry Stop.');}
 }
 
 function _btwUnavailable(message) {
@@ -1201,50 +1146,9 @@ async function _startBtwSession(initialMessage, textOverride) {
 }
 
 async function sendMessage(textOverride) {
-  if (!_canChat()) { applyChatGate(); return; }
-  // A string argument sends that exact text WITHOUT touching the pill (used by
-  // the footer's "Compact now", which fires "/compact" directly so the user's
-  // in-progress draft is never staged into the input or cleared). Non-string
-  // args (e.g. the click Event) fall through to the pill's current value.
-  const text = (typeof textOverride === 'string' && textOverride.trim())
-    ? textOverride.trim()
-    : (app.chatInput.value || '').trim();
-  if (!text) return;
-
-  const anonymousCaller = String(app.currentUserId || '').startsWith('anon_')
-    || String(app.currentUserId || '').startsWith('agentmember--');
-  const promptLimit = anonymousCaller ? 32000 : 200000;
-  if (text.length > promptLimit) {
-    addChatBubble(
-      'agent',
-      `❌ This message is too large. The current limit is ${promptLimit.toLocaleString()} characters.`,
-      'error',
-    );
-    return;
-  }
-
-  const btwMatch = /^\/btw(?:\s+([\s\S]*))?$/i.exec(text);
-  if (btwMatch) {
-    await _startBtwSession((btwMatch[1] || '').trim(), textOverride);
-    return;
-  }
-
-  if (window.__webagentOfflineReadOnly === true) {
-    _queueMessageOffline(text, textOverride);
-    return;
-  }
-
-  // If a blocking command (e.g. /compact) is already running, queue this message
-  // DURABLY (outbox + pending bubble) instead of interrupting it. It is POSTed
-  // when the command finishes; if the server is still compacting, the message is
-  // persisted as status='queued' (queued_for='compact') and runs when the
-  // compaction drains — surviving refresh, session switches and server restarts.
-  // The Stop button discards the deferred message.
-  if (app._composerLocked && !_isBlockingCommand(text)) {
-    _queueMessageDuringCommand(text);
-    return;
-  }
-
+  if(!_canChat()) {applyChatGate();return;}
+  const text=typeof textOverride==='string'?textOverride.trim():(app.chatInput?.value || '').trim();
+  if(!text) return;
   // Terminal tunnel
   if (app.tunnel && app.tunnel.active) {
     app.chatInput.value = '';
@@ -1294,525 +1198,29 @@ async function sendMessage(textOverride) {
     if (!app.currentAgentId) return;
   }
 
-  let activeAgent = (() => {
-    try {
-      const rows = window.__agentsSharedData && window.__agentsSharedData.agents;
-      return Array.isArray(rows) ? rows.find(row => row && row.id === app.currentAgentId) : null;
-    } catch (_) { return null; }
-  })();
-  // The Agents page and chat panel share a deliberately cacheable list. A
-  // warm page can therefore have a lean/stale entry from before engine-specific
-  // fields were hydrated. First-send routing must not depend on that cache:
-  // refresh the selected agent when Codex metadata is absent, otherwise a
-  // Portal prompt silently falls through to the ordinary WebAgent session path.
+
+  const sessionId=app.currentSessionId;
   try {
-    const detailRes = await fetch(apiPath(
-      `/api/v1/agents/${encodeURIComponent(app.currentAgentId)}`
-      + `?user_id=${encodeURIComponent(app.currentUserId)}`
-    ), { headers: authHeaders() });
-    if (detailRes.ok) {
-      const detail = await detailRes.json();
-      if (detail && detail.agent) activeAgent = detail.agent;
+    const payload=await addAttachmentsToMessage({message:text,session_id:sessionId,user_id:app.currentUserId});
+    if(sessionId!==app.currentSessionId) throw new Error('Session changed during attachment upload');
+    await queueSubmission({client_message_id:crypto.randomUUID(),text,
+      attachment_ids:payload.attachment_ids || [],execution_mode:app.executionMode || 'ask'});
+    if(typeof textOverride!=='string' && app.chatInput?.value.trim()===text) {
+      app.chatInput.value='';
+      _autoResizePill(app.chatInput);_clearDraft();
+      if (app.chatSend) app.chatSend.disabled = true;
     }
-  } catch (_) { /* the normal send path still handles non-Portal agents */ }
-  const isPortalAgent = !!(activeAgent && activeAgent.engine === 'codex'
-    && activeAgent.codex_code && activeAgent.codex_code.context_mode === 'codex_portal');
-  const hasNativePortalSession = typeof app.currentSessionId === 'string'
-    && app.currentSessionId.startsWith('codex:');
-  // Fresh chats can render before the cacheable agent list includes engine
-  // defaults, leaving the pill on its generic Ask fallback. The authoritative
-  // detail above owns the initial Portal mode; once linked, the per-task pill
-  // remains authoritative for later turns.
-  const configuredPortalMode = ['ask', 'wkspc', 'auto'].includes(activeAgent && activeAgent.default_execution_mode)
-    ? activeAgent.default_execution_mode : 'auto';
-  const portalExecutionMode = !hasNativePortalSession
-    ? configuredPortalMode : (app.executionMode || 'ask');
-
-  // A fresh chat starts life with a client-side UUID.  Portal agents must
-  // replace that placeholder with a native Codex task before the first turn;
-  // otherwise the message falls into /chat/send and is correctly rejected by
-  // the no-duplicate-persistence fence.
-  if (isPortalAgent && !hasNativePortalSession) {
-    try {
-      const created = await fetch(apiPath('/api/v1/engines/codex/portal/threads'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
-          user_id: app.currentUserId,
-          agent_id: app.currentAgentId,
-          execution_mode: portalExecutionMode,
-        }),
-      });
-      const data = await created.json().catch(() => ({}));
-      if (!created.ok || !data.session_id) {
-        throw new Error(data.detail || `Codex Portal returned HTTP ${created.status}`);
-      }
-      app.currentSessionId = data.session_id;
-      localStorage.setItem('terminalSessionId', app.currentSessionId);
-      if (typeof app.populateSessionSelect === 'function') app.populateSessionSelect(app.currentUserId);
-    } catch (error) {
-      addChatBubble('agent', '❌ Could not start Codex task: ' + (error.message || error), 'error');
-      return;
-    }
-  }
-
-  // A Portal task is not a WebAgent session. Keep it completely outside the
-  // outbox, attachments, /chat/send, websocket reconciliation, and interaction
-  // persistence paths; Codex App Server is the sole transcript authority.
-  if (typeof app.currentSessionId === 'string' && app.currentSessionId.startsWith('codex:')) {
-    if (typeof textOverride !== 'string') {
-      app.chatInput.value = '';
-      app.chatSend.disabled = true;
-      _updateInputRowState();
-      _autoResizePill(app.chatInput);
-      _clearDraft();
-      if (typeof app.dismissMobileComposerAfterSend === 'function') {
-        app.dismissMobileComposerAfterSend();
-      }
-    }
-    _removeSessionPlaceholders();
-    const portalUserBubble = addChatBubble('user', text, undefined, undefined, undefined, undefined, new Date().toISOString());
-    app.isProcessing = true;
-    if (app.chatActivityStart) app.chatActivityStart('Codex is working…');
-    const portalSessionId = app.currentSessionId;
-    let portalRefreshBusy = false;
-    let portalRefreshPromise = null;
-    // Re-read Codex's own task while it runs. Commentary and tool items appear
-    // live without creating a parallel WebAgent event transcript.
-    const portalRefreshTimer = setInterval(async () => {
-      if (portalRefreshBusy || app.currentSessionId !== portalSessionId || typeof app.loadSessionChat !== 'function') return;
-      portalRefreshBusy = true;
-      const refresh = app.loadSessionChat(portalSessionId, { refresh: true });
-      portalRefreshPromise = refresh;
-      try { await refresh; } catch (_) { /* next tick retries */ }
-      finally {
-        portalRefreshBusy = false;
-        if (portalRefreshPromise === refresh) portalRefreshPromise = null;
-      }
-    }, 1200);
-    let portalError = null;
-    try {
-      // RECORDER-HOOK: toggle.js scopes portal sends; delete this try block/comment to remove.
-      try { if (window.__recorderScope) await window.__recorderScope(app.currentSessionId,app.currentAgentId); } catch (_) {}
-      const response = await fetch(apiPath(`/api/v1/engines/codex/portal/threads/${encodeURIComponent(app.currentSessionId)}/turns`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
-          user_id: app.currentUserId,
-          agent_id: app.currentAgentId,
-          message: text,
-          execution_mode: portalExecutionMode,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      clearInterval(portalRefreshTimer);
-      const pendingRefresh = portalRefreshPromise;
-      if (pendingRefresh) await pendingRefresh.catch(() => {});
-      if (!response.ok) throw new Error(data.detail || `Codex Portal returned HTTP ${response.status}`);
-      if (data.status === 'queued') {
-        // A transcript refresh may have replaced the optimistic bubble while
-        // the request was pending. Restore it before showing queue status.
-        if (!portalUserBubble || !portalUserBubble.isConnected) {
-          addChatBubble('user', text, undefined, undefined, undefined, undefined, new Date().toISOString());
-        }
-        addChatBubble('info', 'Message queued in the active Codex task. It will run after the current turn finishes.');
-        if (typeof app.populateSessionSelect === 'function') app.populateSessionSelect(app.currentUserId);
-        return;
-      }
-      if (typeof app.loadSessionChat === 'function') {
-        await app.loadSessionChat(app.currentSessionId, { refresh: true });
-      }
-      if (typeof app.populateSessionSelect === 'function') app.populateSessionSelect(app.currentUserId);
-    } catch (error) {
-      clearInterval(portalRefreshTimer);
-      const pendingRefresh = portalRefreshPromise;
-      if (pendingRefresh) await pendingRefresh.catch(() => {});
-      portalError = error;
-    } finally {
-      clearInterval(portalRefreshTimer);
-      app.isProcessing = false;
-      _unlockComposer();
-      app.chatSend.disabled = false;
-      if (app.chatActivityStop) app.chatActivityStop();
-    }
-    // A transcript refresh replaces the chat DOM. Render failures only after
-    // every in-flight refresh settles so the error cannot be silently erased.
-    if (portalError) addChatBubble('agent', '❌ ' + (portalError.message || portalError), 'error');
-    return;
-  }
-
-  const outboxEntry = {
-    id: 'msg_' + Date.now() + '_' + (++_outboxIdCounter),
-    text: text,
-    session_id: app.currentSessionId,
-    user_id: app.currentUserId,
-    agent_id: app.currentAgentId,
-    timestamp: new Date().toISOString(),
-  };
-  // Target device for this turn (the chat pill). '' = run locally; an instance
-  // id routes the turn to that device's worker (see chat-ui.js / app/devices/).
-  if (app.targetDevice) outboxEntry.target_device = app.targetDevice;
-
-  // Attachment upload is a send preflight. Do it before journaling the text,
-  // clearing the composer, or rendering an optimistic turn: if any upload
-  // fails, the selected files and draft remain intact for a visible retry.
-  const base = {
-    message: text,
-    session_id: app.currentSessionId,
-    user_id: app.currentUserId,
-    execution_mode: app.executionMode || 'ask',
-    client_msg_id: outboxEntry.id,
-  };
-  if (app.currentAgentId) base.agent_id = app.currentAgentId;
-  if (app.targetDevice) base.target_device = app.targetDevice;
-  let payload;
-  if (getPendingAttachments().length > 0 && app.chatActivityStart) {
-    app.chatActivityStart('Uploading attachment…');
-  }
-  try {
-    payload = await addAttachmentsToMessage(base);
-  } catch (error) {
-    console.warn('[chat/send] attachment upload failed', error);
-    addChatBubble(
-      'agent',
-      '❌ Attachment upload failed. Your message and files are still ready to retry. '
-        + (error?.message || error),
-      'error',
-    );
-    app.chatSend.disabled = false;
-    if (app.chatActivityStop) app.chatActivityStop();
-    return;
-  }
-  _outboxInFlight.add(outboxEntry.id);
-  _addToOutbox(outboxEntry);
-
-  // Staged command sends (a string override, e.g. "/compact") must NOT touch
-  // the pill: the user's in-progress draft stays exactly as typed. Any other
-  // call (click Event, Enter keydown, plain send) clears the pill normally —
-  // the text has been sent.
-  if (typeof textOverride !== 'string') {
-    app.chatInput.value = '';
-    app.chatSend.disabled = true;
+    app.clearPendingAttachments?.();
     _updateInputRowState();
-    _autoResizePill(app.chatInput);
-    _clearDraft();
-    if (typeof app.dismissMobileComposerAfterSend === 'function') {
-      app.dismissMobileComposerAfterSend();
-    }
-    if (typeof app.clearSuggestions === 'function') {
-      try { app.clearSuggestions(); } catch (_) { /* best-effort */ }
-    }
-  }
-
-  window.__chatPollLastAt = new Date().toISOString();
-
-  // First real message — clear the empty-state placeholder so it doesn't linger
-  // above the conversation.
-  _removeSessionPlaceholders();
-  // ── GenUI-originated send (page field/button): the genui bridge set a one-shot
-  // label override. Render a green notice with the label instead of the raw
-  // prompt in a "You" bubble — the raw prompt is still the message the agent
-  // receives; it only surfaces in the panel under the debug toggle.
-  const _genuiLabel = app._genuiLabelOverride || '';
-  try { app._genuiLabelOverride = null; } catch (_) {}
-  const _isGenuiSend = !!_genuiLabel;
-  // Arm this before bubble creation: addChatBubble normally tail-follows new
-  // content, but a newly sent user turn must become the viewport anchor.
-  if (typeof app.beginUserTurnAnchor === 'function') app.beginUserTurnAnchor();
-  let _userBubble;
-  if (_isGenuiSend) {
-    // Leave the bubble UNTAGGED so the WS user_message echo / reconcile can
-    // adopt it by text and stamp the server interaction id (mirrors the normal
-    // optimistic user-bubble flow) — tagging it with the client id early would
-    // defeat that adoption and produce a duplicate notice.
-    _userBubble = addChatBubble('info', _genuiLabel, 'system-genui', undefined, undefined, undefined, outboxEntry.timestamp);
-    if (_userBubble && typeof app._addBubbleActions === 'function') {
-      try { app._addBubbleActions(_userBubble); } catch (_) { /* reconcile heals later */ }
-    }
-    if (app.isDebug && (text || '').trim()) {
-      addChatBubble('info', 'Raw prompt:\n' + text, 'system-debug', undefined, undefined, undefined, outboxEntry.timestamp);
-    }
-  } else {
-    _userBubble = addChatBubble('user', text, undefined, undefined, undefined, outboxEntry.id, outboxEntry.timestamp);
-    _markBubbleSaving(_userBubble, outboxEntry);
-  }
-  // Treat a mode/model change made before this send as applied AFTER it: a notice
-  // raised while nothing was running built a provisional group above the prompt,
-  // so re-anchor it behind the message, where the change actually belongs.
-  try {
-    if (_userBubble && typeof app.adoptPreSendNoticeGroup === 'function') {
-      app.adoptPreSendNoticeGroup(_userBubble);
-    }
-  } catch (_) { /* placement heals on the next attach */ }
-  // This is deliberately independent of outbox persistence. A gate-status
-  // websocket event may arrive before the send POST resolves (or after a
-  // renderer has briefly replaced this node), so retain the actual message as
-  // a recovery source for the queued-state renderer.
-  _rememberOutgoingMessage(outboxEntry.session_id, text, _userBubble);
-  // ── Render pending attachments into the user bubble ──
-  const _pendingAtts = getPendingAttachments();
-  if (!_isGenuiSend && _pendingAtts.length > 0 && _userBubble) {
-    for (const att of _pendingAtts) {
-      const el = renderAttachmentElement(att, { thumbnail: true });
-      if (el) _userBubble.appendChild(el);
-    }
-  }
-  // Attachments are synchronous DOM children, so anchor only after they are
-  // present; the user bubble then lands at the readable transcript top.
-  if (_userBubble && typeof app.anchorUserTurn === 'function') app.anchorUserTurn(_userBubble);
-  app.isProcessing = true;
-  // Synchronous built-ins (e.g. /compact) block the send POST until done — lock
-  // the pill so nothing can be queued mid-run; Stop remains live to bail out.
-  if (_isBlockingCommand(text)) {
-    _lockComposerForCommand();
-    if (typeof app.showCompactionProgress === 'function') {
-      app.showCompactionProgress();
-    }
-  }
-  // Prime WS-liveness from "now" so the DB-reconcile poll counts its silence
-  // window from send. If the WS delivers (same-process) it keeps this fresh and
-  // the poll stays dormant; if it can't (browser + agent on different workers)
-  // the poll engages after WS_SILENCE_MS and streams the reply from the DB.
-  if (app.currentSessionId) {
-    if (!app._lastWsEventAt) app._lastWsEventAt = {};
-    app._lastWsEventAt[app.currentSessionId] = Date.now();
-  }
-  startReconcileLoop();
-  // Last-resort backstop: if a turn is somehow still "processing" after 60s
-  // (neither the WS nor the reconcile poll cleared it), force a full DB resync.
-  // The ~0.8s reconcile loop is the primary recovery path; this is the floor.
-  if (app._healingTimer) clearTimeout(app._healingTimer);
-  app._healingTimer = setTimeout(() => {
-    if (app.isProcessing) {
-      console.warn('Self-healing: turn still processing after 60s, forcing DB sync.');
-      if (typeof app.refreshChat === 'function') app.refreshChat();
-    }
-  }, 60000);
-  if (app.chatActivityStart) {
-    // Blocking built-ins (e.g. /compact) surface their progress on the activity
-    // bar above the pill; ordinary sends show the plain "Sending…" note.
-    app.chatActivityStart(_isBlockingCommand(text) ? 'Compacting...' : 'Sending\u2026', outboxEntry.id);
-  }
-
-  if (app.clearPendingAttachments) app.clearPendingAttachments();
-
-  // ── Browser mode send path (SSE stream, no server-side persistence) ──
-  if (storageAdapter.isBrowser) {
-    _outboxInFlight.delete(outboxEntry.id);
-    _removeFromOutbox(outboxEntry.id);
-    _recordPersistence(outboxEntry.id, 'saved', 'Browser mode — local storage.');
-    if (!_isGenuiSend) _markBubbleSaved(_userBubble, outboxEntry.id, outboxEntry.id);
-
-    const _isSlash = _isSystemSlashCommand(text);
-    let _assistantBubble = null;
-    try {
-      await browserRouter.sendMessage(app.currentSessionId, text, {
-        onStream: (chunk) => {
-          if (_isSlash) return;  // skip streaming for slash commands — handled by onResponse
-          if (!_assistantBubble) {
-            _assistantBubble = addChatBubble('agent', chunk);
-            if (_assistantBubble) _addBubbleActions(_assistantBubble);
-          } else {
-            const textEl = _assistantBubble.querySelector('.chat-bubble-text');
-            if (textEl) textEl.textContent += chunk;
-          }
-        },
-        onResponse: (content) => {
-          if (_isSlash) {
-            const _ib = addChatBubble('info', content);
-            if (_ib && typeof app._addBubbleActions === 'function') {
-              try { app._addBubbleActions(_ib); } catch (_) { /* ignore */ }
-            }
-          } else if (_assistantBubble) {
-            const textEl = _assistantBubble.querySelector('.chat-bubble-text');
-            if (textEl) textEl.textContent = content;
-          } else {
-            _assistantBubble = addChatBubble('agent', content);
-            if (_assistantBubble) _addBubbleActions(_assistantBubble);
-          }
-          if (!_isSlash && content) {
-            try {
-              window.dispatchEvent(new CustomEvent('webagent-agent-response', {
-                detail: { sessionId: app.currentSessionId || '', content },
-              }));
-            } catch (_) {}
-          }
-          app.isProcessing = false;
-          _unlockComposer();
-          app.chatSend.disabled = false;
-          if (app.chatActivityStop) app.chatActivityStop();
-          if (typeof app.populateSessionSelect === 'function') {
-            app.populateSessionSelect(app.currentUserId);
-          }
-        },
-        onError: (err) => {
-          // Only surface agent errors in debug mode.
-          if (app.isDebug) {
-            addChatBubble('agent', '\u274C ' + err, 'error');
-          }
-          app.isProcessing = false;
-          _unlockComposer();
-          app.chatSend.disabled = false;
-          if (app.chatActivityStop) app.chatActivityStop();
-        },
-      });
-    } catch (e) {
-      addChatBubble('agent', '\u274C ' + (e.message || e), 'error');
-      app.isProcessing = false;
-      _unlockComposer();
-      app.chatSend.disabled = false;
-      if (app.chatActivityStop) app.chatActivityStop();
-    }
-    if (app._healingTimer) { clearTimeout(app._healingTimer); app._healingTimer = null; }
-    return;
-  }
-
-  try {
-    // RECORDER-HOOK: plugins/recorder/frontend/toggle.js subscribes backend evidence before send.
-    // Removal: delete this try block and comment; payload/send behavior remains unchanged.
-    try { if (window.__recorderScope) await window.__recorderScope(payload.session_id,payload.agent_id); } catch (_) {}
-    const resp = await fetch(apiPath('/api/v1/chat/send'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    _outboxInFlight.delete(outboxEntry.id);
-
-    if (!resp.ok) {
-      const registrationDetail = await _anonymousRegistrationDetail(resp);
-      if (registrationDetail) {
-        _removeFromOutbox(outboxEntry.id);
-        if (_userBubble) _userBubble.remove();
-        _showAnonymousRegistrationRequired(registrationDetail.message);
-        app.isProcessing = false;
-        _unlockComposer();
-        app.chatSend.disabled = false;
-        if (app._healingTimer) { clearTimeout(app._healingTimer); app._healingTimer = null; }
-        if (app.chatActivityStop) app.chatActivityStop();
-        return;
-      }
-      if (resp.status === 402) {
-        // The global billing interceptor has already recorded the terminal trial
-        // state. Discard the rejected optimistic turn and its retry journal entry.
-        _removeFromOutbox(outboxEntry.id);
-        if (_userBubble) _userBubble.remove();
-        app.isProcessing = false;
-        _unlockComposer();
-        applyChatGate();
-        if (app._healingTimer) { clearTimeout(app._healingTimer); app._healingTimer = null; }
-        if (app.chatActivityStop) app.chatActivityStop();
-        return;
-      }
-      _recordPersistence(outboxEntry.id, 'error', `Database save returned HTTP ${resp.status}; retained for retry.`);
-      // GenUI label notices are informational — keep them as-is; the outbox
-      // still tracks + retries the entry in the background.
-      if (_userBubble && !_isGenuiSend) _convertBubbleToPending(_userBubble, outboxEntry, `Save failed (${resp.status}) — retry`);
-      app.isProcessing = false;
-      _unlockComposer();
-      if (app._healingTimer) { clearTimeout(app._healingTimer); app._healingTimer = null; }
-      app.chatSend.disabled = false;
-      if (app.chatActivityStop) app.chatActivityStop();
-      return;
-    }
-
-    const data = await resp.json().catch(() => ({}));
-    if (data.compaction && typeof app.notifyCompactionCompleted === 'function') {
-      try {
-        app.notifyCompactionCompleted({...data.compaction, local_response: true});
-      } catch (_) { /* durable fallback */ }
-    }
-    // The user turn is already durable for both queued and active runs. Update
-    // recency before any asynchronous list/cache reconciliation.
-    app.markSessionRecentlyActive?.(outboxEntry.session_id, { persist: true });
-
-    if (data.status === 'queued') {
-      // A compaction is running on the server (e.g. started from another
-      // device/tab). The message was persisted durably as status='queued'
-      // (queued_for='compact') and runs when the compaction drains. Keep the
-      // pending bubble and the composer lock — the drain's 'running'
-      // broadcast (or compact_done) clears both.
-      _removeFromOutbox(outboxEntry.id);
-      _recordPersistence(outboxEntry.id, 'queued', 'Persisted as queued (compaction in progress); runs when compaction finishes.');
-      if (!_isGenuiSend && _userBubble) {
-        if (data.turn_id) _userBubble.setAttribute('data-msg-id', String(data.turn_id));
-        _userBubble.setAttribute('data-gate-queued', '1');
-      }
-      if (data.turn_id) {
-        _gateQueueBySession.set(String(outboxEntry.session_id || app.currentSessionId || ''), {
-          turnId: data.turn_id, queuePosition: null, text: text,
-        });
-      }
-      if (typeof app._lockComposerForCompaction === 'function') {
-        try { app._lockComposerForCompaction(); } catch (_) { /* ignore */ }
-      }
-      return;
-    }
-
-    if (data.status === 'ok' && data.reply) {
-      _removeFromOutbox(outboxEntry.id);
-      _recordPersistence(outboxEntry.id, 'saved', 'Database acknowledged the message and returned a reply.');
-      if (!_isGenuiSend) _markBubbleSaved(_userBubble, data.turn_id, outboxEntry.id);
-      // Synchronous reply path. For blocking/system commands (e.g. /compact,
-      // /optimize), the result is also persisted as a role='system' interaction
-      // and the reconcile loop will render it as an info bubble — don't double-
-      // render it here as an agent bubble.
-      if (_isSystemSlashCommand(text)) {
-        app.isProcessing = false;
-        _unlockComposer();
-        app.chatSend.disabled = false;
-        if (app.chatActivityStop) app.chatActivityStop();
-        if (typeof app.populateSessionSelect === 'function') {
-          app.populateSessionSelect(app.currentUserId);
-        }
-        return;
-      }
-      // Buffered/synchronous reply path: addChatBubble doesn't build a footer,
-      // so add it here (live-streamed replies get theirs via finalizeAgentResponse).
-      const _replyBubble = addChatBubble('agent', data.reply);
-      if (_replyBubble) _addBubbleActions(_replyBubble);
-      try {
-        window.dispatchEvent(new CustomEvent('webagent-agent-response', {
-          detail: {
-            sessionId: app.currentSessionId || '',
-            turnId: data.turn_id || '',
-            content: data.reply,
-          },
-        }));
-      } catch (_) {}
-      app.isProcessing = false;
-      _unlockComposer();
-      app.chatSend.disabled = false;
-      if (app.chatActivityStop) app.chatActivityStop();
-      if (typeof app.populateSessionSelect === 'function') {
-        app.populateSessionSelect(app.currentUserId);
-      }
-      return;
-    }
-
-    _removeFromOutbox(outboxEntry.id);
-
-    if (_userBubble) {
-      _recordPersistence(outboxEntry.id, 'saved', data.turn_id
-        ? `Database acknowledged the message as ${data.turn_id}.`
-        : 'Database acknowledged the message.');
-      if (!_isGenuiSend) _markBubbleSaved(_userBubble, data.turn_id, outboxEntry.id);
-    }
-    if (typeof app.populateSessionSelect === 'function') {
-      app.populateSessionSelect(app.currentUserId);
-    }
-  } catch (e) {
-    _outboxInFlight.delete(outboxEntry.id);
-    console.warn('[chat/send] failed', e);
-    _recordPersistence(outboxEntry.id, 'error', `Database save could not be reached: ${e?.message || 'network error'}.`);
-    if (_userBubble && !_isGenuiSend) _convertBubbleToPending(_userBubble, outboxEntry);
-    app.isProcessing = false;
-    _unlockComposer();
-    app.chatSend.disabled = false;
-    if (app.chatActivityStop) app.chatActivityStop();
+    app.dismissMobileComposerAfterSend?.();
+  } catch(error) {
+    // A local submission failure is UI state, never a fabricated agent answer.
+    app.chatActivityStart?.('Message was not queued. '+(error.message || 'Please retry.'));
   }
 }
 
 function abortChatStream() {
+  disconnectPanel();
   app.agentBuffer = '';
   app.isProcessing = false;
   app._stopPending = false;
@@ -1824,44 +1232,7 @@ function abortChatStream() {
 // Exposed on `app` so session modules can call it without importing this module
 app.abortChatStream = abortChatStream;
 
-app.refreshChat = async () => {
-  if (!app.currentSessionId) return;
-  // Remote-change guard (same rule as refreshTranscript): ask the server whether
-  // the transcript changed. If NOT modified, skip the full DB resync entirely —
-  // no cache drop, no re-render. The healing timer's real job is recovering a
-  // wedged composer, so if the UI is still stuck "processing" we still clear
-  // that state (without touching the transcript), and the ~0.8s reconcile loop
-  // remains the primary recovery path for late-arriving rows.
-  try {
-    const changed = await _transcriptChangedRemotely(app.currentSessionId);
-    if (!changed) {
-      if (app.isProcessing) {
-        app.isProcessing = false;
-        _unlockComposer();
-        if (app.chatActivityStop) app.chatActivityStop();
-      }
-      return;
-    }
-  } catch (_) { /* helper swallows errors — proceed conservatively */ }
-  // Force a clean load: set _lastLoadedSessionId to null so loadSessionChat
-  // clears the existing bubbles before re-rendering. Without this the 60s
-  // healing timer appends duplicate bubbles on every fire for a long-running
-  // session (optimizer runs, multi-tool turns) — the same-session guard in
-  // loadSessionChat skips the clear, so _renderSessionWindowed adds fresh
-  // bubbles without removing the old ones.
-  app._lastLoadedSessionId = null;
-  console.log('Self-healing: Fetching latest messages from DB...');
-  try {
-    if (typeof app.loadSessionChat === 'function') {
-      await app.loadSessionChat(app.currentSessionId);
-    }
-    app.isProcessing = false;
-    _unlockComposer();
-    if (app.chatActivityStop) app.chatActivityStop();
-  } catch (e) {
-    console.error('Self-healing: DB sync failed', e);
-  }
-};
+app.refreshChat = refreshPanel;
 
 function _resolvePillMaxWidth(rawValue, availableW) {
   const value = String(rawValue || '').trim();

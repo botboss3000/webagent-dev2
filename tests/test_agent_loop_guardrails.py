@@ -382,7 +382,7 @@ class MissingModelMessageTests(unittest.IsolatedAsyncioTestCase):
 
 class TempDbSequenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_visualizer_sequence_backfill_uses_active_temp_db(self):
-        from app.api import chat
+        from app.chat import execution as chat
         from app.db.local import LocalBackend
 
         with tempfile.TemporaryDirectory() as td:

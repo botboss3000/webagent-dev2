@@ -17,7 +17,7 @@ from websockets.exceptions import ConnectionClosedOK
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.chat import register_user_listener, unregister_user_listener, SEND_TIMEOUT
+from app.events.delivery import register_user_listener, unregister_user_listener, SEND_TIMEOUT
 from app.agent.run_buffer import get_registry as get_run_buffer_registry
 
 logger = logging.getLogger(__name__)

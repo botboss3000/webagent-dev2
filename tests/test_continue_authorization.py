@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.api.chat import _continue_authorizes_auto
+from app.chat.execution import _continue_authorizes_auto
 
 
 def _assistant(content: str):

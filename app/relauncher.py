@@ -62,6 +62,16 @@ def _resolve_port() -> int:
 PORT = _resolve_port()
 
 _IS_WIN = sys.platform == "win32"
+def _single_worker_supervisor_pid() -> int | None:
+    if _IS_WIN:
+        return None
+    parent = os.getppid()
+    try:
+        with open(f"/proc/{parent}/cmdline", "rb") as stream:
+            argv = [v.decode(errors="replace") for v in stream.read().split(b"\0") if v]
+    except OSError:
+        return None
+    return parent if parent > 1 and "app.server_supervisor" in argv else None
 _NO_WINDOW = 0x08000000      # CREATE_NO_WINDOW   — hidden console (background daemon)
 _NEW_GROUP = 0x00000200      # CREATE_NEW_PROCESS_GROUP — detach from parent's Ctrl+C
 
@@ -395,6 +405,21 @@ def trigger_restart(port: int = PORT, delay: float = 0.6) -> dict:
     Supervised Uvicorn modes reload in place. A standalone process uses the
     detached relauncher, which waits for the old server to stop and launches
     ``run.py`` only when no external supervisor revives it."""
+    supervisor_pid = _single_worker_supervisor_pid()
+    if supervisor_pid is not None:
+        def _restart_worker() -> None:
+            time.sleep(max(0.1, delay))
+            try:
+                os.kill(supervisor_pid, signal.SIGHUP)
+            except OSError:
+                pass
+        threading.Thread(target=_restart_worker, daemon=True).start()
+        return {
+            "status": "restarting",
+            "auto_restart": True,
+            "mode": "single-worker",
+            "message": "Application worker is restarting; the container stays running.",
+        }
     root = _project_root()
     if _reload_supervisor_active():
         # Exiting only the worker strands Uvicorn's reload parent holding the port.

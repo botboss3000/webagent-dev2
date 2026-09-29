@@ -1071,6 +1071,7 @@ function _componentRecencyMs(component) {
 const COMPONENT_CHIP_CACHE_MS = 15_000;
 let _compChipsInFlight = null;
 let _componentChipsCache = { sid: "", fetchedAt: 0, items: [] };
+let _componentChipsGeneration = 0;
 
 function _invalidateComponentChips(sid) {
   if (!sid || _componentChipsCache.sid === sid) {
@@ -1089,11 +1090,14 @@ async function _fetchComponentChips(sid) {
     return cached.items;
   }
   if (_compChipsInFlight && _compChipsInFlight.sid === sid) return _compChipsInFlight.promise;
+  const generation=_componentChipsGeneration;
   const promise = (async () => {
     try {
       const resp = await fetch(apiPath("/api/v1/chat/components?session_id=" + encodeURIComponent(sid)), { headers: authHeaders() });
       if (!resp.ok) return [];
       const items = ((await resp.json()).components || []).filter(c => c && c.id);
+      if(generation!==_componentChipsGeneration)
+        return _componentChipsCache.sid===sid ? _componentChipsCache.items : [];
       _componentChipsCache = { sid, fetchedAt: Date.now(), items };
       return items;
     } catch (_e) {
@@ -2537,8 +2541,15 @@ window.addEventListener('sessions-delta', (e) => {
 // Agent component set changed (presented / completed / deleted) — refresh the
 // chip strip immediately so component tabs appear and clear live, instead of
 // waiting for the 15s poll. Fired by chat-components.js.
-window.addEventListener('chat-components-changed', () => {
-  _invalidateComponentChips(app.currentSessionId);
+window.addEventListener('chat-components-changed', event => {
+  const detail=event.detail || {};
+  if(detail.sessionId && detail.sessionId!==app.currentSessionId) return;
+  _componentChipsGeneration++;
+  if(detail.sessionId && Array.isArray(detail.components)) {
+    _componentChipsCache={sid:detail.sessionId,fetchedAt:Date.now(),items:detail.components};
+  } else {
+    _invalidateComponentChips(app.currentSessionId);
+  }
   try { _fetchRelatedSessions(); } catch (_) { /* ignore */ }
 });
 

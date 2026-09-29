@@ -1,0 +1,34 @@
+/* Private activity uses the same palette and compact disclosure in both themes. */
+.v2-activity-group {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 8px 0 14px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.v2-activity-group > summary {
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  overflow-wrap: anywhere;
+}
+.v2-activity-group > summary:hover { background: var(--bg-tint); color: var(--fg-1); }
+.v2-activity-group summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.v2-activity-body {
+  margin: 4px 8px;
+  padding: 8px;
+  max-height: 360px;
+  overflow: auto;
+  border: var(--border-width) solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+  color: var(--fg-2);
+}
+.v2-activity-body summary { cursor: pointer; padding: 6px 0; overflow-wrap: anywhere; }
+.v2-activity-body pre, .v2-activity-body p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 6px 0 12px;
+}
+.v2-activity-body pre { font-family: var(--font-mono); }

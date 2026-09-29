@@ -1239,6 +1239,14 @@ function _renderTable(rows) {
   const loading = _qs('sessions-loading');
   const thead = _qs('sessions-table-head');
   if (!tbody) return;
+  // A passive refresh, search repaint, or metadata hydration can rebuild the
+  // tbody while the user is between the first and second bulk-delete clicks.
+  // Preserve the checked IDs across that replacement so the confirmation and
+  // its selection panel cannot silently disappear mid-action.
+  const checkedSessionIds = new Set(Array.from(
+    tbody.querySelectorAll('.sessions-check-cell.checked'),
+    cell => cell.dataset.sessionId,
+  ).filter(Boolean));
   // A resolved render ends the loading state, so the heading label may be
   // written again (see _updateSessionsHeading / _headingLoadPending).
   _headingLoadPending = false;
@@ -1349,6 +1357,13 @@ function _renderTable(rows) {
   let html = '';
   for (const row of topLevel) html += _renderRow(row, { childrenOf, depth: 0 });
   tbody.innerHTML = html;
+  if (checkedSessionIds.size) {
+    tbody.querySelectorAll('.sessions-check-cell').forEach(cell => {
+      if (!checkedSessionIds.has(cell.dataset.sessionId)) return;
+      cell.classList.add('checked');
+      cell.closest('tr')?.classList.add('selected');
+    });
+  }
   if (window.lucide && typeof window.lucide.createIcons === 'function') window.lucide.createIcons({ nodes: [tbody] });
   _updateSortArrows();
   _updateResponsiveColumns();

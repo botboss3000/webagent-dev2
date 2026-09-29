@@ -1259,7 +1259,7 @@ async def revoke_my_devices(request: Request, body: RevokeDevicesRequest):
     # Connected targets purge immediately. The durable purge directive remains
     # authoritative for offline/cross-worker devices and runs on their next contact.
     try:
-        from app.api.chat import revoke_user_device_connections
+        from app.events.delivery import revoke_user_device_connections
 
         await revoke_user_device_connections(user_id, revoked_ids, {
             "type": "device_revoked",

@@ -2306,7 +2306,7 @@ async def auto_title_session(
     _payload = decode_token(_token) if _token else None
     requester_id = _payload.get("user_id") if _payload else None
 
-    from app.api.chat import _emit_to_user_listeners
+    from app.events.delivery import _emit_to_user_listeners
 
     async def _emit(ev: dict) -> None:
         if not requester_id:

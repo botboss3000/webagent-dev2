@@ -327,7 +327,7 @@ function _renderOrder(el) {
  * by created_at, then move to their authoritative slot when their seq arrives.
  */
 function _reorderTranscriptCanonical() {
-  if (!app.chatMessages) return;
+  if (!app.chatMessages || app.chatMessages.dataset.publicConversation === 'true') return;
   const nodes = Array.from(app.chatMessages.children).filter(el =>
     el.classList && (
       el.classList.contains('chat-bubble')
@@ -682,7 +682,7 @@ function addChatBubble(role, text, extraClass, imageUrl, turnId, msgId, createdA
   // the cold load, reconcile and virtual-scroll paths all agree. The live
   // repaint paths (chat-stream's _setBubbleText / _buildActivityEntryRow) call
   // the same helper — see stripClosingEnvelope.
-  if (role === 'agent' && !isToolOnly) text = stripClosingEnvelope(text);
+  if (role === 'agent' && !isToolOnly && !extraClasses.has('published')) text = stripClosingEnvelope(text);
   // Any real text/user bubble ends the current tool-only group, so the next
   // tool-only turn starts a fresh grouped bubble instead of merging.
   if (!isToolOnly && !isStreaming) app._activeToolGroupBubble = null;
@@ -701,6 +701,7 @@ function addChatBubble(role, text, extraClass, imageUrl, turnId, msgId, createdA
   }
 
   const isMergeable = role === 'agent'
+    && !extraClasses.has('published')
     && !isToolOnly
     && extraClass !== 'error'
     && extraClass !== 'interrupted'

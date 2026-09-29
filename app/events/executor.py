@@ -279,7 +279,7 @@ async def execute_event_subscription(
         # chat tab shows it as the trigger before the assistant reply
         # streams in. Mirrors what `app/api/chat.py` emits for normal chats.
         try:
-            from app.api.chat import _emit_to_visualizers
+            from app.chat.execution import _emit_to_visualizers
             await _emit_to_visualizers(session_id, {
                 "type": "user_message",
                 "level": "user",
@@ -304,7 +304,7 @@ async def execute_event_subscription(
         # know). Mirrors the `event_callback` the regular chat path uses.
         async def _event_loop_callback(evt: Dict[str, Any]):
             try:
-                from app.api.chat import _emit_to_visualizers
+                from app.chat.execution import _emit_to_visualizers
                 await _emit_to_visualizers(session_id, evt, user_id=user_id)
             except Exception as e:
                 logger.debug("Event-run broadcast failed: %s", e)

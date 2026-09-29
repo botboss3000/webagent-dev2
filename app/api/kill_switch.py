@@ -55,7 +55,7 @@ async def set_kill_switch(request: Request):
     # session lists clear spinners right away (agentWs re-dispatches this as
     # kill-switch-changed). Best-effort, never raises.
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
         await notify_user(caller_id, {"type": "kill_switch", "engaged": engaged})
     except Exception:
         pass

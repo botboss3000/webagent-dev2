@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api import chat
+from app.chat import execution as chat
 
 
 class FakeDB:

@@ -14,7 +14,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from app.api import browser_storage, chat
+from app.api import browser_storage
+from app.chat import execution as chat
 from app.db.local import LocalBackend
 
 

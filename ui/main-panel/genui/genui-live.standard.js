@@ -218,9 +218,9 @@
       // update within the next normal poll too.
     }
 
-    // Run-state poll: cheap session-tail to see if a session's run is over.
+    // Run-state poll uses the authorized V2 snapshot, never a private tail.
     function checkRunState(sid, cb) {
-      var url = '/api/v1/db/session-tail?session_id=' + encodeURIComponent(sid) + '&after_session_seq=0';
+      var url = '/api/v2/chat/sessions/' + encodeURIComponent(sid);
       try {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
@@ -231,7 +231,15 @@
           if (xhr.status === 200) {
             try {
               var body = JSON.parse(xhr.responseText);
-              cb(null, body.run || null);
+              var runs = Array.isArray(body.runs) ? body.runs : [];
+              var latest = runs.length ? runs[runs.length - 1] : null;
+              var state = latest ? latest.state : 'idle';
+              cb(null, {
+                active: state === 'queued' || state === 'running' ||
+                  state === 'finalizing' || state === 'stopping',
+                status: state,
+                current_op: '',
+              });
             } catch (_) { cb('parse'); }
           } else {
             cb('status:' + xhr.status);

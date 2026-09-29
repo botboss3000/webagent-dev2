@@ -201,7 +201,8 @@ async def _resolve_summariser(
     for the agent, never on a user roster or session-switched chat model.
     The provider key + base URL always come from that same roster row. Env vars are a
     last-resort fallback only when roster resolution is unavailable."""
-    model = (settings.get("summary_model") or "").strip()
+    summary_reference = (settings.get("summary_model") or "").strip()
+    model = ""
     base_url = ""
     api_key = ""
     provider = ""
@@ -212,6 +213,7 @@ async def _resolve_summariser(
     try:
         from app.admin.settings import resolve_agent_role_config
         from app.db import get_db
+        from app.entitlements.rosters import select_roster_entry
         db = get_db()
         agent_id = await db.get_session_agent_id(session_id) if session_id else None
         agent_rec = await db.get_agent_by_id(agent_id) if agent_id else None
@@ -221,13 +223,22 @@ async def _resolve_summariser(
         # assignment remains the default selection and supplies matching transport
         # credentials whenever it is selected. Only entries adopted by this agent
         # are eligible; user-level catalog and legacy role flags are not inputs.
-        selected = system_row if not model else next(
-            (row for row in [system_row, *roster]
-             if isinstance(row, dict) and row.get("model") == model),
-            None,
-        )
+        if summary_reference:
+            selected = select_roster_entry(
+                [system_row, *roster],
+                entry_id=summary_reference,
+                model=summary_reference,
+            )
+            if selected is None:
+                logger.warning(
+                    "compaction: summary model %r is unresolved or ambiguous in agent %s roster; using System model",
+                    summary_reference, agent_id or "",
+                )
+                selected = system_row
+        else:
+            selected = system_row
         if selected:
-            model = str(selected.get("model") or model)
+            model = str(selected.get("model") or "")
             base_url = str(selected.get("base_url") or "")
             api_key = str(selected.get("api_key") or "")
             provider = str(selected.get("provider") or "")
@@ -235,8 +246,6 @@ async def _resolve_summariser(
             entry_id = str(selected.get("entry_id") or "")
             credential_user_id = str(selected.get("_credential_user_id") or user_id or "")
             credential_agent_id = str(selected.get("_credential_agent_id") or agent_id or "")
-        elif model:
-            logger.warning("compaction: summary model is not in agent %s roster", agent_id or "")
         else:
             logger.warning("compaction: no System model assigned to agent %s", agent_id or "")
     except Exception as e:  # pragma: no cover - defensive
@@ -553,7 +562,7 @@ async def _emit_compaction_completed(
 ) -> None:
     """Best-effort live delivery of the canonical compaction result."""
     try:
-        from app.api.chat import notify_user
+        from app.events.delivery import notify_user
 
         await notify_user(user_id, event)
     except Exception as exc:

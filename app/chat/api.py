@@ -178,6 +178,114 @@ async def stop(session_id: str,request: Request,owner_id: str | None=None):
     cancel(repo.owner_id,session_id)
     return {"stopped":stopped}
 
+class SessionMode(StrictModel):
+    mode: str = Field(min_length=1,max_length=64)
+
+@router.post("/sessions/{session_id}/mode")
+async def session_mode(session_id: str,body: SessionMode,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    from app.db import get_db
+    from app.agent.execution_modes import normalize_mode_id
+    db=get_db()
+    raw=body.mode.strip().lower()
+    mode="wkspc" if raw=="wkspc" else normalize_mode_id(raw)
+    saved=await db.set_session_execution_mode(session_id,mode)
+    await repo.publish_session_notice(session_id,f"Mode changed to {saved}.",
+                                      {"kind":"execution_mode","mode":saved,"initiator":actor})
+    return {"execution_mode":saved}
+
+class SessionModel(StrictModel):
+    selection_type: str | None = None
+    role: str | None = None
+    custom_position: int | None = None
+    entry_id: str | None = None
+
+@router.post("/sessions/{session_id}/model")
+async def session_model(session_id: str,body: SessionModel,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    from app.chat.execution import SessionModelRequest,set_session_model
+    result=await set_session_model(SessionModelRequest(
+        user_id=actor,session_id=session_id,**body.model_dump()),request)
+    label=body.role if body.selection_type=="role" else (
+        f"Custom {body.custom_position}" if body.selection_type=="custom" else "default")
+    await repo.publish_session_notice(session_id,f"Model changed to {label}.",
+                                      {"kind":"model","selection_type":body.selection_type,
+                                       "role":body.role,"entry_id":body.entry_id,"initiator":actor})
+    return result
+
+class SessionEffort(StrictModel):
+    slot_ref: str = Field(min_length=1,max_length=128)
+    reasoning_effort: str | None = None
+
+@router.post("/sessions/{session_id}/model-effort")
+async def session_model_effort(session_id: str,body: SessionEffort,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    from app.chat.execution import SessionEffortRequest,set_session_model_effort
+    result=await set_session_model_effort(SessionEffortRequest(
+        user_id=actor,session_id=session_id,**body.model_dump()),request)
+    await repo.publish_session_notice(session_id,
+        f"Reasoning effort changed to {result['reasoning_effort']}.",
+        {"kind":"model_effort","slot_ref":body.slot_ref,"initiator":actor})
+    return result
+
+@router.get("/sessions/{session_id}/compaction")
+async def session_compaction(session_id: str,request: Request):
+    actor,repo,session=await scope(request,session_id)
+    from app.chat.execution import get_session_compaction
+    return await get_session_compaction(request,session_id=session_id,
+                                        agent_id=session["agent_id"],user_id=actor)
+
+class SessionCompaction(StrictModel):
+    compact_target_tokens: int | None = None
+    verbatim_tail_tokens: int | None = None
+
+@router.post("/sessions/{session_id}/compaction")
+async def set_compaction(session_id: str,body: SessionCompaction,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    from app.chat.execution import SessionCompactionRequest,set_session_compaction
+    return await set_session_compaction(SessionCompactionRequest(
+        user_id=actor,session_id=session_id,**body.model_dump()),request)
+
+class VoiceRoute(StrictModel):
+    utterance: str = Field(min_length=1,max_length=2000)
+    voice_session_id: str | None = Field(default=None,max_length=100)
+    proposal_id: str | None = Field(default=None,max_length=100)
+
+@router.post("/sessions/{session_id}/voice/route")
+async def route_voice(session_id: str,body: VoiceRoute,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    with repo.transaction(write=False) as conn:
+        active=conn.execute("""SELECT 1 FROM chat_runs WHERE session_id=?
+            AND state IN ('queued','running','finalizing','stopping') LIMIT 1""",(session_id,)).fetchone()
+    request.state.controlled_voice_active_run=bool(active)
+    from app.chat.execution import VoiceRouteRequest, voice_route
+    command=VoiceRouteRequest(user_id=actor,session_id=session_id,**body.model_dump())
+    return await voice_route(command,request)
+
+class VoiceControl(StrictModel):
+    action: str = Field(min_length=1,max_length=32)
+    voice_session_id: str | None = Field(default=None,max_length=100)
+    idempotency_key: str = Field(min_length=8,max_length=128)
+
+@router.post("/sessions/{session_id}/voice/control")
+async def control_voice(session_id: str,body: VoiceControl,request: Request):
+    actor,repo,_=await scope(request,session_id)
+    if body.voice_session_id:
+        from app.agent.voice_session import get_voice_session_registry
+        try:
+            voice_session=get_voice_session_registry().get(
+                body.voice_session_id,user_id=actor,chat_session_id=session_id)
+        except PermissionError:
+            raise HTTPException(404,"Voice session not found")
+        if voice_session is None:
+            raise HTTPException(410,"Voice session expired")
+    if body.action != "stop":
+        raise HTTPException(409,"Voice pause and resume are unavailable for controlled chat")
+    stopped=await repo.stop(session_id)
+    from .runtime import cancel
+    cancel(repo.owner_id,session_id)
+    return {"message":"Stopped." if stopped else "There is no active run to stop.","stopped":stopped}
+
 @router.get("/sessions/{session_id}/activity")
 async def activity(session_id: str,request: Request,after: int=Query(0,ge=0),owner_id: str | None=None):
     actor,repo,_=await scope(request,session_id,owner_id)

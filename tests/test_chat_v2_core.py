@@ -53,6 +53,77 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         await self.repo.consume(receipt["run_id"],generation)
         return receipt["run_id"],generation
 
+    async def test_agent_auth_tool_result_publishes_only_safe_public_fields(self):
+        from app.chat.runtime import Execution
+        run,generation=await self.start()
+        execution=Execution(self.repo,run,generation)
+        await execution.observe({"type":"tool_result","result":json.dumps({
+            "ui":"agent_auth","local_signup_mode":"invite",
+            "app_login_enabled":True,"private_token":"must-not-publish"})})
+        snapshot=await self.repo.snapshot("s")
+        component=[item for item in snapshot["items"] if item["kind"]=="component"]
+        self.assertEqual(len(component),1)
+        self.assertEqual(component[0]["payload"],{
+            "ui":"agent_auth","local_signup_mode":"invite","app_login_enabled":True})
+        self.assertNotIn("must-not-publish",json.dumps(snapshot))
+
+    async def test_unsupported_interactive_tool_result_is_explicit(self):
+        from app.chat.runtime import Execution
+        run,generation=await self.start()
+        execution=Execution(self.repo,run,generation)
+        await execution.observe({"type":"tool_result","result":{
+            "ui":"agent_profile_admin","members":[{"private":"must-not-publish"}]}})
+        snapshot=await self.repo.snapshot("s")
+        notice=[item for item in snapshot["items"] if item["kind"]=="notice"]
+        self.assertEqual(len(notice),1)
+        self.assertIn("unavailable",notice[0]["payload"]["text"])
+        self.assertNotIn("must-not-publish",json.dumps(snapshot))
+
+    async def test_session_mode_notice_is_public_without_a_v1_run(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.chat.api import SessionMode, session_mode
+        db=SimpleNamespace(set_session_execution_mode=AsyncMock(return_value="plan"))
+        with patch("app.chat.api.scope", AsyncMock(return_value=("alice",self.repo,{}))), \
+             patch("app.db.get_db",return_value=db):
+            result=await session_mode("s",SessionMode(mode="plan"),None)
+        self.assertEqual(result,{"execution_mode":"plan"})
+        snapshot=await self.repo.snapshot("s")
+        self.assertEqual(len(snapshot["items"]),1)
+        notice=snapshot["items"][0]
+        self.assertEqual((notice["kind"],notice["run_id"]),("notice",None))
+        self.assertEqual(notice["payload"]["control"]["mode"],"plan")
+        self.assertEqual(snapshot["cursor"],1)
+
+    async def test_voice_route_reads_v2_active_run(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.chat.api import VoiceRoute, route_voice
+        await self.start()
+        request=SimpleNamespace(state=SimpleNamespace())
+        with patch("app.chat.api.scope",AsyncMock(return_value=("alice",self.repo,{}))), \
+             patch("app.chat.execution.voice_route",AsyncMock(return_value={"action":"noop"})) as route:
+            result=await route_voice("s",VoiceRoute(utterance="stop"),request)
+        self.assertEqual(result["action"],"noop")
+        self.assertTrue(request.state.controlled_voice_active_run)
+        self.assertEqual(route.await_args.args[0].session_id,"s")
+        self.assertEqual(route.await_args.args[0].user_id,"alice")
+
+    async def test_voice_stop_uses_v2_run_state_and_pause_is_unavailable(self):
+        from unittest.mock import AsyncMock, patch
+        from fastapi import HTTPException
+        from app.chat.api import VoiceControl, control_voice
+        with patch("app.chat.api.scope", AsyncMock(return_value=("alice",self.repo,{}))), \
+             patch("app.chat.runtime.cancel") as cancel:
+            pause=VoiceControl(action="pause",idempotency_key="12345678")
+            with self.assertRaises(HTTPException) as caught:
+                await control_voice("s",pause,None)
+            self.assertEqual(caught.exception.status_code,409)
+            stop=VoiceControl(action="stop",idempotency_key="12345678")
+            result=await control_voice("s",stop,None)
+        self.assertFalse(result["stopped"])
+        cancel.assert_called_once_with("alice","s")
+
     async def test_row_details_returns_every_column_and_exact_plaintext(self):
         from unittest.mock import AsyncMock, patch
         from app.chat.api import row_details
@@ -302,20 +373,17 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
                       [event["kind"] for event in await self.repo.activity("s")])
         self.assertNotIn("Original user request",json.dumps(await self.repo.snapshot("s")))
 
-    async def test_new_message_waits_behind_recovering_run(self):
+    async def test_new_message_starts_after_failed_recovery_without_replaying_work(self):
         run,g=await self.start()
-        self.repo.requeue_recovery(run,g)
+        await self.repo.recover_orphaned()
+        self.assertEqual((await self.repo.run(run))["state"],"failed")
         later=await self.repo.accept(
             "s","alice",Send(client_message_id="later",text="New direction"),self.policy)
         self.assertNotEqual(later["run_id"],run)
-        recovery=self.repo.claim(run,"recovery-worker")
-        with self.assertRaises(Conflict):
-            self.repo.claim(later["run_id"],"next-worker")
-        await self.repo.fail_execution(run,recovery)
-        next_generation=self.repo.claim(later["run_id"],"next-worker")
-        rows=await self.repo.consume(later["run_id"],next_generation)
+        generation=self.repo.claim(later["run_id"],"next-worker")
+        rows=await self.repo.consume(later["run_id"],generation)
         self.assertEqual([row["text"] for row in rows],["New direction"])
-        self.assertEqual((await self.repo.run(later["run_id"]))["parent_run_id"],run)
+        self.assertEqual((await self.repo.run(later["run_id"]))["parent_run_id"],None)
 
     async def test_v1_watchdog_does_not_claim_a_v2_run(self):
         from types import SimpleNamespace
@@ -336,19 +404,13 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_unconfirmed_tool_result_blocks_automatic_replay(self):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
         from app.chat.runtime import Execution, _settle_execution
 
         run,g=await self.start()
         await self.repo.journal(run,g,"tool_call",{
             "tool":"external_write","tool_call_id":"call-1"})
         self.assertTrue(await self.repo.has_uncertain_tool_result(run))
-        execution=Execution(self.repo,run,g)
-        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
-            "status":"error","stop_cause":"crash"}))
-        with patch("app.db.get_db",return_value=legacy):
-            await _settle_execution(execution)
+        await _settle_execution(Execution(self.repo,run,g))
         self.assertEqual((await self.repo.run(run))["state"],"failed")
         item=(await self.repo.snapshot("s"))["items"][-1]
         self.assertIn("unconfirmed tool result",item["payload"]["text"])
@@ -362,23 +424,17 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.repo.has_uncertain_tool_result(run))
 
 
-    async def test_recoverable_execution_requeues_without_failure(self):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
+    async def test_consumed_execution_fails_without_v1_recovery_state(self):
+        from unittest.mock import patch
         from app.chat.runtime import Execution, _settle_execution
 
         run,g=await self.start()
-        execution=Execution(self.repo,run,g)
-        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
-            "status":"error","stop_cause":"crash"}))
-        with patch("app.db.get_db",return_value=legacy):
-            await _settle_execution(execution)
-        state=await self.repo.run(run)
-        self.assertEqual((state["state"],state["stop_reason"]),
-                         ("queued","transcript_resume"))
-        self.assertEqual(self.repo.pending_runs(),[run])
+        with patch("app.db.get_db",side_effect=AssertionError("v1 run state consulted")):
+            await _settle_execution(Execution(self.repo,run,g))
+        self.assertEqual((await self.repo.run(run))["state"],"failed")
+        self.assertEqual(self.repo.pending_runs(),[])
         self.assertEqual([item["kind"] for item in (await self.repo.snapshot("s"))["items"]],
-                         ["user"])
+                         ["user","failure"])
 
     async def test_shutdown_keeps_run_for_boot_recovery(self):
         from app.chat import runtime
@@ -394,8 +450,8 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
             runtime._shutting_down=prior
         self.assertEqual((await self.repo.run(run))["state"],"running")
         self.assertEqual(await self.repo.recover_orphaned(),[run])
-        self.assertEqual((await self.repo.run(run))["stop_reason"],
-                         "server_restart_resume")
+        self.assertEqual((await self.repo.run(run))["stop_reason"],"server_restart")
+        self.assertEqual((await self.repo.snapshot("s"))["items"][-1]["kind"],"failure")
 
     async def test_nonrecoverable_execution_is_terminal(self):
         from types import SimpleNamespace
@@ -507,16 +563,17 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         second=ChatRepository("alice",connect=self.connect,cipher=self.repo.cipher)
         self.assertEqual(await self.repo.changes("s"),await second.changes("s"))
 
-    async def test_boot_orphan_requeues_consumed_run_for_v1_resume(self):
+    async def test_boot_orphan_fails_consumed_run_without_replaying_work(self):
         run,g=await self.start()
         await self.repo.journal(run,g,"model_stream",{"text":"partial"})
         self.assertEqual(await self.repo.recover_orphaned(),[run])
         recovered=await self.repo.run(run)
-        self.assertEqual(recovered["state"],"queued")
+        self.assertEqual(recovered["state"],"failed")
         self.assertEqual(recovered["generation"],g+1)
-        self.assertEqual(recovered["stop_reason"],"server_restart_resume")
-        self.assertEqual(self.repo.pending_runs(),[run])
-        self.assertEqual([item["kind"] for item in (await self.repo.snapshot("s"))["items"]],["user"])
+        self.assertEqual(recovered["stop_reason"],"server_restart")
+        self.assertEqual(self.repo.pending_runs(),[])
+        self.assertEqual([item["kind"] for item in (await self.repo.snapshot("s"))["items"]],
+                         ["user","failure"])
         with self.assertRaises(Fenced):
             await self.pub.notice(run,g,"Stale worker")
 
@@ -532,62 +589,31 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(next_generation,generation)
         self.assertEqual([row["text"] for row in await self.repo.consume(run,next_generation)],["Hello"])
 
-    async def test_boot_orphan_resume_publishes_through_v2_authority(self):
-        from unittest.mock import AsyncMock, patch
-        from types import SimpleNamespace
-        from app.chat.context import current
-        from app.chat.execution import _emit_to_visualizers
-        from app.chat.runtime import Execution, _resume_orphan
-
+    async def test_boot_orphan_terminal_failure_is_idempotent(self):
         run,g=await self.start()
         await self.repo.recover_orphaned()
-        generation=self.repo.claim(run,"recovery-worker")
-        execution=Execution(self.repo,run,generation)
+        self.assertEqual(await self.repo.recover_orphaned(),[])
+        snapshot=await self.repo.snapshot("s")
+        self.assertEqual([item["kind"] for item in snapshot["items"]],["user","failure"])
+        self.assertEqual(sum(item["terminal"] for item in snapshot["items"]),1)
 
-        async def resumed(session_id,reason=None,await_result=False):
-            self.assertEqual((session_id,reason),("s","v2_recovery"))
-            self.assertTrue(await_result)
-            await asyncio.sleep(0.01)
-            await _emit_to_visualizers("s",{
-                "type":"response","content":"Recovered answer",
-                "terminal_candidate":True,
-                "private_closer_status":{"flag":"complete","cta":"Recovered"},
-            })
-            return True
-
-        legacy=SimpleNamespace(run_state_get=AsyncMock(return_value={
-            "status":"interrupted","stop_cause":"server_restart"}))
-        token=current.set(execution)
-        try:
-            with patch("app.agent.runner.resume_one",new=AsyncMock(side_effect=resumed)), \
-                 patch("app.db.get_db",return_value=legacy):
-                self.assertTrue(await _resume_orphan(execution,await self.repo.run(run)))
-        finally:
-            current.reset(token)
-        self.assertEqual((await self.repo.run(run))["state"],"completed")
-        item=(await self.repo.snapshot("s"))["items"][-1]
-        self.assertEqual((item["kind"],item["payload"]["text"]),("answer","Recovered answer"))
-
-    async def test_startup_recovery_marks_legacy_before_scheduling_v2_run(self):
+    async def test_startup_recovery_schedules_only_v2_pending_runs(self):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, Mock, patch
         from app.chat.recovery import recover_once
 
         order=[]
         app_db=SimpleNamespace(list_user_accounts=AsyncMock(return_value=[{"user_id":"alice"}]))
-        user_db=SimpleNamespace(mark_orphans_for_resume=AsyncMock(
-            side_effect=lambda: order.append("mark") or 1))
         repo=SimpleNamespace(
             recover_orphaned=AsyncMock(side_effect=lambda: order.append("recover") or ["run"]),
             pending_runs=lambda: ["run"],
         )
         schedule=Mock(side_effect=lambda owner,run: order.append("schedule"))
         with patch("app.chat.recovery.get_app_db",return_value=app_db), \
-             patch("app.db.get_user_db",return_value=user_db), \
              patch("app.chat.recovery.ChatRepository",return_value=repo), \
              patch("app.chat.runtime.schedule",schedule):
             await recover_once(startup=True)
-        self.assertEqual(order,["mark","recover","schedule"])
+        self.assertEqual(order,["recover","schedule"])
         schedule.assert_called_once_with("alice","run")
 
     async def test_expired_attempt_is_fenced_without_repeating_consumed_input(self):

@@ -21,6 +21,21 @@ class PublicationService:
             policy_digest=digest(run["policy"]),
         )
 
+    async def agent_auth(self, run_id, generation, payload):
+        """Publish only the fields needed to display the agent sign-in form."""
+        if not isinstance(payload,dict) or payload.get("ui") != "agent_auth":
+            return None
+        safe={
+            "ui":"agent_auth",
+            "local_signup_mode":payload.get("local_signup_mode")
+                if payload.get("local_signup_mode") in {"open","invite","disabled"} else "disabled",
+            "app_login_enabled":payload.get("app_login_enabled") is True,
+        }
+        run=await self.repository.run(run_id)
+        return await self.repository.decide(
+            run_id,generation,"component",safe,accepted=True,reasons=[],
+            policy_digest=digest(run["policy"]))
+
     async def final(self, run_id, generation, text, status, *, repair=None, manual_retry=False):
         """Finalize with bounded, tool-free repairs; never publish a rejected draft."""
         from app.chat.closing import missing_requirements, attempts_exhausted

@@ -26,8 +26,6 @@ let _caption = null;
 let _captionTimer = null;
 let _voiceControls = null;
 let _pendingProposalId = '';
-let _narrationLoopKey = '';
-let _narrationAbort = null;
 let _lastSpokenText = '';
 let _lastSpokenAt = 0;
 
@@ -62,22 +60,6 @@ function _ensureVoiceControls() {
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Voice conversation settings');
 
-  const detail = document.createElement('button');
-  detail.type = 'button';
-  detail.className = 'voice-conversation-control';
-  const syncDetail = () => {
-    const value = localStorage.getItem('webagent_voice_narration_detail') || 'normal';
-    detail.textContent = `Updates: ${value}`;
-    detail.title = 'Change spoken run-update detail';
-  };
-  detail.addEventListener('click', () => {
-    const levels = ['quiet', 'normal', 'detailed'];
-    const current = localStorage.getItem('webagent_voice_narration_detail') || 'normal';
-    localStorage.setItem('webagent_voice_narration_detail', levels[(levels.indexOf(current) + 1) % levels.length]);
-    syncDetail();
-  });
-  syncDetail();
-
   const mute = document.createElement('button');
   mute.type = 'button';
   mute.className = 'voice-conversation-control';
@@ -94,7 +76,9 @@ function _ensureVoiceControls() {
     syncMute();
   });
   syncMute();
-  controls.append(detail, mute);
+  const status = document.createElement('span');
+  status.textContent = 'Spoken progress updates are unavailable. Final responses can still be read aloud.';
+  controls.append(mute, status);
   area.insertBefore(controls, pill);
   _voiceControls = controls;
   return controls;
@@ -213,54 +197,6 @@ function _speak(text) {
   return true;
 }
 
-function _startNarrationLoop(voiceSessionId) {
-  const sessionId = String(app.currentSessionId || '');
-  const userId = String(app.currentUserId || '');
-  const id = String(voiceSessionId || '');
-  if (!sessionId || !userId || !id) return;
-  _ensureVoiceControls();
-  const key = `${userId}\u0000${sessionId}\u0000${id}`;
-  if (_narrationLoopKey === key) return;
-  try { _narrationAbort?.abort(); } catch (_) {}
-  _narrationAbort = new AbortController();
-  _narrationLoopKey = key;
-  const signal = _narrationAbort.signal;
-  (async () => {
-    while (!signal.aborted && _narrationLoopKey === key) {
-      if (String(app.currentSessionId || '') !== sessionId) break;
-      try {
-        const response = await fetch(apiPath('/api/v1/chat/voice/narration/next'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          signal,
-          body: JSON.stringify({
-            user_id: userId,
-            session_id: sessionId,
-            voice_session_id: id,
-            detail: localStorage.getItem('webagent_voice_narration_detail') || 'normal',
-            timeout_seconds: 20,
-          }),
-        });
-        if (response.status === 410 || response.status === 404) break;
-        if (!response.ok) throw new Error('Narration unavailable');
-        const body = await response.json();
-        const narration = body.narration || null;
-        const spoken = String(narration?.text || '').trim();
-        if (!spoken) continue;
-        if (_capture || isStreamingVoiceActive()) {
-          continue;
-        }
-        _showCaption(spoken, { kind: 'answer' });
-        _speak(spoken);
-      } catch (_) {
-        if (signal.aborted) break;
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-    if (_narrationLoopKey === key) _narrationLoopKey = '';
-  })();
-}
-
 async function _routeUtterance(utterance) {
   if (!app.currentSessionId || !app.currentUserId) {
     return {
@@ -270,12 +206,10 @@ async function _routeUtterance(utterance) {
       issue: 'no_active_session',
     };
   }
-  const response = await fetch(apiPath('/api/v1/chat/voice/route'), {
+  const response = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(app.currentSessionId) + '/voice/route'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
-      user_id: app.currentUserId,
-      session_id: app.currentSessionId,
       utterance,
       voice_session_id: getVoiceSessionId(app.currentUserId, app.currentSessionId) || undefined,
       proposal_id: _pendingProposalId || undefined,
@@ -285,7 +219,6 @@ async function _routeUtterance(utterance) {
   if (!response.ok) throw new Error(body.detail || 'Voice routing failed');
   if (body.voice_session_id) {
     setVoiceSessionId(app.currentUserId, app.currentSessionId, body.voice_session_id);
-    _startNarrationLoop(body.voice_session_id);
   }
   const proposal = body.proposal || null;
   _pendingProposalId = proposal?.state === 'pending'
@@ -295,12 +228,10 @@ async function _routeUtterance(utterance) {
 }
 
 async function _requestVoiceControl(action) {
-  const response = await fetch(apiPath('/api/v1/chat/voice/control'), {
+  const response = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(app.currentSessionId) + '/voice/control'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
-      user_id: app.currentUserId,
-      session_id: app.currentSessionId,
       voice_session_id: getVoiceSessionId(app.currentUserId, app.currentSessionId) || undefined,
       action,
       idempotency_key: globalThis.crypto?.randomUUID?.()
@@ -344,15 +275,8 @@ async function _handleTranscript(transcript) {
     try {
       const controlled = await _requestVoiceControl(route.control_action || 'stop');
       controlAnswer = String(controlled.message || '').trim();
-    } catch (_) {
-      if ((route.control_action || 'stop') === 'stop') {
-        // Existing stop plumbing is a safe compatibility fallback.
-        try { app.abortChatStream?.(); } catch (_) {}
-        try { app._sendStopMessage?.(); } catch (_) {}
-        controlIssue = 'The Voice control request failed; the chat stop fallback was used.';
-      } else {
-        controlIssue = 'The Voice control request failed, so the run control was not applied.';
-      }
+    } catch (error) {
+      controlIssue = String(error?.message || 'Voice control was unavailable.');
     }
     if (controlIssue) {
       _showSystemMessage(controlIssue);
@@ -403,6 +327,7 @@ export async function beginVoiceTurn({
 }) {
   if (!button || !input || typeof toggleCapture !== 'function') return false;
   _stopSpeech();
+  _ensureVoiceControls();
 
   if (_capture?.starting && !captureActive() && !isStreamingVoiceActive()) return true;
 
@@ -441,7 +366,6 @@ export async function beginVoiceTurn({
       onState: _handleStreamingState,
       onPartial: text => _showCaption(`“${text}”`, { kind: 'partial', persist: true }),
       onSpeechStart: _stopSpeech,
-      onVoiceSession: voiceSessionId => _startNarrationLoop(voiceSessionId),
       onComplete: _handleTranscript,
       onCancel: _cancelCapture,
       onError: (code, detail) => {

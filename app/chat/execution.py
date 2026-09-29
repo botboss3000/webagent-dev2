@@ -1362,6 +1362,7 @@ async def voice_route(req: VoiceRouteRequest, fastapi_request: Request):
     except PermissionError:
         raise HTTPException(status_code=404, detail="Voice session not found.")
 
+    active_run = getattr(fastapi_request.state, 'controlled_voice_active_run', bool(session.active_run_id))
     utterance = req.utterance.strip()
     pending = registry.get_pending_proposal(
         session.voice_session_id,
@@ -1369,7 +1370,7 @@ async def voice_route(req: VoiceRouteRequest, fastapi_request: Request):
     ) if req.proposal_id else registry.get_pending_proposal(session.voice_session_id)
     route = route_voice_utterance(
         utterance,
-        active_run=bool(session.active_run_id),
+        active_run=active_run,
         pending_proposal=pending,
     )
     voice_config: Optional[Dict[str, Any]] = None
@@ -1384,13 +1385,13 @@ async def voice_route(req: VoiceRouteRequest, fastapi_request: Request):
             )
             model_intent = await classify_natural_voice_intent(
                 utterance,
-                active_run=bool(session.active_run_id),
+                active_run=active_run,
                 config=voice_config,
             )
             route = route_model_intent(
                 utterance,
                 model_intent,
-                active_run=bool(session.active_run_id),
+                active_run=active_run,
             )
         except VoiceCoordinatorUnavailable as exc:
             logger.warning("voice intent classification unavailable: %s", exc)
@@ -1487,7 +1488,7 @@ async def voice_route(req: VoiceRouteRequest, fastapi_request: Request):
         answer = _voice_route_message(
             route.action.value,
             route.reason,
-            active_run=bool(session.active_run_id),
+            active_run=active_run,
         )
     registry.record_response(session.voice_session_id, answer)
     current = registry.get(session.voice_session_id) or session
@@ -3808,7 +3809,7 @@ async def _prepare_send_inner(request: ChatRequest, fastapi_request: Request) ->
 
 
 @with_turn_cache
-async def _run_turn_background(
+async def run_shared_agent_turn(
     db, request: ChatRequest, agent: Dict[str, Any],
     user_interaction_id: str, channel: str = "web_portal",
     replaced: bool = False, is_first_turn: bool = False,
@@ -3826,6 +3827,8 @@ async def _run_turn_background(
     interrupted partial answer."""
     session_id = request.session_id
     user_id = request.user_id
+    from app.chat.context import current as controlled_execution
+    controlled = controlled_execution.get() is not None
     final_status = "complete"
     _last_seq_persist = 0.0
     _perf = _PerfTimer("run_turn", session_id=session_id, turn_id=user_interaction_id,
@@ -3901,15 +3904,16 @@ async def _run_turn_background(
     async def _on_gate_queue(sid: str, pos: int, total: int) -> None:
         nonlocal _queue_cb_fired
         _queue_cb_fired = True
-        try:
-            await notify_user(user_id, {
-                "type": "agent_status", "status": "queued",
-                "agent_id": _agent_id, "session_id": sid,
-                "turn_id": user_interaction_id,
-                "queue_position": pos, "queue_total": total,
-            })
-        except Exception:
-            pass
+        if not controlled:
+            try:
+                await notify_user(user_id, {
+                    "type": "agent_status", "status": "queued",
+                    "agent_id": _agent_id, "session_id": sid,
+                    "turn_id": user_interaction_id,
+                    "queue_position": pos, "queue_total": total,
+                })
+            except Exception:
+                pass
         # Durable queued marker (DB fix): persist status='queued' on the user
         # row so a reload / navigate-away-and-back re-renders the queued bubble
         # with its Force run button from the transcript alone. Written ONLY
@@ -3949,45 +3953,31 @@ async def _run_turn_background(
         except Exception as _qe:
             logger.debug("clear queued marker failed: %s", _qe)
 
-    # Start the RunBuffer + durable run-state for THIS turn. Done here (not in
-    # _prepare_send) so a replaced run's begin happens strictly after the prior
-    # run's finalize — no race on the single session_runs row.
-    _run_buffer = await get_run_buffer_registry().start_turn(
-        session_id=session_id, user_id=user_id, turn_id=user_interaction_id, db=db,
-    )
-    try:
-        # origin='web' + a relaunch recipe so the self-healing layer can re-ignite
-        # this turn headlessly (boot recovery / watchdog) if it dies involuntarily.
-        _web_relaunch_ctx = json.dumps({
-            "origin": "web", "session_id": session_id, "user_id": user_id,
-            "agent_id": agent.get("id"), "channel": channel,
-            "turn_id": user_interaction_id,
-            # Carry the turn's execution mode so a self-healing resume can re-run
-            # under the SAME mode the original send used (ask/plan/auto) instead of
-            # silently defaulting to Ask.
-            "execution_mode": getattr(request, "execution_mode", "ask") or "ask",
-        })
-        # NOT offloaded: run_state_begin emits an agent-status WebSocket broadcast
-        # (via _emit_agent_run_status → notify_user), which is bound to the main
-        # event loop and must not run on a worker-thread loop. It's one call per
-        # turn, so the round-trip cost is negligible.
-        await db.run_state_begin(
-            session_id, user_id, agent.get("id"), user_interaction_id,
-            origin="web", relaunch_ctx=_web_relaunch_ctx,
+    # The controlled worker owns its lease and publications. The legacy
+    # RunBuffer and session_runs row belong only to the V1 transport.
+    if not controlled:
+        _run_buffer = await get_run_buffer_registry().start_turn(
+            session_id=session_id, user_id=user_id, turn_id=user_interaction_id, db=db,
         )
-    except Exception as _rse:
-        logger.debug("run_state_begin failed: %s", _rse)
-    # Backfill seq on the already-saved user row from the buffer's first slot.
-    # Stamp it where the local-first row lives (a raw db._get_conn() UPDATE targets
-    # the REMOTE authority, where the row isn't pushed yet → zero rows matched → the
-    # row stays NULL-session_seq and the reconcile tail never sees it). Offloaded so
-    # the non-hybrid (direct-remote) path keeps its round-trip off the event loop.
-    try:
-        _user_ss, _user_ts = _run_buffer.next_seq()
-        await db_offload(lambda: db.stamp_interaction_seq(
-            user_interaction_id, _user_ss, user_interaction_id, _user_ts))
-    except Exception as _seqerr:
-        logger.debug("Failed to backfill seq on user row: %s", _seqerr)
+        try:
+            _web_relaunch_ctx = json.dumps({
+                "origin": "web", "session_id": session_id, "user_id": user_id,
+                "agent_id": agent.get("id"), "channel": channel,
+                "turn_id": user_interaction_id,
+                "execution_mode": getattr(request, "execution_mode", "ask") or "ask",
+            })
+            await db.run_state_begin(
+                session_id, user_id, agent.get("id"), user_interaction_id,
+                origin="web", relaunch_ctx=_web_relaunch_ctx,
+            )
+        except Exception as _rse:
+            logger.debug("run_state_begin failed: %s", _rse)
+        try:
+            _user_ss, _user_ts = _run_buffer.next_seq()
+            await db_offload(lambda: db.stamp_interaction_seq(
+                user_interaction_id, _user_ss, user_interaction_id, _user_ts))
+        except Exception as _seqerr:
+            logger.debug("Failed to backfill seq on user row: %s", _seqerr)
 
     final_error = None
     final_stop_cause = None
@@ -4008,7 +3998,7 @@ async def _run_turn_background(
         # for cold devices). The RunBuffer holds the real events; this is just a
         # cheap pointer so a fresh device knows where the live stream is up to.
         ss = event.get("session_seq")
-        if ss is not None:
+        if ss is not None and not controlled:
             now = time.monotonic()
             if now - _last_seq_persist > 1.0:
                 _last_seq_persist = now
@@ -4641,38 +4631,32 @@ async def _run_turn_background(
         _web_cause = ("complete" if final_status == "complete"
                       else (final_stop_cause or "crash") if final_status == "error" else None)
         if final_status == "interrupted":
-            # A worker shutdown cancels the turn before the boot sweep runs.
-            # Persist an involuntary cause so transcript recovery can claim it;
-            # retain a cause already recorded by Stop, replace, or watchdog.
-            try:
-                _prior = await db.run_state_get(session_id)
-                _web_cause = (_prior or {}).get("stop_cause") or "crash"
-            except Exception:
+            if controlled:
                 _web_cause = "crash"
-        try:
-            # NOT offloaded: run_state_finish emits an agent-status WebSocket
-            # broadcast (main-loop-bound notify_user), so it stays on the loop.
-            await db.run_state_finish(
-                session_id, status=final_status, error=final_error,
-                stop_cause=_web_cause,
-            )
-            _perf.mark("run_state_finished", final_status=final_status)
-        except Exception as _rsf:
-            # This is the authoritative completion write.  A debug-only line
-            # made an unfinished session indistinguishable from a normal one.
-            logger.exception("run_state_finish failed for %s: %s", session_id, _rsf)
-            # The browser may still be connected even when the DB is unhealthy.
-            # Tell it explicitly that the turn's terminal state was NOT saved;
-            # this becomes a red, replayable RunBuffer event on reconnect.
+            else:
+                try:
+                    _prior = await db.run_state_get(session_id)
+                    _web_cause = (_prior or {}).get("stop_cause") or "crash"
+                except Exception:
+                    _web_cause = "crash"
+        if not controlled:
             try:
-                await event_callback({
-                    "type": "error", "level": "agent",
-                    "message": "The agent stopped, but its final run status could not be saved: "
-                               f"{_rsf}",
-                    "persistence_failure": True,
-                })
-            except Exception:
-                logger.exception("Could not publish run-state persistence failure for %s", session_id)
+                await db.run_state_finish(
+                    session_id, status=final_status, error=final_error,
+                    stop_cause=_web_cause,
+                )
+                _perf.mark("run_state_finished", final_status=final_status)
+            except Exception as _rsf:
+                logger.exception("run_state_finish failed for %s: %s", session_id, _rsf)
+                try:
+                    await event_callback({
+                        "type": "error", "level": "agent",
+                        "message": "The agent stopped, but its final run status could not be saved: "
+                                   f"{_rsf}",
+                        "persistence_failure": True,
+                    })
+                except Exception:
+                    logger.exception("Could not publish run-state persistence failure for %s", session_id)
         try:
             from app.agent.run_scout import mark_run_outcome as _scout_finish
             await _scout_finish(
@@ -4693,10 +4677,11 @@ async def _run_turn_background(
                     "optimizer terminal status update failed for %s: %s",
                     session_id, _ore,
                 )
-        try:
-            await get_run_buffer_registry().end_turn(session_id, db=db)
-        except Exception as _eb:
-            logger.debug("end_turn failed for session %s: %s", session_id, _eb)
+        if not controlled:
+            try:
+                await get_run_buffer_registry().end_turn(session_id, db=db)
+            except Exception as _eb:
+                logger.debug("end_turn failed for session %s: %s", session_id, _eb)
 
         # Free this session's slot for the next queued session (FIFO). Must
         # happen BEFORE the instant-resume launch below so a re-ignited run
@@ -4715,6 +4700,10 @@ async def _run_turn_background(
                 asyncio.create_task(resume_one(session_id, reason="network_crash"))
             except Exception as _ire:
                 logger.debug("instant resume launch failed for %s: %s", session_id, _ire)
+
+
+# Existing V1 callers retain their historical entry point.
+_run_turn_background = run_shared_agent_turn
 
 
 async def _resume_web_turn(rc: Dict[str, Any], replaced: bool):

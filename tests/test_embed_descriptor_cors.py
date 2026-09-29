@@ -125,13 +125,15 @@ class EmbedDefaultContractTests(unittest.TestCase):
         self.assertIn("max-width: 100%;", css)
         self.assertIn('.ec-auth-actions button[type="submit"]', css)
 
-    def test_tool_rendered_login_card_counts_as_a_response(self):
+    def test_controlled_login_card_uses_public_component(self):
         client = (
             Path(__file__).resolve().parents[1] / "ui/embed/embed-chat.js"
         ).read_text(encoding="utf-8")
-        self.assertIn("let handledUi = false", client)
-        self.assertIn("authCard(payload); handledUi = true", client)
-        self.assertIn("if (!bubble && !acc && !handledUi)", client)
+        self.assertIn("item.kind === 'component' && item.payload?.ui === 'agent_auth'", client)
+        self.assertIn("authCard(item.payload)", client)
+        self.assertIn("published.set(item.id, { revision: item.revision })", client)
+        self.assertIn("'/api/v2/chat/sessions'", client)
+        self.assertNotIn("'/api/v1/chat/stream'", client)
         self.assertIn("setAttribute('aria-busy', 'true')", client)
         self.assertIn("setAttribute('aria-busy', 'false')", client)
         self.assertIn("els.activityText.textContent = 'Working…'", client)

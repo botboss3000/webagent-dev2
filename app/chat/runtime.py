@@ -46,6 +46,9 @@ async def submit(request, actor, repo, session, command):
     if receipt is not None:
         schedule(repo.owner_id,receipt["run_id"])
         return {**receipt,"status":"accepted","session_id":session["id"]}
+    from app.chat.execution import _is_compact_command
+    if _is_compact_command(command.text):
+        raise Conflict("Manual compaction is unavailable in controlled chat")
     await _enforce_billing_access(db,agent,actor,command.text)
     await enforce_tier_chat(actor,request,message=command.text,agent_id=agent["id"])
     for attachment_id in command.attachment_ids:
@@ -105,6 +108,18 @@ class Execution:
         # Secret-entry payloads are interaction descriptors, never secret values.
         payload={k:v for k,v in event.items() if k!="_controlled_recorded"}
         await self.repo.journal(self.run_id,self.generation,kind,payload)
+        if kind=="tool_result":
+            result=event.get("result")
+            try:
+                result=json.loads(result) if isinstance(result,str) else result
+            except (ValueError,TypeError):
+                result=None
+            if isinstance(result,dict) and result.get("ui")=="agent_auth":
+                await self.publication.agent_auth(self.run_id,self.generation,result)
+            elif isinstance(result,dict) and isinstance(result.get("ui"),str):
+                await self.publication.notice(
+                    self.run_id,self.generation,
+                    "This interactive tool result is unavailable in controlled chat.")
         if kind=="response":
             render_kind=event.get("chat_render_kind")
             if render_kind=="notice" and event.get("mid_run"):
@@ -133,77 +148,21 @@ async def _heartbeat(execution):
         execution.repo.renew(execution.run_id,execution.generation,_worker)
 
 
-async def _resume_orphan(execution, run):
-    """Hold V2 authority through the bounded V1 recovery ladder."""
-    from datetime import datetime, timezone
-    from app.agent.runner import resume_one, recovery_pending
-    from app.db import get_db
-
-    launched = False
-    while True:
-        state = await execution.repo.run(execution.run_id)
-        if state["state"] in TERMINAL:
-            return launched
-        if await execution.repo.has_uncertain_tool_result(execution.run_id):
-            await execution.repo.fail_execution(
-                execution.run_id,execution.generation,
-                reason="Execution stopped with an unconfirmed tool result. Review activity before continuing.")
-            return launched
-        legacy = await get_db().run_state_get(run["session_id"])
-        if not legacy:
-            await execution.repo.fail_execution(execution.run_id, execution.generation)
-            return launched
-        if legacy.get("status") == "running":
-            await asyncio.sleep(1)
-            continue
-        if not recovery_pending(legacy):
-            await execution.repo.fail_execution(execution.run_id, execution.generation)
-            return launched
-        next_at = legacy.get("next_resume_at")
-        if next_at:
-            try:
-                due = datetime.fromisoformat(next_at.replace("Z","+00:00"))
-                if due.tzinfo is None:
-                    due = due.replace(tzinfo=timezone.utc)
-                delay = (due-datetime.now(timezone.utc)).total_seconds()
-                if delay > 0:
-                    await asyncio.sleep(min(delay,10))
-                    continue
-            except (ValueError,TypeError):
-                pass
-        attempt = await resume_one(run["session_id"], reason="v2_recovery",
-                                   await_result=True)
-        launched = launched or attempt
-        await execution.flush()
-        if not attempt:
-            await asyncio.sleep(10)
-
-
 async def _settle_execution(execution):
-    """Translate a V1 involuntary stop into a V2 recovery attempt."""
-    from app.agent.runner import recovery_pending
-    from app.db import get_db
-
+    """V2 alone settles an unfinished attempt; consumed effects are never replayed."""
     state = await execution.repo.run(execution.run_id)
-    if state["state"] in TERMINAL or _shutting_down:
-        return
-    legacy = await get_db().run_state_get(state["session_id"])
-    if recovery_pending(legacy):
-        if await execution.repo.has_uncertain_tool_result(execution.run_id):
-            await execution.repo.fail_execution(
-                execution.run_id,execution.generation,
-                reason="Execution stopped with an unconfirmed tool result. Review activity before continuing.")
-            return
-        execution.repo.requeue_recovery(execution.run_id,execution.generation)
-    else:
-        await execution.repo.fail_execution(execution.run_id,execution.generation)
+    if state["state"] not in TERMINAL and not _shutting_down:
+        reason = ("Execution stopped with an unconfirmed tool result. Review activity before continuing."
+                  if await execution.repo.has_uncertain_tool_result(execution.run_id) else None)
+        await execution.repo.fail_execution(execution.run_id, execution.generation,
+                                           reason=reason)
 
 
 async def _drive(owner,run_id):
     from app.auth.workspace import workspace_scope, system_user_context
     from app.db import get_db
     from app.models.schemas import ChatRequest
-    from app.chat.execution import _prepare_send, _run_turn_background
+    from .engine_adapter import prepare_controlled_turn, execute_controlled_turn
     repo=ChatRepository(owner)
     execution=None
     token=None
@@ -228,9 +187,6 @@ async def _drive(owner,run_id):
                 if not done.cancelled() and done.exception() is not None:
                     driver.cancel()
             heartbeat.add_done_callback(lease_finished)
-            if run.get("stop_reason") in {"server_restart_resume","transcript_resume"}:
-                await _resume_orphan(execution, run)
-                return
             if str(run.get("stop_reason") or "").startswith("finalization_retry:"):
                 candidate_id=run["stop_reason"].split(":",1)[1]
                 source=await repo.retry_source(run["session_id"],candidate_id)
@@ -256,17 +212,9 @@ async def _drive(owner,run_id):
                 execution_mode=rows[-1]["execution_mode"],
                 app_control=rows[-1].get("app_control"),
             )
-            prep=await _prepare_send(request,internal_request(owner))
-            if "slash_result" in prep:
-                # Explicit command results use the same closing validation.
-                await execution.publication.final(run_id,generation,str(prep["slash_result"]),{})
-            elif prep.get("user_interaction_id"):
-                await _run_turn_background(
-                    prep["db"],request,prep["agent"],prep["user_interaction_id"],
-                    prep["channel"],is_first_turn=prep.get("is_first_turn",False),
-                )
-            else:
-                raise RuntimeError("No executable message was prepared")
+            db=get_db()
+            agent,interaction_id,first=await prepare_controlled_turn(db,request,rows)
+            await execute_controlled_turn(db,request,agent,interaction_id,first=first)
             await execution.flush()
             state=await repo.run(run_id)
             if state["state"] not in TERMINAL:

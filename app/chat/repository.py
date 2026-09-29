@@ -93,6 +93,12 @@ class ChatRepository:
                          (uid(), session_id, run_id, item_id))
         return {"id": item_id, "position": position, "cursor": cursor, "revision": 1}
 
+    async def publish_session_notice(self, session_id, text, control):
+        payload=await self.encode({"text":text,"control":control})
+        with self.transaction() as conn:
+            return self._publish(conn,session_id=session_id,run_id=None,
+                                 kind="notice",payload=payload)
+
     def receipt_for(self, session_id, author_id, command):
         """Return a committed acceptance before metering a transport retry.
 
@@ -137,13 +143,12 @@ class ChatRepository:
             message_id, stamp = uid(), now()
             active = conn.execute("""SELECT * FROM chat_runs WHERE session_id=? AND state IN ('queued','running')
                 ORDER BY created_at DESC LIMIT 1""", (session_id,)).fetchone()
-            recovering = bool(active and active["stop_reason"] in {"server_restart_resume","transcript_resume"})
-            run_id = active["id"] if active and not recovering else uid()
+            run_id = active["id"] if active else uid()
             conn.execute("INSERT INTO chat_messages VALUES (?,?,?,?,?,?,?)",
                          (message_id, session_id, author_id, cmid, fingerprint, encrypted, stamp))
-            if not active or recovering:
-                parent=active["id"] if recovering else None
-                if parent is None and payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
+            if not active:
+                parent=None
+                if payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
                     previous=conn.execute("""SELECT id FROM chat_runs WHERE session_id=?
                         AND state IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 1""",
                         (session_id,)).fetchone()
@@ -382,14 +387,6 @@ class ChatRepository:
                          (now(),run_id))
             return result
 
-    def requeue_recovery(self, run_id, generation):
-        """Keep an involuntary stop under V2 ownership for transcript recovery."""
-        with self.transaction() as conn:
-            self._run(conn,run_id,generation,{"running","finalizing"})
-            conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
-                lease_owner=NULL,lease_until=0,stop_reason='transcript_resume',updated_at=?
-                WHERE id=?""",(now(),run_id))
-
     async def snapshot(self, session_id, *, before=None, limit=100):
         limit = max(1,min(limit,200))
         with self.transaction(write=False) as conn:
@@ -469,14 +466,11 @@ class ChatRepository:
                          (session_id,cursor,int(unread)))
 
     async def recover_orphaned(self):
-        """Fence work owned by the previous process and make it runnable again.
-
-        This is deliberately a boot-only transition. Unlike ``recover_expired``,
-        which conservatively fails execution with an uncertain outcome, process
-        startup proves that no old worker can still own the lease. Runs whose
-        accepted input was already consumed are tagged for the v1 transcript
-        resumer; runs that never reached execution return to the normal queue.
-        """
+        """Fence prior-process V2 work without replaying consumed external effects."""
+        payload = await self.encode({
+            "text": "Execution stopped during a server restart. Review activity before continuing.",
+            "system_outcome": "failed",
+        })
         recovered = []
         with self.transaction() as conn:
             rows = list(conn.execute("""SELECT r.* FROM chat_runs r JOIN sessions s ON s.id=r.session_id
@@ -486,10 +480,16 @@ class ChatRepository:
             for row in rows:
                 consumed = conn.execute("""SELECT 1 FROM chat_inbox
                     WHERE run_id=? AND consumed=1 LIMIT 1""", (row["id"],)).fetchone()
-                conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
-                    lease_owner=NULL,lease_until=0,candidate_id=NULL,stop_reason=?,updated_at=?
-                    WHERE id=?""", ("server_restart_resume" if consumed else None,
-                                    now(), row["id"]))
+                if consumed:
+                    conn.execute("""UPDATE chat_runs SET state='failed',generation=generation+1,
+                        lease_owner=NULL,lease_until=0,stop_reason='server_restart',
+                        updated_at=? WHERE id=?""", (now(), row["id"]))
+                    self._publish(conn,session_id=row["session_id"],run_id=row["id"],
+                                  kind="failure",payload=payload,terminal=True)
+                else:
+                    conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
+                        lease_owner=NULL,lease_until=0,updated_at=? WHERE id=?""",
+                        (now(), row["id"]))
                 recovered.append(row["id"])
         return recovered
 

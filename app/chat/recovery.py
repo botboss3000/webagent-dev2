@@ -10,27 +10,20 @@ logger = logging.getLogger(__name__)
 async def recover_once(*, startup=False):
     """Recover controlled-chat work.
 
-    On process startup every prior in-memory worker is gone, so fence both the
-    legacy ``session_runs`` lease and the matching V2 lease before scheduling.
-    Periodic scans keep the stricter uncertain-outcome behavior for ordinary
-    lease expiry inside a live process.
+    On process startup every prior in-memory worker is gone. Fence V2 leases
+    and fail consumed work whose external effects cannot be proven safe to replay.
+    Periodic scans apply the same V2-only lease policy.
     """
     from .runtime import schedule
-    from app.db import get_user_db
-
     accounts = await get_app_db().list_user_accounts()
     for account in accounts:
         owner = account["user_id"]
         repo = ChatRepository(owner)
         if startup:
-            user_db = get_user_db(owner)
-            marked = await user_db.mark_orphans_for_resume()
             recovered = await repo.recover_orphaned()
-            if marked or recovered:
-                logger.info(
-                    "Boot recovery prepared owner %s: legacy=%d controlled=%d",
-                    owner, marked, len(recovered),
-                )
+            if recovered:
+                logger.info("Boot recovery fenced %d controlled runs for owner %s",
+                            len(recovered), owner)
         else:
             await repo.recover_expired()
         for run_id in repo.pending_runs():

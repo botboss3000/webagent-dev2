@@ -1919,7 +1919,7 @@ body.light-mode .chat-activity-bar {
 /* ── Context-compaction section (the panel's only content) ─────────────────
    Two sliders ("compact at %" / "keep verbatim %") tune this chat's compaction,
    plus a "Compact now" button that folds the conversation immediately. Saved as a
-   per-session override (POST /api/v1/chat/session-compaction). */
+   per-session override (POST /api/v2/chat/sessions/{id}/compaction). */
 .chat-model-picker .cmp-compact {
     padding-top: 2px;
   }

@@ -368,9 +368,7 @@ export function initChat() {
   app.autoResizeChatInput = () => _autoResizePill(app.chatInput);
   app.focusChatInput = () => { if (app.chatInput) app.chatInput.focus(); };
   app._sendStopMessage = sendStopMessage;
-  // Let shared modules fire a chat send programmatically (e.g. the footer
-  // compaction panel's "Compact now" button, which sends "/compact" through the
-  // pipeline WITHOUT staging it in the pill — the user's draft stays untouched).
+  // Let shared modules fire a controlled chat send programmatically.
   app.sendChatMessage = sendMessage;
 
   // ── "Session not found" (open session permanently deleted elsewhere) ──
@@ -765,12 +763,10 @@ export function initChat() {
       if (sid) {
         kvWrite('chat:execMode:' + sid, 'chat_execution_mode_' + sid, app.executionMode);
         // Persist server-side so the loop can re-read mid-turn (mirrors _selectModel).
-        fetch(apiPath('/api/v1/chat/session-mode'), {
+        fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/mode'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({
-            user_id: app.currentUserId || '',
-            session_id: sid,
             mode: app.executionMode,
           }),
         }).catch(() => { /* fire-and-forget — best-effort */ });

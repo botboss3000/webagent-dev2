@@ -14,7 +14,7 @@ import {
 // Standalone embed chat client. No imports from the SPA — talks straight to the
 // public HTTP API on the SAME origin it was served from:
 //   POST /api/v1/agents/<id>/auth/guest     → mint an agent-scoped guest
-//   POST /api/v1/chat/stream                → SSE turn (token deltas + final)
+//   POST /api/v2/chat/sessions/<id>/messages → controlled turn
 // Config + agent id arrive in window.__EMBED__ (server-injected). Runs inside
 // the customer's iframe; talks to the host page's loader via postMessage.
 
@@ -123,7 +123,6 @@ function scrollToEnd() {
 // ── Session bootstrap (lazy: minted on first send) ──────────────────────────
 let session = null;      // { token, user_id, session_id }
 let sending = false;
-let activeController = null;
 
 function browserId() {
   let id = null;
@@ -300,7 +299,57 @@ function profileAdminCard(initial) {
   els.messages.appendChild(card); scrollToEnd();
 }
 
-// ── Send a turn — SSE stream of {type, content} events ──────────────────────
+// ── Controlled v2 conversation ─────────────────────────────────────────────
+const API = '/api/v2/chat/sessions/';
+const published = new Map();
+let activeRunId = null;
+
+async function v2Request(path, options = {}) {
+  const s = await ensureSession();
+  const response = await fetch(path, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${s.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.detail || `Chat failed (${response.status}).`);
+  }
+  return response;
+}
+
+function showPublication(item) {
+  if (!item || item.deleted) return;
+  if (item.kind === 'component' && item.payload?.ui === 'agent_auth') {
+    const previous = published.get(item.id);
+    if (previous && previous.revision >= item.revision) return;
+    authCard(item.payload);
+    published.set(item.id, { revision: item.revision });
+    return;
+  }
+  if (!['user', 'answer', 'notice', 'failure'].includes(item.kind)) return;
+  if (typeof item.payload?.text !== 'string') return;
+  const previous = published.get(item.id);
+  if (previous && previous.revision >= item.revision) return;
+  const bubble = previous?.bubble || addBubble(item.kind === 'user' ? 'user' : item.kind === 'failure' ? 'error' : 'agent', item.payload.text);
+  bubble.textContent = item.payload.text;
+  published.set(item.id, { revision: item.revision, bubble });
+  scrollToEnd();
+}
+
+async function readEvents(path, cursor) {
+  const response = await v2Request(path + '/events?after=' + cursor);
+  const frames = (await response.text()).split(/\r?\n\r?\n/);
+  const events = [];
+  for (const frame of frames) {
+    const type = frame.split(/\r?\n/).find(line => line.startsWith('event:'))?.slice(6).trim();
+    const data = frame.split(/\r?\n/).find(line => line.startsWith('data:'))?.slice(5).trim();
+    if (type && data) {
+      try { events.push({ type, value: JSON.parse(data) }); } catch (_) {}
+    }
+  }
+  return events;
+}
+
 async function sendMessage(text) {
   if (sending || !text.trim()) return;
   sending = true;
@@ -314,15 +363,60 @@ async function sendMessage(text) {
   els.input.value = '';
   els.pill.classList.remove('has-text');
   autoGrow();
-  addBubble('user', text);
-
+  const optimistic = addBubble('user', text);
   const typing = showTyping();
-  let bubble = null;        // becomes the agent bubble once text arrives
-  let acc = '';             // accumulated token deltas
-  let handledUi = false;    // a tool-rendered card is itself a valid response
+  let accepted = false;
 
-  const finish = () => {
+  try {
+    const s = await ensureSession();
+    const path = API + encodeURIComponent(s.session_id);
+    await v2Request('/api/v2/chat/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ id: s.session_id, agent_id: AGENT_ID, title: 'Embed chat' }),
+    });
+    const receipt = await (await v2Request(path + '/messages', {
+      method: 'POST',
+      body: JSON.stringify({ client_message_id: crypto.randomUUID(), text, execution_mode: 'ask' }),
+    })).json();
+    accepted = true;
+    activeRunId = receipt.run_id;
+    const snapshot = await (await v2Request(path)).json();
+    let cursor = snapshot.cursor;
+    let done = snapshot.runs.some(run => run.id === activeRunId &&
+      ['completed', 'cancelled', 'failed'].includes(run.state));
+    for (const item of snapshot.items) {
+      if (item.id === receipt.message_id) {
+        published.set(item.id, { revision: item.revision, bubble: optimistic });
+      } else {
+        showPublication(item);
+      }
+    }
+    while (!done) {
+      const events = await readEvents(path, cursor);
+      for (const event of events) {
+        if (event.type === 'revoked') throw new Error('Chat access ended.');
+        if (event.type === 'publication') {
+          cursor = Math.max(cursor, event.value.cursor);
+          showPublication(event.value.item);
+        }
+        if (event.type === 'state') done = event.value.runs.some(run => run.id === activeRunId &&
+          ['completed', 'cancelled', 'failed'].includes(run.state));
+      }
+      if (!events.length) {
+        const current = await (await v2Request(path)).json();
+        for (const item of current.items) showPublication(item);
+        cursor = Math.max(cursor, current.cursor);
+        done = current.runs.some(run => run.id === activeRunId &&
+          ['completed', 'cancelled', 'failed'].includes(run.state));
+      }
+    }
+    if (!done) await new Promise(resolve => setTimeout(resolve, 300));
+  } catch (err) {
+    if (!accepted) optimistic.remove();
+    addBubble('error', (err && err.message) || 'Something went wrong. Please try again.');
+  } finally {
     if (typing.isConnected) typing.remove();
+    activeRunId = null;
     usage.finish();
     sending = false;
     els.root.setAttribute('aria-busy', 'false');
@@ -331,90 +425,6 @@ async function sendMessage(text) {
     if ((VIEW.above_pill?.right || []).includes('continue')) els.continue.hidden = false;
     els.send.disabled = !els.input.value.trim();
     els.input.focus();
-  };
-
-  try {
-    const s = await ensureSession();
-    activeController = new AbortController();
-    const res = await fetch('/api/v1/chat/stream', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${s.token}`,
-      },
-      body: JSON.stringify({
-        user_id: s.user_id,
-        session_id: s.session_id,
-        message: text,
-        agent_id: AGENT_ID,
-        execution_mode: 'ask',
-      }),
-      signal: activeController.signal,
-    });
-    if (!res.ok || !res.body) {
-      const detail = await res.json().catch(() => ({}));
-      throw new Error(detail.detail || `Chat failed (${res.status}).`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    const render = (t) => {
-      if (!bubble) { if (typing.isConnected) typing.remove(); bubble = addBubble('agent', ''); }
-      bubble.textContent = t;
-      scrollToEnd();
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // SSE frames are separated by a blank line.
-      let idx;
-      while ((idx = buf.indexOf('\n\n')) !== -1) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const line = frame.split('\n').find((l) => l.startsWith('data:'));
-        if (!line) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        let ev;
-        try { ev = JSON.parse(payload); } catch (_) { continue; }
-        usage.event(ev);
-        if (ev.type === 'stream' && typeof ev.content === 'string') {
-          usage.stream(ev.content);
-          acc += ev.content;              // token deltas → accumulate
-          render(acc);
-        } else if (ev.type === 'response' && typeof ev.content === 'string') {
-          acc = ev.content;               // authoritative final answer
-          render(acc);
-        } else if (ev.type === 'tool_result') {
-          try {
-            const payload = typeof ev.result === 'string' ? JSON.parse(ev.result) : ev.result;
-            if (payload?.ui === 'agent_auth') { authCard(payload); handledUi = true; }
-            if (payload?.ui === 'agent_profile_admin') { profileAdminCard(payload); handledUi = true; }
-          } catch (_) { /* ordinary tool result */ }
-        } else if (ev.type === 'error') {
-          // Surface errors only in debug mode; otherwise show a generic message.
-          if (VIEW.chat_common?.debug) {
-            throw new Error(ev.message || 'The agent hit an error.');
-          }
-          // Non-debug: show a generic message and mark handled so the
-          // fallback "I didn't catch a response" doesn't fire.
-          addBubble('agent', 'Something went wrong. Please try again.');
-          acc = '__error_handled__';
-        }
-        // tool_call events are intentionally ignored in this minimal widget.
-      }
-    }
-    if (!bubble && !acc && !handledUi) addBubble('agent', "I didn't catch a response — please try again.");
-  } catch (err) {
-    if (typing.isConnected) typing.remove();
-    if (err?.name === 'AbortError') addBubble('agent', 'Generation stopped.');
-    else addBubble('error', (err && err.message) || 'Something went wrong. Please try again.');
-  } finally {
-    activeController = null;
-    finish();
   }
 }
 
@@ -429,7 +439,11 @@ function wireEvents() {
   els.composer.addEventListener('submit', (e) => { e.preventDefault(); sendMessage(els.input.value); });
   els.input.addEventListener('input', autoGrow);
   els.continue.addEventListener('click', () => sendMessage('continue'));
-  els.stop.addEventListener('click', () => activeController?.abort());
+  els.stop.addEventListener('click', () => {
+    if (!activeRunId || !session) return;
+    v2Request(API + encodeURIComponent(session.session_id) + '/stop', { method: 'POST' })
+      .catch(err => addBubble('error', err.message || 'Could not stop this turn.'));
+  });
   els.input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (window.matchMedia?.('(pointer: coarse)').matches) return;

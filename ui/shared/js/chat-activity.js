@@ -773,8 +773,8 @@ function _buildModelPicker() {
   picker.className = 'chat-model-picker';
   // ── Context-compaction section ──
   // Two sliders tune THIS chat's absolute token budgets — activation target and
-  // verbatim hot tail — saved as a per-session override. "Compact now" folds the
-  // conversation immediately by sending /compact through the normal pipeline.
+  // verbatim hot tail — saved as a per-session override. Manual compaction
+  // waits for an isolated controlled-run command.
   const compact = document.createElement('div');
   compact.className = 'cmp-compact';
   compact.innerHTML =
@@ -811,7 +811,7 @@ function _buildModelPicker() {
     +   `<div class="cmp-cc-hint">Newest history budget kept word-for-word; completed older tool exchanges may be summarized.</div>`
     + `</div>`
     + `<button type="button" class="cmp-cc-btn">`
-    +   `<span class="cmp-cc-btn-label">Compact now</span>`
+    +   `<span class="cmp-cc-btn-label">Compact now (unavailable)</span>`
     +   `<span class="cmp-cc-btn-status"></span></button>`
     + `<div class="cmp-cc-note">Applies to this chat only — takes effect next turn.</div>`;
   picker.appendChild(compact);
@@ -1030,8 +1030,6 @@ async function _selectModel(slotRef) {
     const customPos = slot.type === 'custom' ? slot.position : 0;
 
     const payload = {
-      user_id: app.currentUserId || '',
-      session_id: sid,
       selection_type: selectionType,
       role: role,
       custom_position: customPos,
@@ -1039,7 +1037,7 @@ async function _selectModel(slotRef) {
     };
 
     if (sid) {
-      const postRes = await fetch(apiPath('/api/v1/chat/session-model'), {
+      const postRes = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/model'), {
         method: 'POST', headers,
         body: JSON.stringify(payload),
       });
@@ -1147,11 +1145,9 @@ async function _saveCompaction(field, tokens) {
   if (!sid) return false;
   try {
     const headers = { 'Content-Type': 'application/json', ...authHeaders() };
-    const res = await fetch(apiPath('/api/v1/chat/session-compaction'), {
+    const res = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/compaction'), {
       method: 'POST', headers,
       body: JSON.stringify({
-        user_id: app.currentUserId || '',
-        session_id: sid,
         [field]: tokens,
       }),
     });
@@ -1257,10 +1253,7 @@ async function _loadCompactionSettings() {
   const sid = app.currentSessionId || '';
   if (!sid) return;
   try {
-    const qs = new URLSearchParams({ session_id: sid });
-    if (app.currentAgentId) qs.set('agent_id', app.currentAgentId);
-    if (app.currentUserId) qs.set('user_id', app.currentUserId);
-    const res = await fetch(apiPath('/api/v1/chat/session-compaction?' + qs.toString()),
+    const res = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/compaction'),
       { headers: { ...authHeaders() } });
     if (!res.ok) return;
     const d = await res.json();
@@ -1280,24 +1273,10 @@ async function _loadCompactionSettings() {
   } catch (_) { /* best-effort — sliders keep their defaults */ }
 }
 
-/** Fire "/compact" through the normal send pipeline (it locks the composer + shows
- *  the activity chip exactly like typing it) and close the picker. */
+/** Make the unsupported action explicit without submitting a v1 command. */
 function _runCompactNow(btn) {
   const statusEl = btn ? btn.querySelector('.cmp-cc-btn-status') : null;
-  const sid = app.currentSessionId || '';
-  if (!sid || typeof app.sendChatMessage !== 'function' || !app.chatInput) {
-    if (statusEl) statusEl.textContent = 'unavailable';
-    return;
-  }
-  if (_modelPickerEl) _modelPickerEl.style.display = 'none';
-  // One compaction at a time — don't stack another /compact while one runs.
-  if (app._composerLocked) return;
-  // Fire "/compact" DIRECTLY, without staging it in the pill: the user's
-  // in-progress text stays exactly as typed. The "Compacting…" progress note is
-  // shown on the activity bar above the pill by the send pipeline (blocking
-  // commands get that note instead of "Sending…"), not in the placeholder.
-  try { app.sendChatMessage('/compact'); }
-  catch (e) { console.warn('Compact-now send failed:', e); }
+  if (statusEl) statusEl.textContent = 'Manual compaction is unavailable in controlled chat.';
 }
 
 // Toggle the context panel open/close when clicking the footer left area
@@ -3461,13 +3440,11 @@ export function initChatActivity() {
       const headers = { 'Content-Type': 'application/json', ...authHeaders() };
       const sid = app.currentSessionId || '';
       const payload = {
-        user_id: app.currentUserId || '',
-        session_id: sid,
         slot_ref: slotRef,
         reasoning_effort: effort,
       };
       if (sid) {
-        const response = await fetch(apiPath('/api/v1/chat/session-model-effort'), {
+        const response = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/model-effort'), {
           method: 'POST', headers,
           body: JSON.stringify(payload),
         });

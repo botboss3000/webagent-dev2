@@ -8,7 +8,7 @@
   "color": "#7dcfff",
   "description": "Edits only front-end files (ui/ — CSS & HTML); never backend code or the shell. On by default.",
   "skill_summary": "How to read and edit the app's front-end under ui/ — the hard scope (ui/ only; write .css/.html, read a few more; read-only pages), the find→read→patch workflow, and the dark/light theming rules (design-system variables, never hard-coded hex). Load before touching any UI markup or styling.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

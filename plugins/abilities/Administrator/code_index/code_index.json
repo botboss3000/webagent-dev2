@@ -5,7 +5,7 @@
   "color": "#7aa2f7",
   "description": "Build a source-derived, line-complete index of all maintainable UI source. It records line ownership, AST symbols, UI edges, and source hashes in data/db/code_index.db.",
   "skill_summary": "Use for a complete, source-derived map of current UI source. Check coverage and staleness, then trace functions, lines, selectors, events, endpoints, imports, or assets through the indexed graph. Every approved UI source line is recorded; parser uncertainty is explicit rather than silently omitted.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

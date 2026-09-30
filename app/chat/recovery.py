@@ -26,6 +26,10 @@ async def recover_once(*, startup=False):
                             len(recovered), owner)
         else:
             await repo.recover_expired()
+        resumed = await repo.resume_interrupted()
+        if resumed:
+            logger.info("Automatically resumed %d interrupted controlled chats for owner %s",
+                        len(resumed), owner)
         for run_id in repo.pending_runs():
             schedule(owner,run_id)
 

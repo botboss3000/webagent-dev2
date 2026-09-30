@@ -12,7 +12,7 @@ def test_skill_off_and_legacy_fallback():
     assert normalize_visibility("off") is None
     assert resolve_skill_mode("demo:core", {"demo": "off"}) == "off"
     assert resolve_skill_mode("demo:core", {"demo": "off", "demo:core": "visible"}) == "visible"
-    assert resolve_skill_mode("demo:other", {"demo": "off"}) == "discoverable"
+    assert resolve_skill_mode("demo:other", {"demo": "off"}) == "visible"
     assert resolve_skill_mode("demo:other", {"demo:other": "off"}) == "off"
 
 
@@ -48,3 +48,12 @@ def test_collection_and_direct_load_exclude_off(monkeypatch):
     result = json.loads(asyncio.run(load_skill("demo", agent_id="a", db=store)))
     assert result["status"] == "error"
     assert "SECRET" not in str(result)
+
+
+def test_bundled_skills_default_visible():
+    from app.abilities import all_raw, ability_general_skills
+    assert resolve_skill_mode("demo:core", {}) == "visible"
+    assert resolve_skill_mode("demo:core", {"demo": "discoverable"}) == "discoverable"
+    for aid in all_raw():
+        for skill in ability_general_skills(aid):
+            assert resolve_skill_mode(skill["skill_key"], {}, skill.get("default_mode")) == "visible", skill["skill_key"]

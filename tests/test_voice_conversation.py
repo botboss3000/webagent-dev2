@@ -22,7 +22,7 @@ CONVERSATION = ROOT / "ui" / "shared" / "js" / "voice-conversation.js"
 def test_browser_voice_routing_has_one_server_authority() -> None:
     source = CONVERSATION.read_text(encoding="utf-8")
     core = CORE.read_text(encoding="utf-8")
-    assert "/api/v1/chat/voice/route" in source
+    assert "/api/v2/chat/sessions/" in source and "/voice/route" in source
     assert "/api/v1/chat/voice/query" not in source
     assert "route?.response_source === 'system'" in source
     assert "if (!route?.issue) _speak(_systemText(text))" in source
@@ -98,10 +98,9 @@ def test_status_question_reads_run_state_without_writing_interactions() -> None:
 
 def test_agents_config_exposes_real_voice_conversation_controls() -> None:
     source = VOICE_SETTINGS.read_text(encoding="utf-8")
-    tab = (ROOT / "ui/main-panel/agents/js/tab-config.js").read_text(encoding="utf-8")
+    config = (ROOT / "ui/main-panel/agents/configs/content.js").read_text(encoding="utf-8")
     api = (ROOT / "app/api/agents.py").read_text(encoding="utf-8")
-    assert "Voice Conversation" in tab
-    assert "renderVoiceConversationSettings(voiceTopic, agent)" in tab
+    assert "renderVoiceConversationSettings(voiceTopic, agent)" in config
     for label in (
         "Remember this voice conversation",
         "Include recent text chat",

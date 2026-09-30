@@ -2,7 +2,7 @@
 id: ui_theming
 title: UI theming and surfaces
 when_to_use: Use when building or changing WebAgent UI appearance — the design-system palette, borders, the Appearance panel, per-user themes, edge fades, rounded scroll corners, and mobile keyboard behaviour.
-default_mode: discoverable
+default_mode: visible
 minimum_access: registered
 ---
 

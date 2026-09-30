@@ -416,19 +416,6 @@ export const storageAdapter = {
   },
 
   /**
-   * Interrupt a running session turn. No-op in browser mode.
-   * @param {string} sessionId
-   */
-  async interruptSession(sessionId) {
-    if (_mode === MODE_BROWSER) return;
-    fetch(apiPath('/api/v1/chat/interrupt'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ session_id: sessionId }),
-    }).catch(() => {});
-  },
-
-  /**
    * Refresh session metadata from the shared authority.
    * No-op in browser mode (no remote authority).
    * @param {string} userId

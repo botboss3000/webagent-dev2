@@ -293,7 +293,7 @@ def _build_catalog_entry(
         # a blank summary. skill_mode: selectable (load-on-demand) or
         # always_on. See app/agent/ability_skills.py.
         "skill_summary": desc.get("skill_summary") or "",
-        "skill_mode": desc.get("skill_mode") or "selectable",
+        "skill_mode": desc.get("skill_mode") or "always_on",
         "skill_handle": desc.get("skill_handle"),
         "group": gid,
         "has_runtime": has_runtime,
@@ -725,7 +725,7 @@ def _parse_general_skill_file(path: Path) -> Optional[Dict[str, Any]]:
     if not (_GENERAL_SKILL_ID.fullmatch(skill_id) and title and when and body):
         logger.warning("Ignoring %s: id, title, when_to_use, and a body are required", path)
         return None
-    raw_mode = meta.get("default_mode", "discoverable").lower()
+    raw_mode = meta.get("default_mode", "visible").lower()
     mode = {"always_on": "visible", "always": "visible", "visible": "visible",
             "selectable": "discoverable", "discoverable": "discoverable"}.get(raw_mode)
     if not mode:
@@ -757,7 +757,7 @@ def ability_general_skills(ability_id: str) -> List[Dict[str, Any]]:
         records.append({"skill_id": "core", "skill_key": f"{ability_id}:core",
                         "title": entry.get("display_name") or ability_id,
                         "when_to_use": (entry.get("skill_summary") or entry.get("summary") or "").strip(),
-                        "body": body, "default_mode": entry.get("skill_mode") or "selectable",
+                        "body": body, "default_mode": entry.get("skill_mode") or "always_on",
                         "minimum_access": "everyone", "path": root, "legacy_root": True})
     directory = root.parent / "skills" if root else None
     if directory and directory.is_dir():
@@ -1205,7 +1205,7 @@ def ui_catalog() -> Dict[str, Any]:
             # Bundled-skill metadata so a panel can render the "Skill" row (its
             # "when to use it" summary + an editor) without a per-ability fetch.
             "skill_summary": entry.get("skill_summary") or "",
-            "skill_mode": entry.get("skill_mode") or "selectable",
+            "skill_mode": entry.get("skill_mode") or "always_on",
             "order": order_abilities.get(aid, entry.get("order", 100)),
             "group": entry["group"],
             "entitlement_group": entry.get("entitlement_group") or "platform_admin",

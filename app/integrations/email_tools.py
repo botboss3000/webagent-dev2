@@ -244,7 +244,7 @@ FEATURE = {
     "requires": ["Google and/or Microsoft OAuth credentials"],
     # Ability-bundled skill: surfaced in the agent's # [SKILLS] catalog whenever
     # this ability is enabled; the body loads on demand via load_skill(handle).
-    "skill_mode": "selectable",
+    "skill_mode": "always_on",
     "skill_handle": "email_a1b2c3d4",
     "skill": (
         "## Working with email\n"

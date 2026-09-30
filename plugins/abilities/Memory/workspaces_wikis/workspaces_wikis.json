@@ -5,7 +5,7 @@
   "color": "#e0af68",
   "description": "Search and read approved Notion workspaces and Confluence spaces as live business knowledge, with optional relevant-page recall before a turn.",
   "skill_summary": "How to search connected Notion and Confluence sources, open authoritative pages, respect approved roots/spaces, and cite workspace knowledge without confusing it with the native Wiki.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "This is for existing third-party knowledge workspaces. Wiki Control remains WebAgent's native shared Wiki.",
   "simple": false,
   "placeholder": false,

@@ -4159,6 +4159,7 @@ async def get_model_usage_analytics(
     # 0 means all available history, beginning at the oldest matching event.
     days: int = Query(0, ge=0, le=3650),
     scope: str = Query("global"),
+    interval: str = Query("day", pattern="^(minute|hour|day)$"),
     # models | sessions | agents | agent_models — what the daily totals are
     # broken down by. agent_models is the nested chart's fixed agent/model matrix.
     group_by: str = Query("models"),
@@ -4166,7 +4167,7 @@ async def get_model_usage_analytics(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
 ):
-    """Daily all-model usage for the catalog overview chart.
+    """Time-bucketed all-model usage for the catalog overview chart.
 
     Global totals are deliberately available only to administrators; other
     callers see their own activity. Empty calendar days are retained so the
@@ -4182,7 +4183,14 @@ async def get_model_usage_analytics(
     if not user_id:
         return {"error": "not_authenticated", "group_by": grouping, "days": [], "models": [], "series_labels": {}}
 
-    end_day = datetime.now(timezone.utc).date()
+    now = datetime.now(timezone.utc)
+    end_day = now.date()
+    # Resolution never changes the selected calendar range. Include empty slots
+    # through the end of today, just as the daily chart does.
+    subday = interval in ("minute", "hour")
+    step = timedelta(minutes=1) if interval == "minute" else timedelta(hours=1)
+    time_format = "%Y-%m-%dT%H:%M"
+    bucket_sql = "strftime('%Y-%m-%dT%H:%M', created_at)" if interval == "minute" else "strftime('%Y-%m-%dT%H:00', created_at)" if interval == "hour" else "substr(created_at,1,10)"
     all_history = days == 0
     start_day = None if all_history else end_day - timedelta(days=days - 1)
     buckets = {}
@@ -4232,7 +4240,7 @@ async def get_model_usage_analytics(
                     rows = [
                         (str(day or ""), _analytics_agent_model_key(str(agent or ""), str(model or "")), tokens, cost)
                         for day, agent, model, tokens, cost in conn.execute(
-                            "SELECT substr(created_at,1,10) AS day, agent_id, model, "
+                            f"SELECT {bucket_sql} AS day, agent_id, model, "
                             "COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0), "
                             "COALESCE(SUM(cost_usd),0) FROM usage_events " + where + " GROUP BY day, agent_id, model ORDER BY day, agent_id, model",
                             tuple(params),
@@ -4241,7 +4249,7 @@ async def get_model_usage_analytics(
                     ]
                 else:
                     rows = conn.execute(
-                        f"SELECT substr(created_at,1,10) AS day, {group_column} AS series, "
+                        f"SELECT {bucket_sql} AS day, {group_column} AS series, "
                         "COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0), "
                         "COALESCE(SUM(cost_usd),0) FROM usage_events " + where + " GROUP BY day, series ORDER BY day, series",
                         tuple(params),
@@ -4273,8 +4281,18 @@ async def get_model_usage_analytics(
                 if nested_agent_models and agent not in active_roster_ids:
                     continue
                 series = _analytics_agent_model_key(agent, model) if nested_agent_models and agent and model else str(row.get(group_column) or "")
-                day = str(row.get("created_at") or "")[:10]
-                if not series or (buckets and day not in buckets):
+                timestamp = str(row.get("created_at") or "")
+                if subday:
+                    event_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if event_time.tzinfo is None:
+                        event_time = event_time.replace(tzinfo=timezone.utc)
+                    event_time = event_time.astimezone(timezone.utc).replace(second=0, microsecond=0)
+                    if interval == "hour":
+                        event_time = event_time.replace(minute=0)
+                    day = event_time.strftime(time_format)
+                else:
+                    day = timestamp[:10]
+                if not series or (not subday and buckets and day not in buckets):
                     continue
                 current = aggregates.setdefault((day, series), [0, 0.0])
                 current[0] += int(row.get("input_tokens") or 0) + int(row.get("output_tokens") or 0)
@@ -4284,10 +4302,21 @@ async def get_model_usage_analytics(
         history_days = sorted({str(row[0] or "") for row in rows if str(row[0] or "")})
         if all_history and history_days:
             start_day = datetime.fromisoformat(history_days[0]).date()
-            buckets = {
-                (start_day + timedelta(days=offset)).isoformat(): {"date": (start_day + timedelta(days=offset)).isoformat(), "models": {}}
-                for offset in range((end_day - start_day).days + 1)
-            }
+        if start_day is not None:
+            if subday:
+                start_time = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
+                stop_time = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+                bucket_count = int((stop_time - start_time) / step)
+                buckets = {
+                    (start_time + step * offset).strftime(time_format): {
+                        "date": (start_time + step * offset).strftime(time_format), "models": {}
+                    } for offset in range(bucket_count)
+                }
+            else:
+                buckets = {
+                    (start_day + timedelta(days=offset)).isoformat(): {"date": (start_day + timedelta(days=offset)).isoformat(), "models": {}}
+                    for offset in range((end_day - start_day).days + 1)
+                }
 
         # `days[].models` remains the wire key for the generic series container so
         # the existing chart consumers keep working unchanged; under the sessions
@@ -4330,6 +4359,8 @@ async def get_model_usage_analytics(
         return {
             "error": None,
             "scope": response_scope,
+            "interval": interval,
+            "timezone": "UTC",
             "group_by": grouping,
             "days": list(buckets.values()),
             "models": ordered,

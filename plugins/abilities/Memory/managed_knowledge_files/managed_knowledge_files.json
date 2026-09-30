@@ -5,7 +5,7 @@
   "color": "#73daca",
   "description": "Upload durable files directly to an agent and search or automatically recall their extracted contents.",
   "skill_summary": "How to search and read files uploaded into the agent's own managed knowledge directory, preserve file citations, and distinguish these durable files from chat attachments.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "Files are agent-owned and stored under the agent data directory, separate from user chat attachments.",
   "simple": false,
   "placeholder": false,

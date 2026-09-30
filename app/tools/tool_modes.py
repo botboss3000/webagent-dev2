@@ -265,7 +265,7 @@ def resolve_skill_mode(skill_key: str, modes_map: Optional[Dict[str, str]],
             explicit = normalize_skill_mode(modes.get(ability_id))
     if explicit:
         return explicit
-    return normalize_skill_mode(default) or DISCOVERABLE
+    return normalize_skill_mode(default) or VISIBLE
 
 
 def ability_is_revealed(ability_id: str, modes_map: Optional[Dict[str, str]],

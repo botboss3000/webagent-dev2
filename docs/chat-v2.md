@@ -1,6 +1,6 @@
 # Controlled chat V2
 
-V2 is an independent source snapshot of development commit
+The V2 checkout began as an independent source snapshot of development commit
 `a896b7760c12fb19fee4f8d1458a5884e2bd219c`.
 Snapshot SHA-256: `bab5316739370624309f6cbbcee0c87abc3473c438ab277d72fb955e40a84ffb`.
 Runtime data, databases, uploads, secrets, environment files and caches were excluded.
@@ -29,7 +29,9 @@ The original `webagent-dev` container is stopped with its data and configuration
 preserved. The previous private V2 container is preserved as
 `webagent-dev-v2-pre-public-20260928T163408Z`.
 
-Rollback to the original development app (brief development-site interruption):
+Historical rollback reference only: the original development app is outside the
+default V2 target. Do not run this procedure without a separate explicit user
+instruction (it interrupts the development site):
 
 ```sh
 docker stop cloudflared-webagent-dev-named
@@ -40,11 +42,12 @@ curl --fail http://100.112.23.15:8081/health/ready
 docker start cloudflared-webagent-dev-named
 ```
 
-The V2 origin and container health passed after the switch. The connector
-received the expected hostname/origin configuration and registered connections.
-Public HTTP verification returned 403 without a V2 instance header; browser
-verification was denied by the browser permission setting. Public browser
-reachability is therefore not yet confirmed by this run.
+The V2 origin and container health passed after the 2026-09-28 switch. The
+connector received the expected hostname/origin configuration and registered
+connections. An initial public HTTP check returned 403. On 2026-09-30 the
+public development `/app` endpoint returned 200 and authenticated V2 API
+checks passed. This confirms HTTP/API reachability; current attached-Chrome
+visual acceptance remains outstanding.
 
 ## Contract
 
@@ -86,6 +89,8 @@ Implemented in the isolated instance:
 - V2 terminal notifications and acknowledgements now drive the header,
   session dropdown, and Sessions view. The notification API pages across all
   active sessions, and a read/unread change updates those surfaces.
+- Deleting a server-backed chat session now waits for V2 Stop before removing
+  the session; the unused browser-storage V1 interrupt helper was removed.
 
 Still required: broader agent and provider configuration coverage, remaining
 integrations, and removal of legacy helpers, APIs, and browser authority paths.
@@ -117,8 +122,18 @@ OpenAI subscription request construction; a failing tool; interactive-tool
 privacy; attachment ownership; and image prompt formatting. Provider responses
 and authentication in those checks are scripted. Other live agent credentials,
 provider variants, process interruption, and the full attachment/vision journey
-remain unverified. Live generated-file, closer recovery, and media journeys
-remain unverified.
+remain unverified. On 2026-09-30, an authenticated development API run in Auto
+mode used save_file and published one attachment. Repeated snapshots kept its
+public item ID, bounded SSE replay returned it, and a freshly minted content
+grant fetched the stored bytes. This verifies the live server path, not the
+browser rendering. The same agent's Output Closer gate is disabled in Auto mode,
+so that run did not exercise a live Closer summary. The authenticated V2 voice
+route returned a deterministic status answer, and an idle Stop request reached
+the V2 control route. Its `stopped` field now has a boolean contract. Closer
+recovery, generated image and screenshot rendering, and visible voice and embed
+journeys remain unverified. The attached Chrome browser needed for final UI
+acceptance was unavailable. The current development agent roster also has no
+enabled UUID agent to exercise the served embed route.
 
 Verification uses disposable databases and deterministic fixtures. The core suite
 covers acceptance conflicts, privacy, snapshot/replay equivalence, terminal
@@ -157,6 +172,44 @@ node --experimental-default-type=module --test tests/chat_v2_state.test.mjs \
 The required older `docs/claude/ui-guidance.md` path is absent from the source
 checkout. The user approved using the current Codebase Admin and Diagnostics
 journey guides in its place. No browser acceptance is asserted.
+
+## Resume work (2026-09-30)
+
+The handoff target is the remote `/home/ar/webagent-dev-v2` checkout on
+`ar@100.112.23.15`, with `app.v2:app` in `webagent-dev-v2`. Use the
+project control instructions for SSH, data boundaries, deployment, and UI
+journeys. Start with `git status --short --branch` and inspect existing
+diffs: source, tests, documentation, and development data have uncommitted
+changes. Preserve unrelated work. Do not use the older development checkout
+or production to fill gaps.
+
+Follow the active path from `app/v2.py` into `app/chat/api.py`,
+`runtime.py`, `execution.py`, `publication.py`, and the relevant
+integration. The public main-panel client is in `ui/chat/core/`; the floating
+widget is in `ui/chat-widget/`; the served embed is in `ui/embed/`.
+`ui/chat/js/README.md` inventories inherited modules and is not a statement
+that their legacy stream paths own the V2 transcript.
+
+Manual compaction is already implemented through the V2 compaction endpoint,
+`app/chat/compaction.py`, and its focused tests in
+`tests/test_chat_v2_compaction.py`. Inspect those paths before proposing new
+compaction work. The remaining work is to complete the live integration and
+acceptance matrix: attached-Chrome chat journeys; generated image and browser
+screenshot rendering and grant refresh; Output Closer publication and recovery
+with its gate enabled; visible voice and served-embed journeys; and the wider
+agent/provider and interruption matrix. The shared-default agent's Closer gate
+was disabled in the tested Auto mode, the development roster lacked an enabled
+UUID embed agent, and no attached Chrome browser was available. These are
+fixture/access gaps, not passing acceptance results.
+
+The 2026-09-30 core suite passed 96 tests plus 8 agent/mode subcases; focused
+embed, security, integration, and core checks passed 78 tests. Voice checks
+passed 25 tests, with one Node-dependent test deselected inside the container
+because Node is unavailable there; its JavaScript path was checked on the
+server host. Re-run relevant suites after changes. Distinguish deterministic
+tests and authenticated API checks from browser and live-provider acceptance.
+The development container was running and healthy and the public `/app` URL
+returned 200 at that check; verify both again when resuming.
 
 ## Main-panel Elements (2026-09-28)
 

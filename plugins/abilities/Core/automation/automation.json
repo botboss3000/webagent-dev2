@@ -8,7 +8,7 @@
   "color": "#e0af68",
   "description": "Scheduled tasks and event-triggered jobs that can call integrations.",
   "skill_summary": "How to schedule tasks, set reminders, subscribe to events, and manage existing automations. Load before creating, editing, or troubleshooting any timed job, recurring schedule, reminder, or event trigger — covers one-shot vs recurring, delivery targets, run modes, automation memory, and the per-agent limits.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": false,
   "placeholder": false,

@@ -5,7 +5,7 @@
   "color": "#73daca",
   "description": "Search and read approved business documents from Google Drive, OneDrive, SharePoint, and Dropbox, with optional relevant-document recall before a turn.",
   "skill_summary": "How to search connected document libraries, open the authoritative file, preserve provider citations, and distinguish live documents from Memory and the native Wiki.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "Uses each user's existing Google, Microsoft, or Dropbox OAuth connection. Configure approved folders or libraries here; OAuth application credentials remain in Productivity.",
   "simple": false,
   "placeholder": false,

@@ -1,11 +1,11 @@
 {
   "version": 1,
   "signals": {
-    "memory_percent": 24.3,
+    "memory_percent": 23.3,
     "db_p95_ms": 19.8,
     "descriptor_percent": 2.5,
     "cpu_percent": 3.7
   },
-  "captured_at": 1790714694,
-  "samples": 37
+  "captured_at": 1790791560,
+  "samples": 38
 }

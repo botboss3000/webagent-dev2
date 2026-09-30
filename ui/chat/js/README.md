@@ -5,7 +5,11 @@
 > call legacy `/api/v1/chat` endpoints for capabilities that have not yet been
 > migrated, but they must not promote raw stream, tool, or diagnostic events
 > into the customer transcript. The V2 public transcript is owned by the core
-> reducer and projection.
+> reducer and projection. The module descriptions below record the inherited
+> panel architecture and include legacy streaming and refresh behavior; they
+> are not a map of the active V2 execution path. For current status and resume
+> work, read `docs/chat-v2.md` and trace `app.v2:app` through the current
+> imports and routes.
 # `ui/chat/js/` — chat and session management modules
 
 Split from the original monolithic `chat.js` (1637 lines) and `sessions.js` (2468 lines) into focused modules, each under ~520 lines. Everything flows one direction — no circular imports.

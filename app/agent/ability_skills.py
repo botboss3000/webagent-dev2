@@ -56,7 +56,7 @@ def _skill_from_feature(feature: dict, module_name: str) -> Optional[dict]:
         # ability's tool summary when none is given.
         "description": (feature.get("skill_summary") or feature.get("summary") or "").strip(),
         "body": body,
-        "mode": (feature.get("skill_mode") or "selectable"),
+        "mode": (feature.get("skill_mode") or "always_on"),
         "enabled": True,
         "source": display,
         # Per-tool mini-skills from ``tools/<tool_name>.skill.md`` files
@@ -85,7 +85,7 @@ def _skill_from_ability_record(record: dict, ability_id: str, ability_display: s
         "name": handle, "handle": handle, "skill_id": skill_id, "skill_key": skill_key,
         "display_name": display, "title": title,
         "description": str(record.get("when_to_use") or "").strip(),
-        "body": body, "mode": record.get("default_mode") or "discoverable",
+        "body": body, "mode": record.get("default_mode") or "visible",
         "minimum_access": record.get("minimum_access") or "everyone",
         "enabled": True, "source": ability_display, "_ability": True,
     }
@@ -301,7 +301,7 @@ async def collect_ability_skills(agent_id: str, user_id: Optional[str] = None) -
                     "display_name": row.get("display_name") or row.get("slug"),
                     "description": (row.get("skill_summary") or row.get("description") or "").strip(),
                     "body": body,
-                    "mode": "selectable",
+                    "mode": "always_on",
                     "enabled": True,
                     "source": "Custom ability",
                     "_ability": True,

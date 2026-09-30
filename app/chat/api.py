@@ -281,10 +281,10 @@ async def control_voice(session_id: str,body: VoiceControl,request: Request):
             raise HTTPException(410,"Voice session expired")
     if body.action != "stop":
         raise HTTPException(409,"Voice pause and resume are unavailable for controlled chat")
-    stopped=await repo.stop(session_id)
+    stopped_runs=await repo.stop(session_id)
     from .runtime import cancel
     cancel(repo.owner_id,session_id)
-    return {"message":"Stopped." if stopped else "There is no active run to stop.","stopped":stopped}
+    return {"message":"Stopped." if stopped_runs else "There is no active run to stop.","stopped":bool(stopped_runs)}
 
 class TerminalInput(StrictModel):
     text: str = Field(max_length=32000)

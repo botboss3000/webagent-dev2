@@ -8,7 +8,7 @@
   "color": "#7dcfff",
   "description": "Lets the agent orchestrate other agents: spawn purpose-built helpers with a system prompt it writes on the spot (or by cloning an existing agent), hold a real back-and-forth with them (saved like any chat), and run them blocking or forked. Forked helpers report back when they finish, and the agent can set durable follow-up timers to check on them. It can also delegate a discrete task to one of the user's own saved agents — including a Local Claude Code agent — which runs as itself (its own persona/abilities/engine) as a family member shown in the chat sub-header, distinct from handing the whole session over (delegate). Also runs the prompt optimizer. Switch off to remove it platform-wide.",
   "skill_summary": "How to act as an orchestrator: spawn purpose-built helper clones, hand them self-contained work, converse with them, run them blocking or forked, and oversee background ones with durable timers. Covers when to spawn vs do it yourself, granting abilities within your ceiling, parallel fan-out without busy-polling, reporting only what helpers actually produced, AND when to delegate a task to a real saved agent (e.g. a Local Claude Code specialist) instead of spawning a clone.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": false,
   "placeholder": false,

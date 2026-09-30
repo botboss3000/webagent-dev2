@@ -24,14 +24,20 @@ import { replaceRouteParams } from '../../shared/js/url-state.js';
 
 // ── Interrupt ──────────────────────────────────────────────────────────────
 
-function interruptSession(sessionId) {
-  if (!sessionId) return;
-  if (storageAdapter.isBrowser) return; // no server-side run
-  fetch(apiPath('/api/v1/chat/interrupt'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ session_id: sessionId }),
-  }).catch(() => { /* best-effort */ });
+async function interruptSession(sessionId) {
+  if (!sessionId || storageAdapter.isBrowser) return { ok: true };
+  try {
+    const response = await fetch(apiPath('/api/v2/chat/sessions/' +
+      encodeURIComponent(sessionId) + '/stop'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: '{}',
+    });
+    return response.ok || response.status === 404
+      ? { ok: true } : { ok: false, error: 'Could not stop the active run' };
+  } catch (_) {
+    return { ok: false, error: 'Could not reach the active run' };
+  }
 }
 
 // ── Switch session ─────────────────────────────────────────────────────────
@@ -184,7 +190,8 @@ async function deleteSession(sid, { retries = 1 } = {}) {
       return { ok: false, error: error.message || 'Network error' };
     }
   }
-  interruptSession(sid);
+  const stopped = await interruptSession(sid);
+  if (!stopped.ok) return stopped;
   if (storageAdapter.isBrowser) {
     const result = await storageAdapter.deleteSession(sid);
     if (!result.ok) return result;

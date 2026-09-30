@@ -422,8 +422,10 @@ class ChatRepository:
             run=self._run(conn,run_id,generation,{"running","finalizing"})
             result=self._publish(conn,session_id=run["session_id"],run_id=run_id,
                                  kind="failure",payload=payload,terminal=True)
-            conn.execute("UPDATE chat_runs SET state='failed',lease_until=0,updated_at=? WHERE id=?",
-                         (now(),run_id))
+            conn.execute("""UPDATE chat_runs SET state='failed',lease_until=0,
+                stop_reason=CASE WHEN ? IS NULL AND kind='chat' THEN 'execution_interrupted'
+                                 ELSE stop_reason END,updated_at=? WHERE id=?""",
+                         (reason,now(),run_id))
             return result
 
     async def snapshot(self, session_id, *, before=None, limit=100):
@@ -572,6 +574,76 @@ class ChatRepository:
                                  (next_id,row["id"]))
                 recovered.append(row["id"])
         return recovered
+
+    async def resume_interrupted(self):
+        """Queue a fresh continuation, never replay consumed input or tool calls.
+
+        Only the latest recent failed chat may resume. The transaction rechecks
+        that boundary after decryption so a concurrent send/stop wins.
+        """
+        cutoff = datetime.fromtimestamp(time.time()-600, timezone.utc).isoformat()
+        with self.transaction(write=False) as conn:
+            candidates = [dict(r) for r in conn.execute("""SELECT r.* FROM chat_runs r
+                JOIN sessions s ON s.id=r.session_id WHERE s.user_id=? AND s.status='active'
+                AND r.kind='chat' AND r.state='failed' AND r.updated_at>=?
+                AND r.stop_reason IN ('server_restart','lease_expired','execution_interrupted')
+                AND NOT EXISTS (SELECT 1 FROM chat_runs newer WHERE newer.session_id=r.session_id
+                    AND (newer.queue_seq>r.queue_seq OR
+                         (newer.queue_seq=r.queue_seq AND newer.rowid>r.rowid)))""",
+                (self.owner_id,cutoff))]
+        resumed = []
+        for source in candidates:
+            if await self.has_uncertain_tool_result(source["id"]):
+                continue
+            with self.transaction(write=False) as conn:
+                original = conn.execute("SELECT payload FROM chat_messages WHERE id=?",
+                                        (source["message_id"],)).fetchone()
+            command = await self.decode(original["payload"])
+            cmid = "auto-recovery:"+source["id"]
+            payload = {
+                "client_message_id":cmid,
+                "text":("Continue the interrupted request from recorded history and the current task checkpoint. "
+                        "The application stopped unexpectedly. Preserve completed work and confirmed tool results; "
+                        "do not repeat completed external actions. Finish the original request."),
+                "attachment_ids":[], "execution_mode":command.get("execution_mode","ask"),
+            }
+            encrypted = await self.encode(payload)
+            notice = await self.encode({"text":"Execution was interrupted. Automatically resuming from recorded history.",
+                                        "recovery":{"source_run_id":source["id"]}})
+            with self.transaction() as conn:
+                latest = conn.execute("""SELECT * FROM chat_runs WHERE session_id=?
+                    ORDER BY queue_seq DESC,rowid DESC LIMIT 1""",(source["session_id"],)).fetchone()
+                if not latest or latest["id"]!=source["id"] or latest["state"]!="failed":
+                    continue
+                session = self._session(conn,source["session_id"])
+                if session["status"]!="active":
+                    continue
+                # Count only automatic continuations, resetting on real user input.
+                ancestor, attempts = latest, 0
+                while ancestor:
+                    message = conn.execute("SELECT client_message_id FROM chat_messages WHERE id=?",
+                                           (ancestor["message_id"],)).fetchone()
+                    if not message or not message["client_message_id"].startswith("auto-recovery:"):
+                        break
+                    attempts += 1
+                    ancestor = conn.execute("SELECT * FROM chat_runs WHERE id=?",
+                                            (ancestor["parent_run_id"],)).fetchone()
+                if attempts>=3:
+                    continue
+                message_id, run_id, stamp = uid(), uid(), now()
+                conn.execute("INSERT INTO chat_messages VALUES (?,?,?,?,?,?,?)",
+                             (message_id,source["session_id"],self.owner_id,cmid,digest(payload),encrypted,stamp))
+                conn.execute("""INSERT INTO chat_runs
+                    (id,session_id,message_id,parent_run_id,kind,queue_seq,state,policy,created_at,updated_at)
+                    VALUES (?,?,?,?,'chat',?,'queued',?,?,?)""",
+                    (run_id,source["session_id"],message_id,source["id"],source["queue_seq"]+1,
+                     source["policy"],stamp,stamp))
+                result = self._publish(conn,session_id=source["session_id"],run_id=run_id,
+                                       kind="notice",payload=notice,item_id=message_id,timestamp=stamp)
+                conn.execute("INSERT INTO chat_inbox VALUES (?,?,?,0,?)",
+                             (message_id,source["session_id"],run_id,result["position"]))
+                resumed.append(run_id)
+        return resumed
 
     def pending_runs(self):
         with self.transaction(write=False) as conn:

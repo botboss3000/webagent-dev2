@@ -658,6 +658,53 @@ export function mountModelTable(host, opts = {}) {
   modelRow.appendChild(modelLabel);
   table.appendChild(modelRow);
 
+  // MODEL-ALIASES: reuse the live configurator (including credentials and model
+  // validation), never clone its fields or handlers. Restore it before any row
+  // rebuild so a destroyed detail panel cannot take the form with it.
+  const configuratorRows = [provRow, urlRow, keyRow, subscriptionRow, displayNameRow, modelRow];
+  let aliasTarget = null;
+  let aliasForm = null;
+  let aliasTrigger = null;
+  function closeAliasForm() {
+    if (!aliasForm) return;
+    configuratorRows.forEach(row => table.insertBefore(row, advRow));
+    aliasForm.remove();
+    aliasTrigger?.setAttribute('aria-expanded', 'false');
+    aliasForm = null; aliasTarget = null; aliasTrigger = null;
+    addBtn.textContent = 'Add';
+  }
+  function openAliasForm(p, destination, trigger) {
+    if (aliasTarget === p) { closeAliasForm(); trigger.focus(); return; }
+    closeAliasForm();
+    aliasTarget = p; aliasTrigger = trigger;
+    aliasForm = document.createElement('div');
+    aliasForm.className = 'ac-list ac-model-alias-form';
+    aliasForm.setAttribute('role', 'group');
+    aliasForm.setAttribute('aria-label', `New backup connection for ${rowDisplayName(p)}`);
+    const heading = document.createElement('div');
+    heading.className = 'ac-ability-row';
+    const text = document.createElement('span');
+    text.className = 'ac-ability-name';
+    text.textContent = `New alias for ${rowDisplayName(p)}`;
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'ac-btn ac-btn-ghost ac-btn-sm';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => { closeAliasForm(); trigger.focus(); });
+    heading.append(text, cancel); aliasForm.appendChild(heading);
+    configuratorRows.forEach(row => aliasForm.appendChild(row));
+    destination.appendChild(aliasForm);
+    table.classList.remove('ac-cfg-collapsed');
+    // A backup is a NEW connection; never reuse the primary's credential or
+    // pending subscription entry. Provider changes keep their existing flow.
+    pendingSubscriptionRow = null;
+    clearModel(); keyInput.value = '';
+    provSel.value = userCatalog ? 'webagent_catalog' : '_custom';
+    provSel.dispatchEvent(new Event('change'));
+    addBtn.textContent = 'Save alias';
+    trigger.setAttribute('aria-expanded', 'true');
+    provInput.focus();
+  }
+
   // Advanced / + action row
   const advRow = document.createElement('div');
   advRow.className = 'ac-row'; advRow.dataset.role = 'mt-advanced-row';
@@ -1140,6 +1187,9 @@ export function mountModelTable(host, opts = {}) {
     return pendingSubscriptionRow;
   }
   let subscriptionVerification = null;
+  let subscriptionCheckBusy = false;
+  let subscriptionLoginBusy = false;
+  let subscriptionDestroyed = false;
   function activeSubscriptionVerification(row = matchingSubscriptionRow()) {
     return row?.entry_id && subscriptionVerification?.entry_id === row.entry_id
       ? subscriptionVerification
@@ -1193,7 +1243,7 @@ export function mountModelTable(host, opts = {}) {
     subscriptionConnect.style.display = '';
     subscriptionConnect.textContent = connected
       ? 'Use other account'
-      : 'Click to Issue verification code';
+      : 'Retry verification code';
     if (message) subscriptionState.textContent = message;
     else if (connected) {
       subscriptionState.textContent = 'Connected to ' + (email || 'ChatGPT account')
@@ -1201,16 +1251,19 @@ export function mountModelTable(host, opts = {}) {
     } else subscriptionState.textContent = '';
   }
   async function refreshSubscriptionAccount(row = matchingSubscriptionRow()) {
+    if (subscriptionCheckBusy || subscriptionDestroyed) return;
     if (!row?.entry_id) {
       renderSubscriptionAuth('Issue a verification code first.');
       return;
     }
+    subscriptionCheckBusy = true;
     try {
       const response = await subscriptionRequest(
         '/api/v1/openai-subscription/auth/status', row.entry_id,
       );
       const state = response && await response.json().catch(() => ({}));
       if (!response || !response.ok) throw new Error(state.detail || 'Could not check authorization.');
+      if (subscriptionDestroyed || row !== matchingSubscriptionRow() || !isSubscriptionProvider()) return;
       row.credential_configured = !!state.chatgpt_authorized;
       row.credential_email = state?.account?.email || '';
       row.credential_plan_type = state?.plan_type || '';
@@ -1222,10 +1275,11 @@ export function mountModelTable(host, opts = {}) {
       } else {
         setModelStatus(state.detail || 'Authorization is not complete yet.');
       }
-      renderSubscriptionAuth();
+      if (row.credential_configured) renderSubscriptionAuth();
     } catch (error) {
       setModelStatus(error?.message || 'Could not check authorization.');
-      renderSubscriptionAuth();
+    } finally {
+      subscriptionCheckBusy = false;
     }
   }
   async function resetSubscriptionLogin(row = matchingSubscriptionRow(), { expired = false } = {}) {
@@ -1253,7 +1307,11 @@ export function mountModelTable(host, opts = {}) {
     }
   }
   async function startSubscriptionLogin() {
+    if (subscriptionLoginBusy || subscriptionDestroyed) return;
+    subscriptionLoginBusy = true;
     subscriptionConnect.disabled = true;
+    subscriptionConnect.style.display = 'none';
+    subscriptionState.textContent = 'Issuing verification code…';
     try {
       let row = matchingSubscriptionRow();
       const response = await subscriptionRequest(
@@ -1281,6 +1339,7 @@ export function mountModelTable(host, opts = {}) {
     } catch (error) {
       renderSubscriptionAuth(error?.message || 'Authorization failed');
     } finally {
+      subscriptionLoginBusy = false;
       subscriptionConnect.disabled = false;
     }
   }
@@ -1899,6 +1958,65 @@ export function mountModelTable(host, opts = {}) {
     body.innerHTML = automaticRouting + `<div class="ac-model-meta-list">${identityHtml + specHtml + usageHtml + capsHtml + aliasLineHtml + defaultLineHtml}</div>` + desc
       + (hasModelSpec ? '' : '<div class="ac-hint" style="margin:8px 0 0;">No token or cost data available for this model.</div>');
 
+    // MODEL-ALIASES: relationship IDs are independent of provider model names
+    // and display names. List members in roster order (the runtime backup order).
+    const backupLine = document.createElement('div');
+    backupLine.className = 'ac-model-meta-line ac-model-meta-aliases';
+    const aliasLabel = document.createElement('span');
+    aliasLabel.className = 'ac-model-meta-k'; aliasLabel.textContent = 'Aliases: ';
+    const aliasAdd = document.createElement('button');
+    aliasAdd.type = 'button'; aliasAdd.className = 'ac-btn ac-btn-ghost ac-btn-sm ac-model-alias-add';
+    aliasAdd.textContent = 'Add backup connection';
+    aliasAdd.setAttribute('aria-expanded', 'false');
+    aliasAdd.disabled = !p.entry_id;
+    const aliasRegion = document.createElement('div');
+    aliasRegion.className = 'ac-model-alias-region';
+    const groupId = String(p.alias_group_id || '');
+    const members = groupId ? S.providers.filter(other => other !== p && String(other.alias_group_id || '') === groupId) : [];
+    if (members.length) {
+      const list = document.createElement('div'); list.className = 'ac-list ac-model-alias-members';
+      list.setAttribute('aria-label', 'Alias group connections');
+      members.forEach(member => {
+        const row = document.createElement('div'); row.className = 'ac-ability-row';
+        const name = document.createElement('button');
+        name.type = 'button'; name.className = 'ac-btn ac-btn-ghost ac-btn-sm';
+        name.textContent = rowDisplayName(member);
+        name.title = 'Open this model connection';
+        name.addEventListener('click', () => {
+          closeAliasForm();
+          const target = table.querySelector(`.ac-saved-injected[data-mt-uid="${member._uid}"]`);
+          if (target && !target.classList.contains('expanded')) target.querySelector('.ac-saved-name-click')?.click();
+          target?.scrollIntoView({ block: 'nearest' });
+        });
+        const unlink = document.createElement('button');
+        unlink.type = 'button'; unlink.className = 'ac-btn ac-btn-ghost ac-btn-sm'; unlink.textContent = 'Unlink';
+        unlink.title = 'Keep the model connection, but remove it from this alias group';
+        unlink.addEventListener('click', async () => {
+          const before = S.providers.map(row => [row, row.alias_group_id]);
+          member.alias_group_id = '';
+          const remaining = S.providers.filter(row => row.alias_group_id === groupId);
+          if (remaining.length < 2) remaining.forEach(row => { row.alias_group_id = ''; });
+          unlink.disabled = true; _markSaving(unlink);
+          try { await saveRoster(); renderSaved(); onModelChange(); }
+          catch (error) {
+            before.forEach(([row, value]) => { row.alias_group_id = value; });
+            unlink.disabled = false; _flashSaveCheck(unlink, false, error?.message || 'Not saved');
+          }
+        });
+        row.append(name, unlink); list.appendChild(row);
+      });
+      aliasRegion.appendChild(list);
+    }
+    const aliasHint = document.createElement('div'); aliasHint.className = 'ac-hint';
+    aliasHint.textContent = members.length
+      ? 'Connections in this group are tried in roster order when the selected model fails before a response starts.'
+      : 'Add another model connection as a backup for this model.';
+    aliasRegion.appendChild(aliasHint);
+    backupLine.append(aliasLabel, aliasAdd);
+    body.querySelector('.ac-model-meta-list').appendChild(backupLine);
+    body.appendChild(aliasRegion);
+    aliasAdd.addEventListener('click', () => openAliasForm(p, aliasRegion, aliasAdd));
+
     // ── MODEL-PRICE-EDIT: the BYO price is click-to-edit ────────────────────
     // One click swaps the value for a PAIR of rate fields, because a price is a pair
     // (RENAME-FIELD PATTERN: Enter commits, Escape cancels, blur commits, and a `done`
@@ -2306,7 +2424,7 @@ export function mountModelTable(host, opts = {}) {
     const subscriptionMeta = p.provider === 'openai_subscription' && !catalogReadOnly
       ? `<span class="ac-model-credential-email">${readOnly ? 'Managed by app admin' : esc(p.credential_email || 'ChatGPT account not connected')}</span>`
       : '';
-    label.innerHTML = `<span class="ac-ability-name ac-saved-model-name"><span class="ac-saved-model-text">${esc(rowDisplayName(p))}</span>${badge}</span>${subscriptionMeta}`;
+    label.innerHTML = `<span class="ac-ability-name ac-saved-model-name"><span class="ac-saved-model-text"><bdi dir="ltr">${esc(rowDisplayName(p))}</bdi></span>${badge}</span>${subscriptionMeta}`;
     row.appendChild(label);
 
     // Compact role markers follow the model name, keeping the usage column clear.
@@ -2764,6 +2882,7 @@ export function mountModelTable(host, opts = {}) {
   }
 
   function renderSaved({ animate = false, enteringUids = [] } = {}) {
+    closeAliasForm();
     const before = animate ? _snapshotSavedLayout() : null;
     // MODEL-ROW-FOCUS: this rebuild collapses every row detail, so the chart's
     // single-model focus goes with them. Without this, saving the roster would leave
@@ -2852,13 +2971,25 @@ export function mountModelTable(host, opts = {}) {
     // model. Catalog-only mounts have no roles, and subscription entries already
     // carry a server-reserved ID before they can be added.
     const becomesStandard = !catalogOnly && !subscription && !S.providers.length;
-    const dupe = null;
+    // Platform entries already have server-owned IDs. Picking one already in
+    // this roster links that connection rather than submitting a duplicate ID.
+    const dupe = platformCatalog ? S.providers.find(row => String(row.entry_id) === String(S.selectedModel)) : null;
+    if (dupe && !aliasTarget) return setModelStatus('This model is already in your roster');
+    if (dupe === aliasTarget) return setModelStatus('Choose a different connection for the backup');
     if (!dupe) {
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
       // Persisted IDs are owned by the server. `_uid` is the only client-side row
       // identity; adapters hydrate `entry_id` into this same object after save.
       const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!pendingSubscriptionRow?.credential_configured : true, credential_email: subscription ? (pendingSubscriptionRow?.credential_email || '') : '', credential_plan_type: subscription ? (pendingSubscriptionRow?.credential_plan_type || '') : '', _uid: ++S.uid };
       const previousRoles = { ...S.roleAssignments };
+      const parentModel = aliasTarget;
+      const previousGroups = S.providers.map(row => [row, row.alias_group_id]);
+      if (parentModel) {
+        const groupId = String(parentModel.alias_group_id || parentModel.entry_id || '');
+        if (!groupId) throw new Error('Save the primary model before adding an alias');
+        parentModel.alias_group_id = groupId;
+        newP.alias_group_id = groupId;
+      }
       S.providers.push(newP);
       try {
         await saveRoster();
@@ -2872,15 +3003,31 @@ export function mountModelTable(host, opts = {}) {
       } catch (error) {
         S.providers = S.providers.filter(row => row !== newP);
         S.roleAssignments = previousRoles;
+        previousGroups.forEach(([row, group]) => { row.alias_group_id = group; });
         throw error;
       }
-      // Rebuild into the role-sorted position. Stable row ids let renderSaved
-      // slide existing rows around the insertion while the new row fades in.
+      // Keep the parent group visible after a grouped add; saved rows retain
+      // independent stable IDs and credentials for runtime failover.
       renderSaved({ animate: true, enteringUids: [newP._uid] });
+      if (parentModel) {
+        table.querySelector(`.ac-saved-injected[data-mt-uid="${parentModel._uid}"] .ac-saved-name-click`)?.click();
+      }
       savedRow = newP;
     } else {
-      if (apiKey && dupe.api_key !== apiKey) { dupe.api_key = apiKey; }
-      await saveRoster();
+      const parentModel = aliasTarget;
+      const groupId = String(parentModel.alias_group_id || parentModel.entry_id || '');
+      if (dupe.alias_group_id && dupe.alias_group_id !== groupId) {
+        return setModelStatus('Unlink this connection from its current alias group first');
+      }
+      const previousGroups = S.providers.map(row => [row, row.alias_group_id]);
+      parentModel.alias_group_id = groupId; dupe.alias_group_id = groupId;
+      try { await saveRoster(); }
+      catch (error) {
+        previousGroups.forEach(([row, group]) => { row.alias_group_id = group; });
+        throw error;
+      }
+      renderSaved();
+      table.querySelector(`.ac-saved-injected[data-mt-uid="${parentModel._uid}"] .ac-saved-name-click`)?.click();
       savedRow = dupe;
     }
     if (subscription && pendingSubscriptionRow?.entry_id === savedRow?.entry_id) {
@@ -2919,6 +3066,9 @@ export function mountModelTable(host, opts = {}) {
     renderDetectedCaps(null); S.allModels = [];
     renderModelDropdown(modelSearch.value.toLowerCase());
     renderSubscriptionAuth();
+    if (isSubscriptionProvider()) {
+      if (!activeSubscriptionVerification() && !matchingSubscriptionRow()?.credential_configured) void startSubscriptionLogin();
+    }
     loadModels();
     autosaveSingle(provCheck);
   });
@@ -2932,8 +3082,21 @@ export function mountModelTable(host, opts = {}) {
     if (!S.allModels.length && S.currentProvider === 'webagent_catalog') await loadModels();
   });
   modelSearch.addEventListener('input', () => renderModelDropdown(modelSearch.value.toLowerCase()));
-  addBtn.addEventListener('click', addModel);
-  freeBtn.addEventListener('click', () => addModel({ free: true }));
+  async function submitModel(options = {}) {
+    if (addBtn.disabled) return;
+    addBtn.disabled = true; freeBtn.disabled = true;
+    markSaving(modelCheck);
+    try {
+      const saved = await addModel(options);
+      if (saved) flashCheck(modelCheck, true);
+      else { modelCheck.innerHTML = ''; }
+    } catch (error) {
+      setModelStatus(error?.message || 'Unable to save model');
+      flashCheck(modelCheck, false, error?.message || 'Save failed');
+    } finally { addBtn.disabled = false; freeBtn.disabled = false; }
+  }
+  addBtn.addEventListener('click', () => submitModel());
+  freeBtn.addEventListener('click', () => submitModel({ free: true }));
   clearBtn.addEventListener('click', clearModel);
   advToggle.addEventListener('click', () => {
     const expanded = advRow.classList.toggle('expanded');
@@ -3038,6 +3201,7 @@ export function mountModelTable(host, opts = {}) {
 
       const norm = (p) => ({
         entry_id: p.entry_id || '',
+        alias_group_id: p.alias_group_id || '',
         display_name: p.display_name || '',
         // MODEL-NAME-LEVELS: the catalog's own model name for a catalog row (its
         // authored alias). Blank on a BYO row, whose model name is the real model id.
@@ -3091,6 +3255,7 @@ export function mountModelTable(host, opts = {}) {
   }
 
   function destroy() {
+    subscriptionDestroyed = true;
     clearTimeout(fetchDebounce); clearTimeout(autosaveDebounce);
     subscriptionCountdownHandles.forEach(timer => clearInterval(timer));
     subscriptionCountdownHandles.clear();

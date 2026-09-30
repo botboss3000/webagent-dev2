@@ -9,7 +9,7 @@
   "description": "Connect Cloudflare and other hosting providers so the agent can inspect domains and manage approved DNS records.",
   "status": "beta",
   "skill_summary": "How to use saved hosting-provider connections, inspect domains and DNS records, and make deliberate DNS changes without exposing provider credentials.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "Cloudflare, DigitalOcean, Route 53, Google Cloud DNS, Namecheap, Porkbun, and manual DNS are discovered from the installed provider registry.",
   "simple": false,
   "placeholder": false,

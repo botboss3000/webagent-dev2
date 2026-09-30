@@ -15,7 +15,7 @@
   "agent_configurable": true,
   "_tools_note": "The three agent-facing tools are displayed under Core ▸ Base and remain always-on. This dual-surface descriptor exposes per-agent target/verbatim preferences under Knowledge while App Functions owns the global safety ceiling and advanced defaults. Do NOT re-add update_task_checkpoint / get_task_checkpoint here: those plan/task tools were relocated to the always-on core (app/tools/core_tools.py, wired by app/tools/loader.py under Core ▸ Base and locked on in TIER_1_ALWAYS_ON).",
   "tools": [],
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "skill_summary": "Your own context window: the fill gauge, one automatic rolling checkpoint for older conversation, a newest verbatim tail, and three tools — compact_context to deliberately checkpoint now, recall_compacted to read the ORIGINAL turns behind the checkpoint, and search_this_session to keyword-find details across the full conversation. Load this whenever the user asks about context or memory, before a long multi-phase task, or whenever a needed detail may have been compacted. NOTE: you CAN compact on demand; do not tell the user compaction is automatic-only.",
   "config": {
     "bias": {

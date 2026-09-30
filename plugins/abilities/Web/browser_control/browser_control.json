@@ -8,7 +8,7 @@
   "color": "#9ece6a",
   "description": "Drive a browser, make HTTP requests, and act AS the user on sites you're logged into (using your live browser session's cookies). Can drive the in-app headless browser OR switch a session to the real browser on the user's device. Optional pasted-cookie fallback.",
   "skill_summary": "How to drive a real, stateful browser tab (login flows, clicking, forms, JS-rendered content, screenshots) with the navigate→read→act loop — including the shared tab the user watches live — when to use http_request instead, and how the web_session_* cookie-replay tools act as the logged-in user on no-API sites (Facebook etc.). Load when a task needs a persistent, logged-in web page or to act as the user.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": false,
   "placeholder": false,

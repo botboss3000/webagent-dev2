@@ -8,7 +8,7 @@
   "color": "#7dcfff",
   "description": "Lets the agent understand attached images by delegating a look to a vision model. (Taking over on a vision model for sustained image work is done with the separate Model Switcher ability.)",
   "skill_summary": "How to handle an attached image: answer from the auto-generated description, or ask a sharper question with process_image. For sustained image work, if the Model Switcher ability is enabled, take over with set_model onto a vision model. Load when an image is attached and you need to inspect it, or when you're told you have no image ability.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

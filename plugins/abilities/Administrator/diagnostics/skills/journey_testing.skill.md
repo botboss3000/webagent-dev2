@@ -2,7 +2,7 @@
 id: journey_testing
 title: Journey Testing
 when_to_use: Use when validating a user-facing WebAgent change in the browser — resolving the target route, exercising the workflow, and asserting the exact control, content, or state the user named.
-default_mode: discoverable
+default_mode: visible
 minimum_access: registered
 ---
 

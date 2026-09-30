@@ -1,0 +1,131 @@
+/* No arrow buttons on scrollbars — thumb-only pills (matches the app). */
+::-webkit-scrollbar-button { display: none; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body.setup-page {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  background: var(--bg-0);
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.setup-box {
+  background: var(--bg-elev);
+  border: var(--border-width) solid var(--border);
+  border-radius: 12px;
+  padding: 36px 32px;
+  width: 400px;
+  max-width: 94vw;
+  box-shadow: 0 8px 32px rgba(var(--shadow-rgb),0.5);
+}
+.setup-box h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--brand);
+}
+.setup-box p.sub {
+  font-size: 13px;
+  color: var(--fg-3);
+  margin-bottom: 6px;
+}
+.setup-box p.desc {
+  font-size: 12px;
+  color: var(--fg-3);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 6px;
+}
+.form-group input[type="text"],
+.form-group input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-0);
+  border: var(--border-width) solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-1);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-group input:focus {
+  border-color: var(--brand);
+}
+.form-group input::placeholder {
+  color: var(--fg-4);
+}
+.btn-setup {
+  width: 100%;
+  padding: 11px;
+  background: var(--brand);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg-0);            /* page-bg used as contrast ink on the brand fill */
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-top: 4px;
+}
+.btn-setup:hover {
+  background: var(--brand-strong);
+}
+.btn-setup:disabled {
+  background: var(--bg-tint);
+  color: var(--fg-3);
+  cursor: not-allowed;
+}
+.error-msg {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 12px;
+  display: none;
+}
+.success-msg {
+  color: var(--success);
+  font-size: 13px;
+  margin-top: 12px;
+  display: none;
+}
+.loading {
+  display: none;
+  color: var(--fg-3);
+  font-size: 13px;
+  margin-top: 12px;
+  text-align: center;
+}
+.security-note {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: var(--border-width) solid var(--border);
+  font-size: 11px;
+  color: var(--fg-4);
+  text-align: center;
+  line-height: 1.4;
+}
+.lock-icon {
+  display: block;
+  font-size: 28px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+.password-hint {
+  font-size: 11px;
+  color: var(--fg-4);
+  margin-top: 4px;
+}
+
+#login .setup-box { margin: auto; }
+#login .setup-box .desc { margin-bottom: 20px; }

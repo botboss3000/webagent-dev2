@@ -1,0 +1,9 @@
+{
+  "source_commit": "b821a0de5887e4e38d02dfb0f0f5fe3bcede9aff",
+  "captured_at": "2026-09-30",
+  "assets": {
+    "ui/shared/css/app1.css": "8f49e6d761516b2c9a0b93df88dd38748984eed85aa085f5f95c84132b6caecc",
+    "ui/shared/css/design-system.css": "75d86a5004a9c13b9e9e1d31592da6169cb486282de5ca11d9777c97b020ee42",
+    "ui/shared/css/index.css": "6d4026ee2007e1b73cf24dfceb0a75a79adf599f0e200984d89343224cf82513"
+  }
+}

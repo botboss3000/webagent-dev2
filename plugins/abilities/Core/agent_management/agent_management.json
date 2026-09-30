@@ -8,7 +8,7 @@
   "color": "#9ece6a",
   "description": "Lets the agent list, create, and update the user's own agents — their prompts, abilities, per-tool availability/permissions, and skills — and read, start, continue and monitor the user's sessions, including arming a session watch that reports when a turn settles. On by default; switch off to remove it platform-wide.",
   "skill_summary": "How to inspect, create, and configure the agents this user owns — their prompts, model and guardrail limits, abilities, per-tool availability/permission, and skills — and how to read, start, continue and monitor the user's sessions (list_user_sessions, kick_user_session, watch_sessions). Load before creating, editing, locking down, or diagnosing any agent, and when asked to watch, oversee, or report on sessions.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": false,
   "placeholder": false,

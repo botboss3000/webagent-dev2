@@ -7,7 +7,7 @@
   "status": "beta",
   "note": "Needs a scraper API key",
   "skill_summary": "How to extract STRUCTURED data (titles, prices, listings, tables) from a no-API or JS-heavy/bot-blocking site using the bring-your-own scraper provider — always via web_scrape_url / web_scrape_search, NEVER by looping web_search; and how to recognize and report the not_configured (no API key) state instead of hallucinating results. Load before any scrape/extract task.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "simple": false,
   "placeholder": false,
   "order": 3,

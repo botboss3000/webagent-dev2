@@ -5,7 +5,7 @@
   "color": "#7aa2f7",
   "description": "Lets the agent open a public Cloudflare quick tunnel to this machine and read back the live trycloudflare.com address. Exposes the host to the internet, so it ships OFF — grant per agent with care.",
   "skill_summary": "How to expose this machine over a public Cloudflare quick tunnel and report the address: call start_tunnel to launch it and get the URL, get_tunnel_url to re-read the current URL/status. Load when the user asks to 'start a tunnel', 'expose the app', or 'give me the public URL'.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

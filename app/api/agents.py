@@ -97,7 +97,7 @@ def _resource_http_error(exc: ResourceEntitlementError) -> HTTPException:
 
 
 # MODEL-NAME-LEVELS: the only fields a client may set on an adopted catalog row.
-_CATALOG_CLIENT_FIELDS = ("high_effort_capable",)
+_CATALOG_CLIENT_FIELDS = ("high_effort_capable", "alias_group_id")
 
 
 def catalog_account_aliases(own_config) -> dict:

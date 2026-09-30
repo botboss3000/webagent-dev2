@@ -52,6 +52,8 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
   const scaleInputId = `ac-model-analytics-y-max-${instanceId}`;
   let payload = null;
   let metric = 'tokens';
+  let interval = 'day';
+  let loadVersion = 0;
   // 'stacked' (the default) renders one bar per day whose segments are the
   // series, so the bar height is the day's total across series. 'grouped' keeps
   // the previous side-by-side bars, one per series.
@@ -86,6 +88,11 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
       <div class="ac-model-analytics-popover" id="${scaleInputId}-range" popover="auto"><label>Date range <select class="ac-input ac-input-sm" data-model-analytics-range><option value="0" selected>All available history</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label></div>
       <div class="ac-model-analytics-popover" id="${scaleInputId}-models" popover="auto"><div data-model-analytics-models></div></div>
       <div class="ac-model-analytics-popover" id="${scaleInputId}-more" popover="auto">
+        <div class="ac-model-analytics-menu-group">
+          <label>Time interval <select class="ac-input ac-input-sm" data-model-analytics-interval aria-label="Time interval"><option value="minute">Per minute</option><option value="hour">Per hour</option><option value="day" selected>Per day · history</option></select></label>
+          <span class="ac-model-analytics-menu-label">Times shown in UTC</span>
+        </div>
+        <hr class="ac-model-analytics-sep">
         <div class="ac-model-analytics-menu-group">
           <span class="ac-model-analytics-menu-label">Metric</span>
           <div class="ac-model-analytics-toggle" role="radiogroup" aria-label="Metric"><button type="button" class="ac-btn ac-btn-sm active" role="radio" aria-checked="true" data-model-analytics-metric="tokens">Tokens</button><button type="button" class="ac-btn ac-btn-sm" role="radio" aria-checked="false" data-model-analytics-metric="cost">Cost</button></div>
@@ -270,7 +277,7 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
 
   function activeDays() {
     const available = Array.isArray(payload?.days) ? payload.days : [];
-    const base = dateRange === 0 ? available : available.slice(-dateRange);
+    const base = interval !== 'day' || dateRange === 0 ? available : available.slice(-dateRange);
     if (!selectedBuckets) return { base, days: base };
     const [from, to] = selectedBuckets;
     return { base, days: base.slice(from, to + 1) };
@@ -331,7 +338,7 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
     const total = layout === 'stacked'
       ? `<div class="ac-model-analytics-tip-row ac-model-analytics-tip-total"><span>Total</span><b>${esc(formatter(series.reduce((sum, item) => sum + (Number(day?.models?.[item]?.[key]) || 0), 0)))}</b></div>`
       : '';
-    return `<div class="ac-model-analytics-tip-date">${esc(String(day?.date || ''))}</div>${rows}${note}${total}`;
+    return `<div class="ac-model-analytics-tip-date">${esc(String(day?.date || '').replace('T', ' ') + (interval === 'day' ? '' : ' UTC'))}</div>${rows}${note}${total}`;
   }
 
   function render() {
@@ -457,7 +464,7 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
     // The date labels are no longer their own click target: the axis band below
     // the plot owns both the range popover (click) and range selection (drag).
     const labels = days.map((day, index) => (index % Math.max(1, Math.ceil(days.length / 8)) === 0 || index === days.length - 1)
-      ? `<text class="ac-model-analytics-axis" x="${(L + index * xStep + xStep / 2).toFixed(1)}" y="${H - 15}" text-anchor="middle">${esc(String(day.date || '').slice(5).replace('-', '/'))}</text>` : '').join('');
+      ? `<text class="ac-model-analytics-axis" x="${(L + index * xStep + xStep / 2).toFixed(1)}" y="${H - 15}" text-anchor="middle">${esc(interval === 'day' ? String(day.date || '').slice(5).replace('-', '/') : String(day.date || '').slice(11, 16))}</text>` : '').join('');
     // Hundreds of sessions cannot be read as legend entries, so Sessions mode
     // states how many series it is charting instead. Models and agents keep the
     // legend, which is also the anchor for the per-series visibility picker.
@@ -468,7 +475,7 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
     // The reset control is a persistent header button, so render only flips its
     // visibility instead of rebuilding it inside the plot.
     if (resetButton) resetButton.hidden = !selectedBuckets;
-    chart.innerHTML = `<div class="ac-model-analytics-plot"><svg class="ac-model-analytics-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)} per day ${stacked ? `stacked by ${groupBy}` : `grouped by ${groupBy}`} over the last ${days.length} days, up to ${esc(formatter(ceiling))}"><defs><clipPath id="${scaleInputId}-plot-clip"><rect x="${L}" y="${T}" width="${plotW}" height="${plotH}"></rect></clipPath></defs>${bars}${trend}${labels}</svg><div class="ac-model-analytics-tip"></div><div class="ac-model-analytics-hover-layer" aria-hidden="true" style="left:${(L / W * 100).toFixed(3)}%;right:${(R / W * 100).toFixed(3)}%;top:${(T / H * 100).toFixed(3)}%;bottom:${(B / H * 100).toFixed(3)}%"><div class="ac-model-analytics-cross" hidden></div><div class="ac-model-analytics-node" hidden></div><div class="ac-model-analytics-tip" hidden></div><div class="ac-model-analytics-zoombox" hidden></div></div><div class="ac-model-analytics-axis-band" data-chart-popover="range" role="presentation" title="Drag across the dates to zoom; click for range options; pinch the graph to zoom both axes" style="left:${(L / W * 100).toFixed(3)}%;right:${(R / W * 100).toFixed(3)}%;top:${((T + plotH) / H * 100).toFixed(3)}%;bottom:0"></div></div>${legend}`;
+    chart.innerHTML = `<div class="ac-model-analytics-plot"><svg class="ac-model-analytics-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)} per ${interval} ${stacked ? `stacked by ${groupBy}` : `grouped by ${groupBy}`} over ${days.length} ${interval} buckets (UTC), up to ${esc(formatter(ceiling))}"><defs><clipPath id="${scaleInputId}-plot-clip"><rect x="${L}" y="${T}" width="${plotW}" height="${plotH}"></rect></clipPath></defs>${bars}${trend}${labels}</svg><div class="ac-model-analytics-tip"></div><div class="ac-model-analytics-hover-layer" aria-hidden="true" style="left:${(L / W * 100).toFixed(3)}%;right:${(R / W * 100).toFixed(3)}%;top:${(T / H * 100).toFixed(3)}%;bottom:${(B / H * 100).toFixed(3)}%"><div class="ac-model-analytics-cross" hidden></div><div class="ac-model-analytics-node" hidden></div><div class="ac-model-analytics-tip" hidden></div><div class="ac-model-analytics-zoombox" hidden></div></div><div class="ac-model-analytics-axis-band" data-chart-popover="range" role="presentation" title="Drag across the dates to zoom; click for range options; pinch the graph to zoom both axes" style="left:${(L / W * 100).toFixed(3)}%;right:${(R / W * 100).toFixed(3)}%;top:${((T + plotH) / H * 100).toFixed(3)}%;bottom:0"></div></div>${legend}`;
     geometry = { L, R, T, B, W, H, plotW, plotH, n: days.length, days, base, series, key, formatter, trendLines };
     // TIP-PINNED-PANEL: the panel starts on the RANGE summary and swaps to a day's
     // breakdown only while the pointer is focused on one. Re-rendering (zoom, metric,
@@ -498,19 +505,22 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
   }
 
   async function reload() {
-    chart.innerHTML = '';
+    const version = ++loadVersion;
+    chart.innerHTML = '<p class="ac-model-analytics-empty">Loading usage…</p>';
     try {
       const analyticsGroupBy = nestedAgentStacks && groupBy === 'models' ? 'agent_models' : groupBy;
-      const params = new URLSearchParams({ days: String(dateRange), scope, group_by: analyticsGroupBy });
+      const params = new URLSearchParams({ days: String(dateRange), scope, interval, group_by: analyticsGroupBy });
       if (agentId) params.set('agent_id', agentId);
       const response = await fetchFn(apiPath(`/admin/settings/model-usage-analytics?${params.toString()}`));
       const data = response.ok ? await response.json() : null;
       if (!data || data.error) throw new Error(data?.error || `HTTP ${response.status}`);
+      if (version !== loadVersion) return;
       payload = data;
       selectedBuckets = null;
       renderModelPicker();
       render();
     } catch (_) {
+      if (version !== loadVersion) return;
       payload = null;
       geometry = null;
       chart.innerHTML = '<p class="ac-model-analytics-empty">Usage data is unavailable right now.</p>';
@@ -813,6 +823,12 @@ export function initModelAnalytics(host, { fetchFn, apiPath, scope = 'global', a
   stackedCheckbox?.addEventListener('change', () => {
     layout = stackedCheckbox.checked ? 'stacked' : 'grouped';
     render();
+  });
+
+  host.querySelector('[data-model-analytics-interval]').addEventListener('change', event => {
+    interval = event.target.value;
+    selectedBuckets = null;
+    reload();
   });
 
   groupButtons.forEach(button => button.addEventListener('click', () => {

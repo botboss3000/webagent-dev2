@@ -3,6 +3,7 @@ import {apiPath} from '../../shared/js/config.js';
 import {authHeaders, isAdmin} from '../../shared/js/left-login.js?v=253';
 import {chatUiFlag} from '../../shared/js/app-prompts.js';
 import {activityGroups, watchActivity} from './activity.js';
+import {createTranscriptRow, patchTranscriptRow, mountTranscript} from './activity-transcript.js';
 
 let session=null, stop=null, journal=null, publicState=null, container=null, error='';
 const nodes=new Map();
@@ -16,19 +17,10 @@ function textNode(tag, text, className='') {
   const node=document.createElement(tag);node.className=className;node.textContent=text;
   return node;
 }
-function detailsFor(row) {
-  const detail=document.createElement('details');
-  detail.className='v2-activity-row';detail.dataset.category=row.category;
-  detail.appendChild(textNode('summary',row.label));
-  if(row.text) detail.appendChild(textNode('p',row.text));
-  // Full payloads stay behind an explicit diagnostic disclosure, never become
-  // public message bubbles and never run HTML supplied by an execution event.
-  detail.appendChild(textNode('pre',JSON.stringify(row.events.map(e=>({
-    kind:e.kind,time:e.created_at,payload:e.payload})),null,2)));
-  return detail;
-}
 function updateRows(node,group) {
-  const body=node.querySelector('.v2-activity-body');
+  const viewport=node.querySelector('.v2-activity-body');
+  if(!node._transcript) node._transcript=mountTranscript(viewport);
+  const body=node._transcript.rows;
   const signature=JSON.stringify(group.events);
   if(body.dataset.signature===signature) return;
   body.dataset.signature=signature;
@@ -36,17 +28,8 @@ function updateRows(node,group) {
   const wanted=[];
   for(const row of group.rows) {
     let detail=existing.get(row.id);
-    if(!detail) {detail=detailsFor(row);detail.dataset.rowId=row.id;}
-    const rowSignature=JSON.stringify(row.events);
-    if(detail.dataset.signature!==rowSignature) {
-      detail.dataset.signature=rowSignature;
-      // Keep the focused disclosure and its open state as results arrive.
-      detail.firstElementChild.textContent=row.label;
-      for(const child of [...detail.children].slice(1)) child.remove();
-      if(row.text) detail.appendChild(textNode('p',row.text));
-      detail.appendChild(textNode('pre',JSON.stringify(row.events.map(e=>({
-        kind:e.kind,time:e.created_at,payload:e.payload})),null,2)));
-    }
+    if(!detail) {detail=createTranscriptRow(row);detail.dataset.rowId=row.id;}
+    patchTranscriptRow(detail,row);
     detail.dataset.category=row.category;wanted.push(detail);
   }
   let raw=existing.get('raw');
@@ -68,6 +51,7 @@ function updateRows(node,group) {
     if(child!==before) body.insertBefore(child,before);
     before=child.nextSibling;
   }
+  node._transcript.update();
 }
 function paint() {
   if(!journal || !publicState || !container || session!==app.currentSessionId) return;
@@ -101,12 +85,12 @@ function paint() {
     if(anchor.nextSibling!==node) container.insertBefore(node,anchor.nextSibling);
     tails.set(group.boundary_item_id,node);
   }
-  for(const [id,node] of nodes) if(!keep.has(id)) {node.remove();nodes.delete(id);}
+  for(const [id,node] of nodes) if(!keep.has(id)) {node._transcript?.dispose();node.remove();nodes.delete(id);}
   app._reLandAnchor?.();
 }
 export function disconnectActivity() {
   stop?.();stop=null;
-  for(const node of nodes.values()) node.remove();
+  for(const node of nodes.values()) {node._transcript?.dispose();node.remove();}
   nodes.clear();session=null;journal=null;publicState=null;container=null;error='';
 }
 export function renderActivity(state,target) {

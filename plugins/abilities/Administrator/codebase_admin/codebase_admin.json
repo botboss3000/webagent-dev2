@@ -5,7 +5,7 @@
   "color": "#bb9af7",
   "description": "Lets the agent read, write, edit, delete files, and run shell commands on the host. No credentials.",
   "skill_summary": "How to find your way around the WebAgent repository and leave it better than you found it — read CLAUDE.md first, explore by comments, mirror the shared-design consistency markers, follow strict-mode JS discipline, and use the directory signpost map. Load before any task that reads, edits, or extends this repo's source.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

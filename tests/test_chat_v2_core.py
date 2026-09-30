@@ -190,9 +190,12 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
                 await control_voice("s",pause,None)
             self.assertEqual(caught.exception.status_code,409)
             stop=VoiceControl(action="stop",idempotency_key="12345678")
-            result=await control_voice("s",stop,None)
-        self.assertFalse(result["stopped"])
-        cancel.assert_called_once_with("alice","s")
+            idle=await control_voice("s",stop,None)
+            await self.start(cmid="voice-active")
+            active=await control_voice("s",stop,None)
+        self.assertIs(idle["stopped"],False)
+        self.assertIs(active["stopped"],True)
+        self.assertEqual(cancel.call_count,2)
 
     async def test_row_details_returns_every_column_and_exact_plaintext(self):
         from unittest.mock import AsyncMock, patch
@@ -485,6 +488,65 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         item=(await self.repo.snapshot("s"))["items"][-1]
         self.assertIn("unconfirmed tool result",item["payload"]["text"])
 
+    async def test_auto_recovery_handles_expired_lease_and_unfinished_execution(self):
+        from app.chat.runtime import Execution, _settle_execution
+        run,g=await self.start()
+        with self.repo.transaction() as conn:
+            conn.execute("UPDATE chat_runs SET lease_until=0 WHERE id=?",(run,))
+        await self.repo.recover_expired()
+        resumed=await self.repo.resume_interrupted()
+        self.assertEqual(len(resumed),1)
+        g=self.repo.claim(resumed[0],"next")
+        await self.repo.consume(resumed[0],g)
+        await _settle_execution(Execution(self.repo,resumed[0],g))
+        self.assertEqual(len(await self.repo.resume_interrupted()),1)
+
+    async def test_auto_recovery_supervisor_schedules_real_continuation(self):
+        from unittest.mock import AsyncMock, patch
+        from types import SimpleNamespace
+        from app.chat.recovery import recover_once
+        run,g=await self.start()
+        with patch("app.chat.recovery.get_app_db",return_value=SimpleNamespace(list_user_accounts=AsyncMock(return_value=[{"user_id":"alice"}]))), patch("app.chat.recovery.ChatRepository",return_value=self.repo), patch("app.chat.runtime.schedule") as schedule:
+            await recover_once(startup=True)
+        schedule.assert_called_once_with("alice",self.repo.pending_runs()[0])
+    async def test_auto_recovery_resumes_restart_once_without_replaying_input(self):
+        run,g=await self.start(text="Do the original work")
+        await self.repo.recover_orphaned()
+        resumed=await self.repo.resume_interrupted()
+        self.assertEqual(len(resumed),1)
+        self.assertEqual(await self.repo.resume_interrupted(),[])
+        child=await self.repo.run(resumed[0])
+        self.assertEqual(child["parent_run_id"],run)
+        rows=await self.repo.consume(child["id"],self.repo.claim(child["id"],"next"))
+        self.assertIn("recorded history",rows[0]["text"])
+        self.assertNotIn("Do the original work",rows[0]["text"])
+
+    async def test_auto_recovery_does_not_override_newer_user_work(self):
+        await self.start()
+        await self.repo.recover_orphaned()
+        await self.repo.accept("s","alice",Send(client_message_id="new",text="New direction"),self.policy)
+        self.assertEqual(await self.repo.resume_interrupted(),[])
+
+    async def test_auto_recovery_blocks_unknown_tool_effects_and_user_stop(self):
+        run,g=await self.start()
+        await self.repo.journal(run,g,"tool_call",{"tool_call_id":"unknown","tool":"write"})
+        await self.repo.recover_orphaned()
+        self.assertEqual(await self.repo.resume_interrupted(),[])
+        receipt=await self.repo.accept("s","alice",Send(client_message_id="stop",text="Continue"),self.policy)
+        await self.repo.stop("s")
+        self.assertEqual(await self.repo.resume_interrupted(),[])
+
+    async def test_auto_recovery_is_bounded_across_repeated_restarts(self):
+        await self.start()
+        for attempt in range(3):
+            await self.repo.recover_orphaned()
+            resumed=await self.repo.resume_interrupted()
+            self.assertEqual(len(resumed),1)
+            g=self.repo.claim(resumed[0],"next")
+            await self.repo.consume(resumed[0],g)
+        await self.repo.recover_orphaned()
+        self.assertEqual(await self.repo.resume_interrupted(),[])
+
     async def test_confirmed_tool_result_is_eligible_for_recovery(self):
         run,g=await self.start()
         await self.repo.journal(run,g,"tool_call",{
@@ -676,6 +738,7 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
         app_db=SimpleNamespace(list_user_accounts=AsyncMock(return_value=[{"user_id":"alice"}]))
         repo=SimpleNamespace(
             recover_orphaned=AsyncMock(side_effect=lambda: order.append("recover") or ["run"]),
+            resume_interrupted=AsyncMock(return_value=[]),
             pending_runs=lambda: ["run"],
         )
         schedule=Mock(side_effect=lambda owner,run: order.append("schedule"))

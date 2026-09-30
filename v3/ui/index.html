@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
+<title>WebAgent</title>
+<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/vendor/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/shared/css/app1.css">
+<link rel="stylesheet" href="/ui/shared/css/app2.css">
+<link rel="stylesheet" href="/ui/shared/css/app3.css">
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<link rel="stylesheet" href="/ui/shared/css/index.css">
+<link rel="stylesheet" href="/ui/main-panel/agents/agents.css">
+<link rel="stylesheet" href="/v3-ui/app.css">
+<script type="module" src="/v3-ui/app.js"></script>
+</head>
+<body>
+<div id="notice" role="status" aria-live="polite"></div>
+<section id="login" hidden><div class="setup-box">
+  <div class="lock-icon">🔐</div><h1>Sign in</h1><p class="sub">Sign in to WebAgent.</p>
+  <form id="login-form" autocomplete="off">
+    <div class="form-group"><label for="login-username">Login Username</label><input id="login-username" name="username" autocomplete="username" required></div>
+    <div class="form-group"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+    <button class="btn-setup">Sign in</button>
+  </form>
+</div></section>
+<div id="app" hidden>
+  <div id="main-header">
+    <select id="main-tab-select" hidden aria-hidden="true"><option value="agents">Agents</option></select>
+    <div id="main-tabs-wrap"><div id="main-tabs" role="tablist">
+      <button class="main-tab active" id="tab-button-agents" type="button" role="tab" aria-selected="true">Agents</button>
+    </div></div>
+    <div class="v3-header-actions">
+      <button id="theme" type="button" title="Switch theme">Light / dark</button>
+      <button id="shutoff" type="button">Shut off execution</button>
+      <button id="logout" type="button">Sign out</button>
+    </div>
+  </div>
+  <div id="stage">
+    <div id="main-panel">
+      <div id="tab-agents" class="tab-content active">
+        <div id="agents-grid" class="agents-phantom"></div>
+      </div>
+    </div>
+    <div id="chat-resize-handle" aria-hidden="true"></div>
+    <div id="chat-panel" class="chat-surface">
+      <div id="chat-header">
+        <span class="chat-header-name-row"><span id="chat-header-agent-name" class="chat-header-agent-name">WebAgent</span></span>
+        <div class="session-dropdown"><label for="sessions" class="sr-only">Conversation</label><select id="sessions" class="session-dropdown-trigger"></select></div>
+        <button id="new" class="session-new-header-btn" type="button" title="New session" aria-label="New session">+</button>
+      </div>
+      <div id="chat-messages"><div id="chat-messages-inner"></div></div>
+      <div id="runs" aria-live="polite"></div>
+      <form id="composer"><div id="chat-input-area">
+        <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
+          <div class="chat-pill-layout-rows">
+            <div class="chat-pill-layout-row" data-pill-row="0"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" spellcheck="true"></textarea></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div></div>
+            <div class="chat-pill-layout-row" data-pill-row="1"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><span id="run-status">Ready</span></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"><div class="chat-pill-buttons"><button id="stop" class="chat-pill-stop" type="button" hidden title="Stop generation" aria-label="Stop generation">■</button><button id="send" class="chat-pill-send" title="Send message" aria-label="Send message">↑</button></div></div></div>
+          </div>
+        </div>
+      </div></form>
+    </div>
+  </div>
+</div>
+</body></html>

@@ -5,7 +5,7 @@
   "color": "#f7768e",
   "description": "Lets the agent open and drive interactive terminal programs (REPLs, CLIs) — effectively shell access, so grant per agent with care.",
   "skill_summary": "How to drive interactive, keystroke-driven terminal programs (coding agents, REPLs, SSH, TUI installers) with the open→read→send→wait→read loop. Load when you must operate a program that takes over the terminal; for one-shot non-interactive commands use run_command instead.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": true,
   "placeholder": false,

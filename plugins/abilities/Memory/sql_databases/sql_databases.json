@@ -5,7 +5,7 @@
   "color": "#7dcfff",
   "description": "Connect read-only business databases so the agent can inspect approved schemas, answer questions with live SQL, and recall relevant records before a turn.",
   "skill_summary": "How to inspect and safely query connected SQL knowledge sources, distinguish live database facts from durable memory, and cite the connection, table, and row behind an answer.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "PostgreSQL is available now. MySQL/MariaDB and SQL Server will join this same ability when their adapters are implemented. This does not configure WebAgent's own application database.",
   "simple": false,
   "placeholder": false,

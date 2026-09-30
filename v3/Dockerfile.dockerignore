@@ -1,0 +1,17 @@
+**
+!v3/
+!v3/Cargo.toml
+!v3/Cargo.lock
+!v3/src/
+!v3/src/**
+!v3/worker.py
+!v3/launch.py
+!v3/ui/
+!v3/ui/**
+!v3/ui-baseline.json
+!ui/
+!ui/shared/
+!ui/shared/css/
+!ui/shared/css/app1.css
+!ui/shared/css/design-system.css
+!ui/shared/css/index.css

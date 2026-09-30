@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 TOOL_SCHEMAS: dict = {}
 DESTRUCTIVE: set = set()
 
-DEFAULT_SCOPE = ("ui", "app")
+DEFAULT_SCOPE = ("ui", "app", "v3/ui")
 SOURCE_SUFFIXES = {".js", ".mjs", ".cjs", ".css", ".html", ".json", ".py"}
 EXCLUDED_PARTS = {"data", "docs", "vendor", "node_modules", ".git", "backups", "__pycache__"}
 EXCLUDED_SUFFIXES = {".bak", ".orig", ".pyc", ".disabled"}

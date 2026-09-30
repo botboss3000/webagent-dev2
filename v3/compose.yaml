@@ -1,0 +1,24 @@
+services:
+  app:
+    container_name: webagent-dev-v3
+    image: webagent-dev-v3:local
+    build:
+      context: ..
+      dockerfile: v3/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    ports:
+      - "100.112.23.15:8081:8080"
+    volumes:
+      - ./data:/state
+      - ./workspaces:/workspaces
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m
+      - /tmp:rw,nosuid,nodev,size=32m
+    stop_grace_period: 15s

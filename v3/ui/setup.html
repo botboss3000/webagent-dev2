@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Setup</title>
+<link rel="stylesheet" href="/ui/shared/css/design-system.css">
+<link rel="stylesheet" href="/v3-ui/setup.css">
+<script defer src="/v3-ui/setup.js"></script>
+</head>
+<body class="setup-page">
+<div class="setup-box">
+  <div class="lock-icon">🔐</div>
+  <h1>Welcome to WebAgent</h1>
+  <p class="sub">Create your admin account</p>
+  <p class="desc">This is your first time running the app. Set up a strong password to secure your admin account.</p>
+  <form id="setup-form" autocomplete="off">
+    <div class="form-group">
+      <label for="username">Login Username</label>
+      <input type="text" id="username" value="admin" autocomplete="username" required>
+      <div class="password-hint">The name you'll sign in with. Leave as <code>admin</code> or pick your own.</div>
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="At least 6 characters" autocomplete="new-password" required>
+    </div>
+    <div class="form-group">
+      <label for="confirm-password">Confirm Password</label>
+      <input type="password" id="confirm-password" placeholder="Repeat your password" autocomplete="new-password" required>
+    </div>
+    <button type="submit" class="btn-setup" id="setup-btn">Complete Setup</button>
+    <div class="error-msg" id="error-msg" role="alert"></div>
+    <div class="success-msg" id="success-msg">Account created! Redirecting…</div>
+    <div class="loading" id="loading">Setting up your admin account…</div>
+  </form>
+  <div class="security-note">This page appears only until the first v3 admin account is created. After setup, sign in with the username and password you chose.</div>
+</div>
+</body>
+</html>

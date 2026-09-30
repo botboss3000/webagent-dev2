@@ -9,7 +9,7 @@
   "description": "Connect to named external devices over SSH, run commands, and manage process-lifetime remote jobs without granting access to this WebAgent host.",
   "status": "beta",
   "skill_summary": "How to add a named SSH device through the secure fingerprint-confirmation card, run bounded commands, manage background SSH jobs, and combine SSH Control with Automation for recurring monitoring. Load before any SSH or remote-server task.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": "External devices only",
   "simple": false,
   "placeholder": false,

@@ -8,7 +8,7 @@
   "color": "#bb9af7",
   "description": "Lets the agent generate images from text prompts. Requires a provider + model config.",
   "skill_summary": "How to create images with generate_image (it delegates to the admin's image-output model even when your own model can't draw), iterate on prompts to refine a result, and — if the Model Switcher ability is enabled — optionally set_model onto a text+image-output model for an image-heavy stretch. Load when the user wants an image made.",
-  "skill_mode": "selectable",
+  "skill_mode": "always_on",
   "note": null,
   "simple": false,
   "placeholder": false,

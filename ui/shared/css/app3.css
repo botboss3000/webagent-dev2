@@ -1452,9 +1452,9 @@ details.ac-card:not([open]) > *:not(summary) { display: none; }
 .ac-model-analytics-check input { margin: 0; }
 /* Sessions mode replaces the legend with a count, not a list of 155 names. */
 .ac-model-analytics-legend-count { display: block; color: var(--fg-2); font-size: 12px; font-weight: 650; }
-/* Best-fit trend line over the bar tops. Dashed so it reads as an overlay rather
-   than another bar, and pointer-transparent so it never blocks hover or drag. */
-.ac-model-analytics-trend { fill: none; stroke-width: 2; stroke-dasharray: 6 4; stroke-linecap: round; pointer-events: none; }
+/* Keep the trend path available for hover-node geometry, but hide its bar-top
+   overlay. Opacity preserves SVG length measurements used by the glowing node. */
+.ac-model-analytics-trend { opacity: 0; fill: none; stroke-width: 2; stroke-dasharray: 6 4; stroke-linecap: round; pointer-events: none; }
 /* The sessions tooltip is deliberately capped, so say so instead of looking cut off. */
 .ac-model-analytics-tip-note { margin-top: 4px; padding-top: 4px; border-top: var(--border-width) solid var(--border); color: var(--fg-3); font-size: 11px; font-weight: 650; }
 .ac-model-analytics-empty { margin: 13px 0; font-size: 12px; color: var(--fg-3); }
@@ -2651,7 +2651,8 @@ body.light-mode .ac-saved-roles-popover {
    the left and the END of the name (the distinguishing version suffix) stays
    visible. `text-align: left` keeps a SHORT (non-truncated) name flush-left,
    sitting directly above the provider line rather than pushed to the right edge.
-   The name itself is strong-LTR text, so it still reads left-to-right. */
+   The inner bdi[dir=ltr] isolates the name so leading numbers and hyphens
+   retain their entered order; only this outer clipping box uses RTL. */
 .ac-saved-model-name {
   display: flex;
   align-items: center;

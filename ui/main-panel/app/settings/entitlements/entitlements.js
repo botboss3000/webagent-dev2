@@ -7,7 +7,7 @@ import { _fetch, _esc, _fmtDate } from '../utils.js';
 let PAGES = ['agents', 'automations', 'browser', 'genui', 'instances', 'wiki', 'admin-tools'];
 let FEATURES = ['chat', 'agent_create', 'agent_clone', 'automations', 'connectors', 'model_picker', 'image_input', 'image_generation', 'voice_llm', 'attachments', 'genui', 'user_byod', 'llm_byo'];
 let ABILITIES = ['chat_core', 'memory', 'user_files', 'web_read', 'browser_control', 'ssh_control', 'image_vision', 'image_generation', 'model_switching', 'automation', 'agent_orchestration', 'personal_integrations', 'financial_actions', 'developer_write', 'tool_creation', 'platform_admin', 'platform_infra'];
-let EFFORTS = ['default', 'low', 'medium', 'high'];
+let EFFORTS = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 let LIMITS = [
   ['max_agents', 'Agents', 'maximum owned agents'],
   ['max_automations', 'Automations', 'maximum active automations'],

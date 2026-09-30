@@ -2708,6 +2708,13 @@ async def run_output_closer(
             return
         _perf.mark("summary_persisted", row_id=row_id, write_attempts=attempt)
 
+        # V2 projection is idempotent across the live hook and recovery sweep.
+        try:
+            from app.chat.repository import ChatRepository
+            await ChatRepository(user_id).publish_closer_summary(session_id,row_id,summary)
+        except Exception as exc:
+            logger.debug("output closer: public projection failed: %s", exc)
+
         # The visible summary is already durable.  Materialize its structured
         # continuation contract independently; failures are intentionally
         # best-effort and never alter or remove the Closer lane.

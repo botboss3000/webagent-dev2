@@ -491,6 +491,7 @@ async function _buildAbilityBody(conn, { agent, canEdit, abilitiesByProvider, on
   const _msgFor = (kind, mode) => {
     const disc = mode === 'discoverable';
     if (kind === 'ability') return disc ? 'This ability is discoverable to the agent.' : 'This ability is always visible to the agent.';
+    if (kind === 'skill' && mode === 'off') return 'This skill is off and unavailable to the agent.';
     if (kind === 'skill')   return disc ? 'This skill is discoverable to the agent.' : 'This skill is visible to the agent.';
     return disc ? 'This tool is discoverable to the agent.' : 'This tool is visible to the agent.';
   };
@@ -516,7 +517,7 @@ async function _buildAbilityBody(conn, { agent, canEdit, abilitiesByProvider, on
   el.appendChild(infoEl);
   el._setVisInfo = _setVisInfo;  // header eye toggle calls this on change
 
-  // ── Skill row (if the ability ships a how-to skill) — eye toggle + view ────
+  // ── Skill row — availability picker + expandable instructions ────
   // Built here, but PLACED by the unified settings + tools list below: the skill
   // leads that list as its first row so it reads exactly like a tool row (name
   // heading, description below, controls in the shared right-aligned slot) and
@@ -531,34 +532,44 @@ async function _buildAbilityBody(conn, { agent, canEdit, abilitiesByProvider, on
     let skillRow = null;
     let skillBody = null;
 
-    const skillEye = _buildEyeToggle({
-      value: generalSkill.mode === 'visible' ? 'visible' : 'discoverable',
-      canEdit,
-      onChange: async (mode) => {
-        const res = await fetch(`/api/v1/agents/${agent.id}/abilities/${encodeURIComponent(abilityId)}/skill-visibility?skill_id=${encodeURIComponent(generalSkill.skill_id)}`, {
-        method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ user_id: userId, mode }),
-        });
-        if (!res.ok) throw new Error('save failed');
-        generalSkill.mode = mode;
-        _setVisInfo('skill', mode);
-        el.dispatchEvent(new CustomEvent('agent-capability-change', { bubbles: true }));
+    let skillMode = generalSkill.mode || 'discoverable';
+    const skillCtrl = document.createElement('label');
+    skillCtrl.className = 'conn-toggle-wrap ac-ability-toggle-wrap';
+    skillCtrl.innerHTML = `<input type="checkbox" class="conn-toggle" ${skillMode !== 'off' ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span class="conn-toggle-track"></span>`;
+    const skillToggle = skillCtrl.querySelector('input');
+    const syncSkill = () => {
+      skillToggle.checked = skillMode !== 'off';
+      skillToggle.setAttribute('aria-label', `Skill availability: ${skillMode}. Choose availability.`);
+      skillToggle.setAttribute('aria-haspopup', 'true');
+    };
+    const skillMenu = _buildMoreButton(() => ['off', 'discoverable', 'visible'].map(mode => ({
+      icon: mode === 'off' ? 'eye-off' : mode === 'visible' ? 'eye' : 'download',
+      label: mode.charAt(0).toUpperCase() + mode.slice(1), checked: skillMode === mode, disabled: !canEdit,
+      action: async () => {
+        _markSaving(skillCtrl);
+        try {
+          const res = await fetch(`/api/v1/agents/${agent.id}/abilities/${encodeURIComponent(abilityId)}/skill-visibility?skill_id=${encodeURIComponent(generalSkill.skill_id)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ user_id: userId, mode }),
+          });
+          if (!res.ok) throw new Error('save failed');
+          skillMode = generalSkill.mode = mode;
+          syncSkill();
+          _setVisInfo('skill', mode);
+          el.dispatchEvent(new CustomEvent('agent-capability-change', { bubbles: true }));
+          _flashSaveCheck(skillCtrl, true);
+        } catch (_) { syncSkill(); _flashSaveCheck(skillCtrl, false); }
       },
-      titleVisible: "Visible — the skill's full how-to is in the agent's prompt every turn",
-      titleDiscoverable: 'Discoverable — the agent loads the skill on demand',
+    })), { title: 'Choose skill availability' });
+    skillMenu.classList.add('ac-ability-more-anchor');
+    skillCtrl.appendChild(skillMenu);
+    syncSkill();
+    skillToggle.addEventListener('click', event => {
+      event.preventDefault(); event.stopPropagation();
+      const rect = skillToggle.getBoundingClientRect();
+      skillMenu._floatingMenuAnchorPoint = { x: event.clientX || rect.right, y: event.clientY || rect.top + rect.height / 2 };
+      skillMenu.click();
     });
-
-    const viewBtn = document.createElement('button');
-    viewBtn.type = 'button';
-    viewBtn.className = 'agents-btn';
-    viewBtn.style.cssText = 'font-size:10px;padding:2px 8px;flex-shrink:0;';
-    viewBtn.textContent = 'View';
-
-    // Eye on the far right so it lines up with the tool + ability eyes.
-    const skillCtrl = document.createElement('span');
-    skillCtrl.style.cssText = 'display:flex;align-items:center;gap:8px;';
-    skillCtrl.append(viewBtn, skillEye);
 
     // "Skill" is the row HEADING and the skill text drops to its own line below it,
     // exactly like a tool row's name + description (shared buildConfigRow).
@@ -572,11 +583,17 @@ async function _buildAbilityBody(conn, { agent, canEdit, abilitiesByProvider, on
     skillBody = document.createElement('div');
     skillBody.style.cssText = 'display:none;';
     let _skillLoaded = false;
-    viewBtn.addEventListener('click', async (e) => {
+    skillRow.classList.add('conn-card-header-clickable');
+    const skillChevron = document.createElement('span');
+    skillChevron.className = 'ac-row-chevron ac-row-chevron--left';
+    skillChevron.innerHTML = _chevronSvg();
+    skillRow.insertBefore(skillChevron, skillRow.firstChild);
+    skillRow.addEventListener('click', async (e) => {
+      if (e.target.closest('.conn-toggle-wrap, button')) return;
       e.stopPropagation();
       const open = skillBody.style.display === 'none';
       skillBody.style.display = open ? 'block' : 'none';
-      viewBtn.textContent = open ? 'Hide' : 'View';
+      skillChevron.style.transform = open ? 'rotate(90deg)' : '';
       if (open && !_skillLoaded) {
         _skillLoaded = true;
         skillBody.innerHTML = '<div style="font-size:11px;color:var(--fg-3);">Loading…</div>';

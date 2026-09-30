@@ -28,6 +28,7 @@ import { randomUUID } from '../../../shared/js/uuid.js';
 import { initGenuiToolbar } from './genui-toolbar.js';
 import { createChatWidget } from '../../../chat-widget/js/chat-widget.js';
 import { createChatLauncher } from '../../../chat-widget/js/chat-launcher.js';
+import * as controlledChat from '../../../chat/core/client.js';
 import { icon } from '../../../shared/js/icons.js';
 import { advanceDeleteBtn, resetDeleteBtn } from '../../../shared/js/delete-control.js';
 import { enableWakeLock, disableWakeLock } from '../../../shared/js/screen-wake.js';
@@ -694,24 +695,25 @@ async function handoffToWebagent(taggedPrompt, opts) {
       await app.startWebagentSession();
     }
   }
-  // Silent dispatch or no chat-panel DOM: send directly via POST without
-  // touching app.chatInput / app.chatSend (avoids auto-opening the panel).
+  // Silent dispatch or no chat-panel DOM: queue through the controlled chat
+  // client without opening the panel.
   if (silent || !app.chatInput || !app.chatSend) {
     try {
-      const body = {
-        message: taggedPrompt,
-        session_id: app.currentSessionId || '',
-        user_id: app.currentUserId,
-        agent_id: app.currentAgentId,
-      };
-      if (genuiLabel) body.genui_label = genuiLabel;
-      await fetch(apiPath('/api/v1/chat/send'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(body),
-      });
-      // Name the session if the page called api.nameSession() beforehand
       const sid = app.currentSessionId;
+      if (!sid || !app.currentAgentId) throw new Error('No active Gen UI chat session');
+      await controlledChat.initialize(app.currentUserId);
+      await controlledChat.command('/sessions', {
+        id: sid, agent_id: app.currentAgentId,
+        title: (app._genuiSessionTitle || 'New Session').slice(0, 120),
+      });
+      await controlledChat.queueMessage(sid, app.currentAgentId, {
+        client_message_id: randomUUID(),
+        text: taggedPrompt,
+        ...(genuiLabel ? { display_text: genuiLabel } : {}),
+        execution_mode: app.executionMode || 'ask',
+      });
+      void controlledChat.drainOutbox().catch(() => {});
+      // Name the session if the page called api.nameSession() beforehand
       const title = app._genuiSessionTitle;
       if (sid && title) {
         app._genuiSessionTitle = null;

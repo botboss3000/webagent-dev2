@@ -87,7 +87,7 @@ AGENT_ABILITY_MODES_KEY = "ability_modes"
 AGENT_DISCOVERY_DEFAULT_KEY = "discovery_default"
 
 # Key under which the per-agent ability-SKILL visibility map lives in
-# agents.metadata ({ability_id: "visible"|"discoverable"}). Lets an agent make a
+# agents.metadata ({skill_key: "off"|"visible"|"discoverable"}). Lets an agent make a
 # bundled skill's body always-shown (visible) or load-on-demand (discoverable),
 # independent of the ability's own visibility.
 AGENT_SKILL_MODES_KEY = "skill_modes"
@@ -242,6 +242,13 @@ def resolve_ability_mode(ability_id: str, modes_map: Optional[Dict[str, str]],
     return normalize_visibility(default) or VISIBLE
 
 
+def normalize_skill_mode(value, default=None):
+    """Skill-only availability; Off must never become discoverable."""
+    if isinstance(value, str) and value.strip().lower() == "off":
+        return "off"
+    return normalize_visibility(value, default)
+
+
 def resolve_skill_mode(skill_key: str, modes_map: Optional[Dict[str, str]],
                        default: Optional[str] = None) -> str:
     """Resolve one bundled general skill's visibility.
@@ -251,14 +258,14 @@ def resolve_skill_mode(skill_key: str, modes_map: Optional[Dict[str, str]],
     retain their saved choice without migration.
     """
     modes = modes_map or {}
-    explicit = normalize_visibility(modes.get(skill_key))
+    explicit = normalize_skill_mode(modes.get(skill_key))
     if not explicit and ":" in skill_key:
         ability_id, skill_id = skill_key.split(":", 1)
         if skill_id == "core":
-            explicit = normalize_visibility(modes.get(ability_id))
+            explicit = normalize_skill_mode(modes.get(ability_id))
     if explicit:
         return explicit
-    return normalize_visibility(default) or DISCOVERABLE
+    return normalize_skill_mode(default) or DISCOVERABLE
 
 
 def ability_is_revealed(ability_id: str, modes_map: Optional[Dict[str, str]],

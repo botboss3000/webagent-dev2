@@ -92,7 +92,8 @@ def _skill_from_ability_record(record: dict, ability_id: str, ability_display: s
 
 
 def ability_skill_payload(ability_id: str,
-                          visible_tools: Optional[List[str]] = None) -> Dict[str, Any]:
+                          visible_tools: Optional[List[str]] = None,
+                          skill_modes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """An ability's skill split into its two layers, ready to hand to the model.
 
     ``body`` is the root ability-level lead. ``deferred`` is the concatenated
@@ -117,6 +118,9 @@ def ability_skill_payload(ability_id: str,
         out["body"] = (sk.get("body") or "").strip()
         out["handle"] = sk.get("handle")
         out["summary"] = sk.get("description") or ""
+        from app.tools.tool_modes import resolve_skill_mode
+        if resolve_skill_mode(f"{ability_id}:core", skill_modes, sk.get("mode")) == "off":
+            out.update(body="", handle=None, summary="")
         sections = sk.get("tool_sections") or {}
         if sections and visible_tools:
             out["deferred"] = "\n\n".join(
@@ -327,7 +331,14 @@ async def collect_ability_skills(agent_id: str, user_id: Optional[str] = None) -
         except Exception as e:
             logger.debug("virtual-ability skill collection failed: %s", e)
 
-        return out
+        from app.db import get_db
+        from app.tools.tool_modes import resolve_skill_mode
+        modes = await get_db().get_agent_skill_modes(agent_id)
+        for skill in out:
+            if skill.get("ability_id"):
+                skill["mode"] = resolve_skill_mode(
+                    skill.get("skill_key") or skill["ability_id"], modes, skill.get("mode"))
+        return [skill for skill in out if skill.get("mode") != "off"]
     except Exception as e:
         logger.debug("collect_ability_skills failed: %s", e)
         return out

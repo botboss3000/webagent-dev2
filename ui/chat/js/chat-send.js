@@ -665,92 +665,25 @@ async function _retryEntry(entry, manual = false) {
       }
       return true;
     }
-    const payload = {
-      message: entry.text,
-      session_id: entry.session_id || app.currentSessionId,
-      user_id: entry.user_id || app.currentUserId,
+    const sessionId = entry.session_id || app.currentSessionId;
+    const agentId = entry.agent_id || app.currentAgentId;
+    const message = {
+      client_message_id: entry.id,
+      text: entry.text,
       execution_mode: entry.execution_mode || app.executionMode || 'ask',
-      // Idempotency key: the outbox entry id rides along on every retry so the
-      // server can recognise a re-send of an already-accepted message and skip
-      // the duplicate insert / second run (see app/api/chat.py _find_interaction_by_cmid).
-      client_msg_id: entry.id,
     };
-    if (entry.agent_id || app.currentAgentId) {
-      payload.agent_id = entry.agent_id || app.currentAgentId;
+    if (sessionId === app.currentSessionId && agentId === app.currentAgentId) {
+      await queueSubmission(message);
+    } else {
+      await controlledChat.initialize(entry.user_id || app.currentUserId);
+      await controlledChat.queueMessage(sessionId, agentId, message);
+      void controlledChat.drainOutbox();
     }
-    if (entry.target_device) payload.target_device = entry.target_device;
-    // RECORDER-HOOK: plugins/recorder/frontend/toggle.js subscribes backend evidence before send.
-    // Removal: delete this try block and comment; payload/send behavior remains unchanged.
-    try { if (window.__recorderScope) await window.__recorderScope(payload.session_id,payload.agent_id); } catch (_) {}
-    const resp = await fetch(apiPath('/api/v1/chat/send'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    const registrationDetail = await _anonymousRegistrationDetail(resp);
-    if (registrationDetail) {
-      _removeFromOutbox(entry.id);
-      document.querySelectorAll(`.chat-bubble.user.pending[data-pending-id="${CSS.escape(entry.id)}"]`)
-        .forEach(el => el.remove());
-      _showAnonymousRegistrationRequired(registrationDetail.message);
-      return false;
-    }
-    if (resp.status === 402) {
-      // Billing denial is permanent until account state changes. Retrying it
-      // would reopen the paywall on every recovery poll.
-      _removeFromOutbox(entry.id);
-      document.querySelectorAll(`.chat-bubble.user.pending[data-pending-id="${CSS.escape(entry.id)}"]`)
-        .forEach(el => el.remove());
-      return false;
-    }
-    if (resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      // The message is durably accepted. Move its session now instead of
-      // repainting the stale hybrid cache and waiting for background sync.
-      app.markSessionRecentlyActive?.(entry.session_id, { persist: true });
-      if (data && data.status === 'queued') {
-        // The server accepted the message but a compaction is still running —
-        // it persisted the row durably as status='queued' (queued_for='compact')
-        // and will start the turn when the compaction drains. The outbox copy is
-        // no longer needed; keep the pending bubble + composer lock until the
-        // drain's 'running' broadcast clears it.
-        _removeFromOutbox(entry.id);
-        _recordPersistence(entry.id, 'queued', 'Persisted as queued (compaction in progress); runs when compaction finishes.');
-        _stampCompactionQueued(entry, data.turn_id);
-        return true;
-      }
-      _removeFromOutbox(entry.id);
-      _recordPersistence(entry.id, 'saved', `Database acknowledged the message${data.turn_id ? ` as ${data.turn_id}` : ''}.`);
-      document.querySelectorAll(`.chat-bubble.user.pending[data-pending-id="${CSS.escape(entry.id)}"]`)
-        .forEach(el => {
-          _markBubbleSaved(el, data && data.turn_id, entry.id);
-          if (data && data.turn_id) {
-            el.setAttribute('data-msg-id', data.turn_id);
-          }
-        });
-      // A deferred message that was finally sent resolves its queued bubble.
-      if (app.chatMessages) {
-        app.chatMessages.querySelectorAll(':scope > .chat-bubble.user[data-blocked-queued]')
-          .forEach(el => {
-            _markBubbleSaved(el, data && data.turn_id, entry.id);
-            if (data && data.turn_id) el.setAttribute('data-msg-id', data.turn_id);
-          });
-      }
-      if (typeof app.populateSessionSelect === 'function') {
-        app.populateSessionSelect(app.currentUserId);
-      }
-      return true;
-    }
+    _removeFromOutbox(entry.id);
+    _recordPersistence(entry.id, 'queued', 'Transferred to the controlled chat outbox.');
     document.querySelectorAll(`.chat-bubble.user.pending[data-pending-id="${CSS.escape(entry.id)}"]`)
-      .forEach(el => _convertBubbleToPending(el, entry, `Save failed (${resp.status}) — retry`));
-    _recordPersistence(entry.id, 'error', `Database save returned HTTP ${resp.status}.`);
-    // Permanent client errors are paused for manual retry; the message is never
-    // silently discarded from the browser recovery journal.
-    if ([400, 401, 403, 404, 409, 410, 422].includes(resp.status)) {
-      _updateOutboxEntry(entry.id, { manual_only: true });
-      document.querySelectorAll(`.chat-bubble.user.pending[data-pending-id="${CSS.escape(entry.id)}"]`)
-        .forEach(el => _convertBubbleToPending(el, entry, `Save failed (${resp.status}) — retry`));
-    }
+      .forEach(el => el.remove());
+    return true;
   } catch (error) {
     _recordPersistence(entry.id, 'error', `Database save could not be reached: ${error?.message || 'network error'}.`);
   } finally {
@@ -1149,6 +1082,14 @@ async function sendMessage(textOverride) {
   if(!_canChat()) {applyChatGate();return;}
   const text=typeof textOverride==='string'?textOverride.trim():(app.chatInput?.value || '').trim();
   if(!text) return;
+  const promptLimit=String(app.currentUserId || '').startsWith('anon_') ? 32000 : 100000;
+  if(text.length>promptLimit) {
+    app.chatActivityStart?.('This message is too large.');
+    return;
+  }
+  const genuiLabel=typeof app._genuiLabelOverride==='string'
+    ? app._genuiLabelOverride.trim().slice(0,200) : '';
+  app._genuiLabelOverride=null;
   // Terminal tunnel
   if (app.tunnel && app.tunnel.active) {
     app.chatInput.value = '';
@@ -1204,6 +1145,7 @@ async function sendMessage(textOverride) {
     const payload=await addAttachmentsToMessage({message:text,session_id:sessionId,user_id:app.currentUserId});
     if(sessionId!==app.currentSessionId) throw new Error('Session changed during attachment upload');
     await queueSubmission({client_message_id:crypto.randomUUID(),text,
+      ...(genuiLabel ? {display_text:genuiLabel} : {}),
       attachment_ids:payload.attachment_ids || [],execution_mode:app.executionMode || 'ask'});
     if(typeof textOverride!=='string' && app.chatInput?.value.trim()===text) {
       app.chatInput.value='';

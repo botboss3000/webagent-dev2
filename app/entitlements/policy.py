@@ -7,7 +7,9 @@ import re
 from typing import Any, Mapping, Optional
 
 POLICY_SCHEMA_VERSION = 1
-REASONING_LEVELS = ("default", "low", "medium", "high")
+from app.reasoning_effort import EFFORT_LEVELS
+
+REASONING_LEVELS = EFFORT_LEVELS
 # Compatibility snapshot for imports. Policy validation is syntax-based so a
 # drop-in page descriptor never requires editing this module.
 KNOWN_PAGES = frozenset({"agents", "automations", "browser", "genui", "instances", "wiki", "admin-tools"})
@@ -82,7 +84,7 @@ ADMIN_OVERLAY: dict[str, Any] = {
     "ability_groups": sorted(KNOWN_ABILITY_GROUPS), "agent_templates": ["*"],
     "models": {"roster_id": "roster-admin", "allowed_entry_ids": ["*"],
                "allow_byo": True, "max_byo_entries": None,
-               "max_reasoning_effort": "high"},
+               "max_reasoning_effort": "max"},
     "limits": {name: None for name in KNOWN_LIMITS},
 }
 

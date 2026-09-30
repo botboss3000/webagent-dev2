@@ -12,6 +12,7 @@ import unittest
 from app.agent.provider_errors import (
     Action,
     Kind,
+    alias_failover_eligible,
     classify_provider_error,
     provider_stop_cause,
 )
@@ -147,6 +148,30 @@ class AuthQuotaAndTransient(unittest.TestCase):
         self.assertIs(info.kind, Kind.TRANSIENT)
         self.assertIsNone(info.status)
         self.assertTrue(info.identical_retry_ok)
+
+
+class AliasFailoverEligibility(unittest.TestCase):
+    def test_provider_availability_and_credential_failures_are_eligible(self):
+        eligible = [
+            RuntimeError("HTTP 401: Unauthorized"),
+            RuntimeError('HTTP 429: {"error":{"type":"usage_limit_reached"}}'),
+            RuntimeError("HTTP 503: upstream unavailable"),
+            ConnectionError("connection reset"),
+            RuntimeError("Responses API HTTP 400: Model Not Exist"),
+        ]
+        for exc in eligible:
+            with self.subTest(exc=str(exc)):
+                self.assertTrue(alias_failover_eligible(exc))
+
+    def test_request_and_policy_failures_are_not_eligible(self):
+        blocked = [
+            RuntimeError('HTTP 400: {"error":{"message":"malformed input"}}'),
+            RuntimeError("Responses API HTTP 400: Thinking mode does not support this tool_choice"),
+            RuntimeError(_REAL_DEEPSEEK_RESPONSES),
+        ]
+        for exc in blocked:
+            with self.subTest(exc=str(exc)):
+                self.assertFalse(alias_failover_eligible(exc))
 
 
 class StopCause(unittest.TestCase):

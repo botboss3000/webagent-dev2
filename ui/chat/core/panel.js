@@ -6,6 +6,7 @@ import {renderActivity, disconnectActivity} from './activity-view.js';
 import {getPendingAttachments, renderAttachmentElement} from '../../shared/js/attachments.js';
 import {apiPath} from '../../shared/js/config.js';
 import {authHeaders} from '../../shared/js/left-login.js';
+import {renderPublishedArtifact, requestPublishedArtifactGrant} from '../../shared/js/published-artifact.js';
 
 let session=null,unsubscribe=null,epoch=0,pending=[],lastState=null,scroller=null,loadingOlder=false;
 const retrying=new Set();
@@ -43,6 +44,14 @@ function renderUserAttachments(node, item) {
   }
 }
 function createNode(item) {
+  if(item.kind==='attachment') {
+    const node=addChatBubble('agent','','published',undefined,item.run_id,item.id,item.created_at);
+    const artifact=renderPublishedArtifact(item.payload,payload=>
+      requestPublishedArtifactGrant(payload,{headers:authHeaders()}));
+    if(!artifact) return null;
+    node.appendChild(artifact);
+    return node;
+  }
   if(!['user','answer','notice','failure'].includes(item.kind) || typeof item.payload.text!=='string') return null;
   const role=item.kind==='user'?'user':'agent';
   const node=addChatBubble(role,item.payload.text,'published'+(item.pending?' pending':''),

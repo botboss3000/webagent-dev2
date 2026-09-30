@@ -1,10 +1,7 @@
 
-> **V2 integration note:** This widget is an existing integration and still
-> uses legacy `/api/v1/chat` transport and session-tail behavior. Its output
-> must be treated as an integration surface pending migration through
-> `app/chat/api.py` and the V2 publication service. Do not add a second public
-> transcript authority here. Once migrated, the widget must consume the same
-> typed public items and cursor/replay contract as the main panel.
+> **V2 integration:** The widget consumes committed public items through
+> `ui/chat/core/client.js`, sharing the main panel's snapshot and cursor replay.
+> Private execution events stay out of its transcript.
 # Chat widget (`ui/chat-widget/`)
 
 A **floating mini chat** any page can spawn to run a *task-scoped* agent session
@@ -24,33 +21,15 @@ without disturbing the main chat side-panel. Consumers:
 
 ## How it works
 
-- The widget generates a **fresh UUID session id** (server creates the session
-  implicitly on the first `POST /api/v1/chat/send`) and claims that session's
-  live events via `registerSessionSubscriber(sessionId, handler)` in
-  `ui/shared/js/agentWs.js` — the one global WebSocket then routes the
-  session's events to the widget instead of dropping them as "foreign".
-  **One handler per session** (last registration wins); each widget owns its
-  own session so this never collides in practice.
-- Streams text into mini bubbles (markdown on finalize via the shared
-  `_fillAgentBubble` from `ui/chat/js/chat-bubble.js`); tool calls
-  render as a collapsible group using the shared `buildToolRow` from
-  `ui/shared/js/chat-activity.js`.
-- **Reliable updates — WS is smooth, the DB is durable.** Exactly like the main
-  panel (`ui/chat/js/chat-reconcile.js`), the WebSocket only delivers
-  when the browser socket and the running agent share one server process. When
-  they don't (dev port-stacking, prod multi-worker) or the socket goes briefly
-  silent, each widget polls `GET /api/v1/db/session-tail` — **gated on WS
-  silence** (`WS_SILENCE_MS`), so zero overhead while the socket is live — and
-  renders the same bubbles from the DB tail. This is what makes the view update
-  reliably right after a send and after Stop/Continue, and lets it finish a turn
-  even if the live `response` event is lost. Both paths converge on the same
-  per-key bubbles (idempotent SET), so there are no duplicates.
-- Transcript messages use the panel's bubble renderer and flex-column sizing;
-  progress/responses and tool calls use its `.bubble-tool-calls` disclosure and
-  shared row builders. The widget owns only session routing and frame chrome.
+- The widget creates or attaches to an owned V2 session and submits messages
+  through the shared durable outbox. Each widget has its own session.
+- It renders only committed public items, keyed by item ID and revision.
+  Snapshot and bounded event replay converge through the shared V2 reducer.
+  Markdown rendering uses the panel's bubble helper.
+- The widget owns its frame and composer; the V2 client owns acceptance,
+  recovery, and public transcript ordering.
 - The composer is rendered by the shared chat-pill layout from `chat_ui.json`.
-  Stop (`POST /api/v1/chat/interrupt`) and Continue (sends `"continue"`) are
-  the same in-pill controls as the panel and move with its configured row/zone.
+  Stop uses the V2 stop command. Continue submits a linked V2 turn.
 - **Draggable + resizable.** Drag the header to move the card; drag any
   edge/corner to resize it (min 260×200). The first such gesture switches the
   card to floating (fixed) positioning, detaching it from the docked stack.
@@ -82,7 +61,7 @@ without disturbing the main chat side-panel. Consumers:
 | `initialMessage` | Sent automatically once the agent is resolved. |
 | `initialAttachmentIds` | `attachment_ids` to ride the **first** message only (the file-only first message — no text — is still a valid send). |
 | `executionMode` | `'ask'` (default) / `'plan'` / `'auto'` — passed per send (legacy `'read'`/`'write'` still accepted by the backend). |
-| `sessionId` / `initialSessionSeq` | Attach to an existing session and start DB reconciliation after a known snapshot sequence, so copied history can remain context-only. |
+| `sessionId` / `initialSessionSeq` | Attach to an existing session. The sequence argument remains for existing callers; V2 public snapshots govern visible history. |
 | `onDone(finalText)` | Fires on each final response (e.g. refresh a panel). |
 | `onClose()` | Fires when the user closes the widget. |
 

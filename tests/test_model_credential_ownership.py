@@ -163,6 +163,9 @@ def test_named_user_credential_is_redacted_and_isolated(monkeypatch):
     monkeypatch.setattr(model_credentials, "backend_for", lambda *args, **kwargs: vault)
     monkeypatch.setattr(model_credentials, "legacy_backend", lambda: vault)
     caller = {"id": "user-one"}
+    async def valid_credential(*_args):
+        return None
+    monkeypatch.setattr(entitlements, "_validate_api_model_credential", valid_credential)
     monkeypatch.setattr(entitlements, "request_user_id", lambda _request: caller["id"])
     body = entitlements.SavedModelCredentialRequest(
         label="Primary OpenAI", provider="openai",

@@ -1,5 +1,6 @@
 'use strict';
 
+import { renderPublishedArtifact, requestPublishedArtifactGrant } from '../shared/js/published-artifact.js';
 import {
   appendChatSurfaceBubble,
   applyChatSurfaceProfile,
@@ -319,6 +320,23 @@ async function v2Request(path, options = {}) {
 
 function showPublication(item) {
   if (!item || item.deleted) return;
+  if (item.kind === 'attachment') {
+    const previous = published.get(item.id);
+    if (previous && previous.revision >= item.revision) return;
+    previous?.bubble?.remove();
+    const bubble = addBubble('agent', '');
+    const artifact = renderPublishedArtifact(item.payload, async payload => {
+      const session = await ensureSession();
+      return requestPublishedArtifactGrant(payload, {
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+    });
+    if (!artifact) { bubble.remove(); return; }
+    bubble.appendChild(artifact);
+    published.set(item.id, { revision: item.revision, bubble });
+    scrollToEnd();
+    return;
+  }
   if (item.kind === 'component' && item.payload?.ui === 'agent_auth') {
     const previous = published.get(item.id);
     if (previous && previous.revision >= item.revision) return;
@@ -352,6 +370,10 @@ async function readEvents(path, cursor) {
 
 async function sendMessage(text) {
   if (sending || !text.trim()) return;
+  if (text.length > 32000) {
+    addBubble('error', 'This message is too large. Anonymous messages are limited to 32,000 characters.');
+    return;
+  }
   sending = true;
   els.root.setAttribute('aria-busy', 'true');
   els.activityText.textContent = 'Working…';

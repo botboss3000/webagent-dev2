@@ -99,42 +99,88 @@ def _subscription_credential_projection(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _saved_credential_target(request: Request, scope: str, agent_id: str) -> dict:
+    if scope == "user":
+        uid = await _registered_caller(request)
+        return {"scope": "user", "owner": uid, "user_id": uid}
+    from app.api.openai_subscription_auth import _authorized_scope
+    from app.openai_subscription import credential_owner
+    target = await _authorized_scope(request, scope, agent_id)
+    return {"scope": target["scope"], "owner": credential_owner(
+        target["scope"], user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
+    ), "user_id": target.get("user_id", ""), "agent_id": target.get("agent_id", "")}
+
+
+async def _validate_api_model_credential(base_url: str, api_key: str) -> None:
+    import httpx
+    if not base_url.startswith(("https://", "http://")) or not api_key:
+        raise HTTPException(status_code=422, detail="Enter a provider URL and API key.")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                base_url.rstrip("/") + "/models",
+                headers={"Authorization": "Bearer " + api_key},
+            )
+        if response.status_code != 200:
+            raise HTTPException(status_code=422, detail="The provider rejected this credential.")
+        if not isinstance(response.json().get("data"), list):
+            raise HTTPException(status_code=422, detail="The provider did not validate this credential.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="Could not validate the provider credential.")
+
+
+@router.post("/me/model-credentials/validate")
+async def validate_my_model_credential(body: SavedModelCredentialRequest, request: Request,
+                                       scope: str = "user", agent_id: str = ""):
+    await _saved_credential_target(request, scope, agent_id)
+    _credential_provider(body.provider)
+    await _validate_api_model_credential(body.base_url.strip(), body.api_key.strip())
+    return {"validated": True}
+
+
 @router.get("/me/model-credentials")
-async def list_my_model_credentials(request: Request):
-    """Return redacted, user-owned reusable API and subscription credentials."""
-    uid = await _registered_caller(request)
+async def list_my_model_credentials(request: Request, scope: str = "user", agent_id: str = ""):
+    """Return redacted reusable credentials from the selected vault."""
+    target = await _saved_credential_target(request, scope, agent_id)
     from app import model_credentials
 
     api_rows = await model_credentials.list_owned(
-        "user", owner=uid, service=_SAVED_MODEL_CREDENTIAL_SERVICE, user_id=uid,
+        target["scope"], owner=target["owner"], service=_SAVED_MODEL_CREDENTIAL_SERVICE, user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
     )
     subscription_rows = await model_credentials.list_owned(
-        "user", owner=uid, service=_SUBSCRIPTION_CREDENTIAL_SERVICE, user_id=uid,
+        target["scope"], owner=target["owner"], service=_SUBSCRIPTION_CREDENTIAL_SERVICE, user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
+    )
+    saved_subscription_rows = await model_credentials.list_owned(
+        target["scope"], owner=target["owner"], service="saved_model_subscription", user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
     )
     credentials = [
         _api_credential_projection(row) for row in api_rows if isinstance(row, dict)
     ] + [
         _subscription_credential_projection(row)
-        for row in subscription_rows if isinstance(row, dict)
+        for row in subscription_rows + saved_subscription_rows if isinstance(row, dict)
     ]
     credentials.sort(key=lambda item: (item["kind"], item["provider"], item["label"].lower()))
     return {"credentials": credentials}
 
 
 @router.put("/me/model-credentials")
-async def save_my_model_credential(body: SavedModelCredentialRequest, request: Request):
-    """Save an API key under the authenticated user's vault owner."""
-    uid = await _registered_caller(request)
+async def save_my_model_credential(body: SavedModelCredentialRequest, request: Request,
+                                   scope: str = "user", agent_id: str = ""):
+    """Validate and save an API key in its authorized app/user/agent vault."""
+    target = await _saved_credential_target(request, scope, agent_id)
     label = _credential_label(body.label)
     provider = _credential_provider(body.provider)
     api_key = str(body.api_key or "").strip()
     if not api_key:
         raise HTTPException(status_code=422, detail={"code": "missing_api_key"})
+    await _validate_api_model_credential(body.base_url.strip(), api_key)
     from app import model_credentials
 
     saved = await model_credentials.set_owned(
-        "user", owner=uid, service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label,
-        user_id=uid, secret_ref=api_key,
+        target["scope"], owner=target["owner"], service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label,
+        user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""), secret_ref=api_key,
         config={
             "provider": provider,
             "base_url": str(body.base_url or "").strip(),
@@ -146,14 +192,14 @@ async def save_my_model_credential(body: SavedModelCredentialRequest, request: R
 
 
 @router.get("/me/model-credentials/{label}")
-async def load_my_model_credential(label: str, request: Request):
+async def load_my_model_credential(label: str, request: Request, scope: str = "user", agent_id: str = ""):
     """Load one API key for its verified owner; subscription tokens are never loadable."""
-    uid = await _registered_caller(request)
+    target = await _saved_credential_target(request, scope, agent_id)
     label = _credential_label(label)
     from app import model_credentials
 
     row = await model_credentials.get_owned(
-        "user", owner=uid, service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label, user_id=uid,
+        target["scope"], owner=target["owner"], service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label, user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
     )
     if not row or not row.get("secret_ref"):
         raise HTTPException(status_code=404, detail={"code": "credential_not_found"})
@@ -161,13 +207,13 @@ async def load_my_model_credential(label: str, request: Request):
 
 
 @router.delete("/me/model-credentials/{label}")
-async def delete_my_model_credential(label: str, request: Request):
-    uid = await _registered_caller(request)
+async def delete_my_model_credential(label: str, request: Request, scope: str = "user", agent_id: str = ""):
+    target = await _saved_credential_target(request, scope, agent_id)
     label = _credential_label(label)
     from app import model_credentials
 
     if not await model_credentials.delete_owned(
-        "user", owner=uid, service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label, user_id=uid,
+        target["scope"], owner=target["owner"], service=_SAVED_MODEL_CREDENTIAL_SERVICE, label=label, user_id=target.get("user_id", ""), agent_id=target.get("agent_id", ""),
     ):
         raise HTTPException(status_code=404, detail={"code": "credential_not_found"})
     return {"status": "deleted"}
@@ -178,7 +224,7 @@ async def delete_my_model_credential(label: str, request: Request):
 # agent rosters alone own role positions.  Keep this allow-list narrow so a
 # future credential/config field cannot accidentally reach a browser catalog.
 _CATALOG_ENTRY_FIELDS = frozenset({
-    "entry_id", "display_name", "provider", "auth_mode", "base_url", "model",
+    "entry_id", "alias_group_id", "display_name", "provider", "auth_mode", "base_url", "model",
     "text_capable", "image_capable", "image_out_capable", "voice_capable",
     "video_capable", "stateful_responses", "routing_mode",
     "credit_schedule", "credit_input_per_million", "credit_output_per_million",
@@ -188,7 +234,7 @@ _CATALOG_ENTRY_FIELDS = frozenset({
 _PLATFORM_CATALOG_FIELDS = frozenset({
     # MODEL-NAME-LEVELS: catalog_name is the catalog's own alias for the model;
     # display_name is the caller's display name layered on top of it.
-    "entry_id", "display_name", "catalog_name", "provider", "model", "text_capable", "image_capable",
+    "entry_id", "alias_group_id", "display_name", "catalog_name", "provider", "model", "text_capable", "image_capable",
     "image_out_capable", "voice_capable", "video_capable",
     "credit_schedule", "credit_input_per_million", "credit_output_per_million",
 })

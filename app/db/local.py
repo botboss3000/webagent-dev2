@@ -8784,21 +8784,21 @@ class LocalBackend(StorageBackend):
                 conn.close()
 
     # ── Per-agent ability-skill visibility (agents.metadata "skill_modes") ──
-    # {ability_id: "visible"|"discoverable"}. visible = the bundled skill's body
+    # {skill_key: "off"|"visible"|"discoverable"}. Off withholds the skill; visible = its body
     # is always shown; discoverable = load on demand. Absent → descriptor default.
 
     @turn_cached
     async def get_agent_skill_modes(self, agent_id: str) -> Dict[str, str]:
         if not agent_id:
             return {}
-        from app.tools.tool_modes import AGENT_SKILL_MODES_KEY, normalize_visibility
+        from app.tools.tool_modes import AGENT_SKILL_MODES_KEY, normalize_skill_mode
         meta = await self._agent_metadata(agent_id)
         modes = (meta or {}).get(AGENT_SKILL_MODES_KEY) or {}
         if not isinstance(modes, dict):
             return {}
         out: Dict[str, str] = {}
         for k, v in modes.items():
-            nv = normalize_visibility(v)
+            nv = normalize_skill_mode(v)
             if isinstance(k, str) and nv:
                 out[k] = nv
         return out
@@ -8807,10 +8807,10 @@ class LocalBackend(StorageBackend):
         self, agent_id: str, ability_id: str, mode: str
     ) -> Dict[str, str]:
         """Set the per-agent visibility of an ability's bundled skill. mode in
-        {"visible","discoverable"}; anything else clears the override. Returns the
+        {"off","visible","discoverable"}; anything else clears the override. Returns the
         updated skill_modes map."""
-        from app.tools.tool_modes import AGENT_SKILL_MODES_KEY, normalize_visibility
-        nmode = normalize_visibility(mode)
+        from app.tools.tool_modes import AGENT_SKILL_MODES_KEY, normalize_skill_mode
+        nmode = normalize_skill_mode(mode)
         async with self._write_lock:
             conn = self._get_conn()
             try:

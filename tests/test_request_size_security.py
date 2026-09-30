@@ -63,10 +63,10 @@ def test_json_body_limit_rejects_before_endpoint_dispatch() -> None:
 def test_anonymous_frontends_reject_oversized_prompts_before_fetch() -> None:
     root = Path(__file__).resolve().parents[1]
     chat_source = (root / "ui/chat/js/chat-send.js").read_text(encoding="utf-8")
-    embed_source = (root / "ui/embed/js/embed.js").read_text(encoding="utf-8")
+    embed_source = (root / "ui/embed/embed-chat.js").read_text(encoding="utf-8")
 
     assert "32000" in chat_source
-    assert "200000" in chat_source
-    assert "text.length > promptLimit" in chat_source
+    assert "100000" in chat_source
+    assert "text.length>promptLimit" in chat_source
     assert "32000" in embed_source
     assert "text.length > 32000" in embed_source

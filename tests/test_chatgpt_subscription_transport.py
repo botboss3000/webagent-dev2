@@ -90,6 +90,8 @@ def test_subscription_catalog_exposes_verified_roster_capabilities():
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
+        "gpt-6.1-sol",
+        "gpt-6-astra",
     }
     for model in models:
         assert model["text_capable"] is True

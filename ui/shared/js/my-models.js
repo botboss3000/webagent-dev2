@@ -68,7 +68,7 @@ export async function mountMyModels(slot) {
     },
     loadPresets: async () => ({
       openai_subscription: {
-        name: 'OpenAI Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt',
+        name: 'ChatGPT Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt',
       },
     }),
     subscriptionRequest: scopedRequest,

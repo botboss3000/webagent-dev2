@@ -55,11 +55,11 @@ PROVIDER_PRESETS = {
         "base_url": "https://routellm.abacus.ai/v1",
     },
     "openai": {
-        "name": "OpenAI API",
+        "name": "ChatGPT API",
         "base_url": "https://api.openai.com/v1",
     },
     "openai_subscription": {
-        "name": "OpenAI Subscription",
+        "name": "ChatGPT Subscription",
         "base_url": "codex://chatgpt",
         "auth_mode": "chatgpt",
     },
@@ -456,7 +456,7 @@ async def migrate_llm_secrets() -> None:
 
 
 _LEGACY_DEFAULT_FIELDS = (
-    "entry_id", "provider", "auth_mode", "base_url", "api_key", "model", "display_name",
+    "entry_id", "alias_group_id", "provider", "auth_mode", "base_url", "api_key", "model", "display_name",
     "stateful_responses", "routing_mode", "text_capable", "image_capable",
     "image_out_capable", "voice_capable", "use_for_image",
     "use_for_image_out", "use_for_voice", "use_for_system",
@@ -547,6 +547,64 @@ def _runtime_config_from_roster(config: dict, *, role: str = "standard") -> dict
     for key in _LEGACY_DEFAULT_FIELDS:
         runtime[key] = selected.get(key, "") if selected else ""
     return runtime
+
+
+def alias_failover_candidates(config: dict) -> list[dict]:
+    """Return executable configs for the selected row and its aliases.
+
+    The selected runtime row always leads. Remaining members retain saved roster
+    order and their own provider, credential, transport, and model metadata. This
+    is deliberately a pure projection: it never changes role assignments, session
+    overrides, or the persisted roster.
+    """
+    base = dict(config or {})
+    rows = [
+        dict(row) for row in (base.get("multi_providers") or [])
+        if isinstance(row, dict) and row.get("model")
+    ]
+    if not rows:
+        return [base]
+    try:
+        roster = _agent_roster_entries_with_ids(rows)
+    except ValueError:
+        return [base]
+    selected_id = str(base.get("entry_id") or "").strip()
+    selected = next(
+        (row for row in roster if str(row.get("entry_id") or "") == selected_id),
+        None,
+    )
+    group_id = str((selected or {}).get("alias_group_id") or "").strip()
+    if not selected or not group_id:
+        return [base]
+
+    def usable(row: dict) -> bool:
+        if row.get("enabled") is False or row.get("text_capable") is False:
+            return False
+        provider = str(row.get("provider") or "").strip().lower()
+        model = str(row.get("model") or "").strip()
+        if not provider or not model:
+            return False
+        auth_mode = str(row.get("auth_mode") or "api_key").strip().lower()
+        keyless = provider in {"ollama", "lmstudio", "openai_subscription"} or auth_mode == "chatgpt"
+        return keyless or bool(str(row.get("api_key") or "").strip())
+
+    members = [selected] + [
+        row for row in roster
+        if str(row.get("entry_id") or "") != selected_id
+        and str(row.get("alias_group_id") or "") == group_id
+    ]
+    candidates: list[dict] = []
+    seen: set[str] = set()
+    for row in members:
+        entry_id = str(row.get("entry_id") or "")
+        if entry_id in seen or not usable(row):
+            continue
+        candidate = dict(base)
+        candidate.update(row)
+        candidate["multi_providers"] = roster
+        candidates.append(candidate)
+        seen.add(entry_id)
+    return candidates or [base]
 
 
 async def _resolve_user_config(user_id: str, *, role: str = "standard") -> dict:
@@ -648,8 +706,10 @@ def _public_provider_config(config: dict) -> dict:
 
 
 def _roster_entries_with_ids(entries: list) -> list[dict]:
-    """Attach the same deterministic IDs used by the named-roster service."""
-    from app.entitlements.rosters import PLATFORM_DEFAULT_ROSTER_ID, stable_entry_id
+    """Attach deterministic IDs and repair alias groups for legacy rows."""
+    from app.entitlements.rosters import (
+        PLATFORM_DEFAULT_ROSTER_ID, normalize_alias_groups, stable_entry_id,
+    )
 
     result = []
     duplicate_counts = {}
@@ -672,16 +732,17 @@ def _roster_entries_with_ids(entries: list) -> list[dict]:
         except ValueError:
             item["entry_id"] = str(item.get("entry_id") or "")
         result.append(item)
-    return result
+    return normalize_alias_groups(result)
 
 
 def _agent_roster_entries_with_ids(entries: list) -> list[dict]:
-    """Return agent-owned roster rows with unique opaque entry IDs.
+    """Return normalized agent-owned rows with unique opaque entry IDs.
 
     Agent-owned entries are independent roster records. Missing or duplicate
     IDs receive fresh UUIDs; provider/base URL/model are never used as identity.
     """
     import uuid
+    from app.entitlements.rosters import normalize_alias_groups
 
     result = []
     seen = set()
@@ -695,7 +756,7 @@ def _agent_roster_entries_with_ids(entries: list) -> list[dict]:
         item["entry_id"] = entry_id
         seen.add(entry_id)
         result.append(item)
-    return result
+    return normalize_alias_groups(result)
 
 
 def _prune_roster_entries(roster: list, removed: list[dict]) -> list[dict]:
@@ -967,6 +1028,7 @@ def _public_model_slot(slot: dict) -> dict:
         "entry_id": slot.get("entry_id", ""),
         "model": alias or str(slot.get("model") or ""),
         "display_name": alias,
+        "reasoning_efforts": supported_efforts(slot.get("model", ""), slot.get("provider", "")),
     }
     if slot.get("type") == "role":
         public["role"] = slot.get("role", "")
@@ -1183,7 +1245,9 @@ def _session_llm_override(cfg: Optional[dict]) -> Optional[dict]:
 # Switcher ability. "default" = send no hint (today's behaviour). The rest map to
 # the provider's normalised reasoning.effort levels; providers that don't support
 # a given level (e.g. some ignore "minimal") just drop it and the call retries.
-REASONING_EFFORT_LEVELS = ["default", "minimal", "low", "medium", "high"]
+from app.reasoning_effort import EFFORT_LEVELS, EFFORT_ORDER, normalize_effort, supported_efforts
+
+REASONING_EFFORT_LEVELS = list(EFFORT_LEVELS)
 
 
 def _effort_ref(entry_id: Optional[str], legacy_slot_ref: Optional[str] = None) -> str:
@@ -1349,9 +1413,9 @@ async def _clamp_config_to_entitlements(user_id: str, base: dict, effective: dic
 
 
 def _clamp_reasoning_effort(level: Optional[str], capabilities: dict) -> Optional[str]:
-    if not level:
+    if not level or level not in EFFORT_ORDER or level == "default":
         return None
-    order = {"default": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4}
+    order = EFFORT_ORDER
     maximum = str((capabilities.get("models") or {}).get("max_reasoning_effort") or "default")
     return level if order.get(level, 0) <= order.get(maximum, 0) else (
         None if maximum == "default" else maximum
@@ -1440,7 +1504,11 @@ async def apply_provider_for_run(
         slot_ref=_effort_ref(effective.get("entry_id")),
         legacy_slot_ref=effective.get("_slot_ref"),
     )
-    effort = _clamp_reasoning_effort(effort, capabilities)
+    effort = normalize_effort(
+        _clamp_reasoning_effort(effort, capabilities),
+        effective.get("model", ""), effective.get("provider", ""),
+        str((capabilities.get("models") or {}).get("max_reasoning_effort") or "default"),
+    )
     # This transient value lets a caller use the fully resolved run config
     # without reading the shared environment. It is never persisted.
     effective["reasoning_effort"] = effort
@@ -1494,6 +1562,10 @@ async def resolve_active_model(
             legacy_slot_ref=effective.get("_slot_ref"),
         ),
         capabilities,
+    )
+    effort = normalize_effort(
+        effort, effective.get("model", ""), provider,
+        str((capabilities.get("models") or {}).get("max_reasoning_effort") or "default"),
     )
     return {"model": effective.get("model", "") or "", "provider": provider,
             "base_url": base_url, "display_name": effective.get("display_name", "") or "",
@@ -1703,6 +1775,26 @@ async def resolve_agent_models(
                 _clamp_reasoning_effort(resolved_effort, capabilities) or "default"
             )
     safe_slots = [_public_model_slot(slot) for slot in slots["slot_list"]]
+    maximum = str((capabilities.get("models") or {}).get("max_reasoning_effort") or "default")
+    for internal, slot in zip(slots["slot_list"], safe_slots):
+        slot["reasoning_efforts"] = [
+            level for level in slot["reasoning_efforts"]
+            if EFFORT_ORDER[level] <= EFFORT_ORDER.get(maximum, 0)
+        ]
+        ref = _effort_ref(internal.get("entry_id"), _slot_ref(
+            internal.get("type", ""), internal.get("role", ""),
+            internal.get("position", 0), internal.get("entry_id", ""),
+        ))
+        stored = _resolve_session_effort(
+            session_override, model=internal.get("model"), slot_ref=ref,
+            legacy_slot_ref=_slot_ref(internal.get("type", ""), internal.get("role", ""),
+                                      internal.get("position", 0)),
+        )
+        if stored:
+            effort_map[ref] = normalize_effort(
+                _clamp_reasoning_effort(stored, capabilities),
+                internal.get("model", ""), internal.get("provider", ""), maximum,
+            ) or "default"
     return {"slots": safe_slots, "active_slot": active_slot,
             "model_effort": effort_map, "agent_override": agent_override}
 
@@ -2377,6 +2469,9 @@ class MultiProviderEntry(BaseModel):
     # Immutable model identity. New rows may omit it; the server assigns a
     # random UUID. Existing IDs must belong to the roster being updated.
     entry_id: str = ""
+    # Stable-ID anchor shared by interchangeable rows. The server normalizes
+    # every component after assigning IDs and dissolves single-member groups.
+    alias_group_id: str = ""
     provider: str
     auth_mode: str = "api_key"  # api_key | chatgpt
     base_url: str = ""

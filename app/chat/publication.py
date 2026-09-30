@@ -1,5 +1,7 @@
 """The only service that admits execution output to the public conversation."""
 import inspect
+from fastapi import HTTPException
+from app.content_access import decode_content_grant, register_path_artifact, URL_PREFIX
 from .contracts import SAFE_FAILURE
 from .repository import digest
 
@@ -35,6 +37,82 @@ class PublicationService:
         return await self.repository.decide(
             run_id,generation,"component",safe,accepted=True,reasons=[],
             policy_digest=digest(run["policy"]))
+
+    async def artifact(self, run_id, generation, tool, descriptor):
+        """Publish a workspace-owned file produced by the trusted User Files tools."""
+        if tool not in {"save_file", "attach_file", "generate_image", "browser_action"} or not isinstance(descriptor, dict):
+            return None
+        if descriptor.get("kind") != "file_attachment" or descriptor.get("status") != "ok":
+            return None
+        name, mime, url = (descriptor.get(key) for key in ("filename", "mime_type", "url"))
+        if not all(isinstance(value, str) and value for value in (name, mime, url)):
+            return None
+        if len(name) > 255 or len(mime) > 255 or not url.startswith(URL_PREFIX + "/"):
+            return None
+        size = descriptor.get("bytes")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            return None
+        try:
+            grant = decode_content_grant(url[len(URL_PREFIX) + 1:])
+            if grant.get("user_id") != self.repository.owner_id:
+                return None
+            source_type = grant.get("source_type")
+            artifact_id = grant.get("artifact_id")
+            if source_type == "path":
+                artifact_id = register_path_artifact(
+                    user_id=self.repository.owner_id,
+                    storage_path=grant["storage_path"],
+                    original_name=name, mime_type=mime,
+                    storage_provider=grant.get("storage_provider") or "local")
+                source_type = "artifact"
+            if source_type != "artifact" or not isinstance(artifact_id, str):
+                return None
+        except (KeyError, ValueError, TypeError, HTTPException):
+            return None
+        run = await self.repository.run(run_id)
+        return await self.repository.decide(
+            run_id, generation, "attachment",
+            {"artifact_id":artifact_id, "source_type":source_type,
+             "original_name":name, "mime_type":mime, "size_bytes":size},
+            accepted=True, reasons=[], policy_digest=digest(run["policy"]))
+
+    async def media(self, run_id, generation, tool, result):
+        """Project generated images and browser screenshots from signed grants."""
+        if not isinstance(result,dict):
+            return
+        urls=[]
+        if tool=="generate_image" and result.get("status")=="ok":
+            urls=[url for url in result.get("images",[]) if isinstance(url,str)][:4]
+        elif tool=="browser_action" and result.get("success") is True \
+                and result.get("mime_type")=="image/png":
+            urls=[result.get("result")]
+        for index,url in enumerate(urls,1):
+            if not isinstance(url,str) or not url.startswith(URL_PREFIX+"/"):
+                continue
+            try:
+                grant=decode_content_grant(url[len(URL_PREFIX)+1:])
+                if grant.get("user_id")!=self.repository.owner_id:
+                    continue
+                if grant.get("source_type")=="artifact":
+                    from app.db import get_data_db
+                    rows=get_data_db(self.repository.owner_id).get_raw_client().table(
+                        "workspace_artifacts").select("original_name,mime_type,size_bytes").eq(
+                        "id",grant["artifact_id"]).eq(
+                        "user_id",self.repository.owner_id).limit(1).execute().data or []
+                    if not rows:
+                        continue
+                    name=rows[0].get("original_name") or f"Generated image {index}.png"
+                    mime=rows[0].get("mime_type") or "image/png"
+                    size=rows[0].get("size_bytes") or 0
+                else:
+                    name=grant.get("original_name") or f"Generated image {index}.png"
+                    mime=grant.get("mime_type") or "image/png"
+                    size=0
+                await self.artifact(run_id,generation,tool,{
+                    "kind":"file_attachment","status":"ok","filename":name,
+                    "mime_type":mime,"url":url,"bytes":size})
+            except (KeyError, ValueError, TypeError, HTTPException):
+                continue
 
     async def final(self, run_id, generation, text, status, *, repair=None, manual_retry=False):
         """Finalize with bounded, tool-free repairs; never publish a rejected draft."""

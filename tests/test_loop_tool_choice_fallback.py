@@ -96,6 +96,7 @@ class ToolChoiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         max_turns=12,
         provider_config=None,
         responses_opener=None,
+        open_errors=None,
     ):
         with tempfile.TemporaryDirectory() as td:
             db = LocalBackend(str(Path(td) / "loop.db"), seed=False)
@@ -139,6 +140,11 @@ class ToolChoiceFallbackTests(unittest.IsolatedAsyncioTestCase):
 
             async def fake_open_stream(create_kwargs, timeout_s, client=None):
                 provider_calls.append(dict(create_kwargs))
+                model_error = (open_errors or {}).get(create_kwargs.get("model"))
+                if isinstance(model_error, BaseException):
+                    raise model_error
+                if model_error:
+                    raise RuntimeError(model_error)
                 # Emulate a thinking-mode provider that refuses an enforced
                 # tool choice outright — the exact production 400.
                 if create_kwargs.get("tool_choice") == "required":
@@ -225,6 +231,109 @@ class ToolChoiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(event.get("stop_cause") == "crash" for event in events))
         # The turn still produced a user-visible result.
         self.assertTrue(any(event.get("type") == "response" for event in events))
+
+    async def test_eligible_pre_stream_failure_uses_grouped_alias(self):
+        root = "root"
+        provider_config = {
+            "entry_id": root,
+            "alias_group_id": root,
+            "provider": "test",
+            "base_url": "https://primary.example/v1",
+            "api_key": "primary-key",
+            "model": "primary",
+            "stateful_responses": "disabled",
+            "multi_providers": [
+                {
+                    "entry_id": root,
+                    "alias_group_id": root,
+                    "provider": "test",
+                    "base_url": "https://primary.example/v1",
+                    "api_key": "primary-key",
+                    "model": "primary",
+                    "stateful_responses": "disabled",
+                },
+                {
+                    "entry_id": "backup",
+                    "alias_group_id": root,
+                    "provider": "test",
+                    "base_url": "https://backup.example/v1",
+                    "api_key": "backup-key",
+                    "model": "backup",
+                    "stateful_responses": "disabled",
+                },
+            ],
+        }
+
+        failures = [
+            "HTTP 503: upstream unavailable",
+            asyncio.TimeoutError(),
+        ]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__ if not isinstance(failure, str) else failure):
+                provider_calls, events = await self._run(
+                    [{"text": "Completed on the backup."}],
+                    max_turns=1,
+                    provider_config=provider_config,
+                    open_errors={"primary": failure},
+                )
+
+                self.assertEqual(
+                    [call["model"] for call in provider_calls[:2]],
+                    ["primary", "backup"],
+                )
+                failovers = [
+                    event for event in events
+                    if event.get("step") == "llm_alias_failover"
+                ]
+                self.assertEqual(len(failovers), 1)
+                self.assertEqual(failovers[0]["from_entry_id"], root)
+                self.assertEqual(failovers[0]["to_entry_id"], "backup")
+                self.assertFalse(any(event.get("type") == "error" for event in events))
+
+    async def test_deterministic_client_error_does_not_use_alias(self):
+        root = "root"
+        provider_config = {
+            "entry_id": root,
+            "alias_group_id": root,
+            "provider": "test",
+            "base_url": "https://primary.example/v1",
+            "api_key": "primary-key",
+            "model": "primary",
+            "stateful_responses": "disabled",
+            "multi_providers": [
+                {
+                    "entry_id": root,
+                    "alias_group_id": root,
+                    "provider": "test",
+                    "base_url": "https://primary.example/v1",
+                    "api_key": "primary-key",
+                    "model": "primary",
+                    "stateful_responses": "disabled",
+                },
+                {
+                    "entry_id": "backup",
+                    "alias_group_id": root,
+                    "provider": "test",
+                    "base_url": "https://backup.example/v1",
+                    "api_key": "backup-key",
+                    "model": "backup",
+                    "stateful_responses": "disabled",
+                },
+            ],
+        }
+
+        provider_calls, events = await self._run(
+            [{"text": "must not be reached"}],
+            max_turns=1,
+            provider_config=provider_config,
+            open_errors={"primary": 'HTTP 400: {"error":{"message":"malformed input"}}'},
+        )
+
+        self.assertEqual([call["model"] for call in provider_calls], ["primary"])
+        self.assertFalse(any(
+            event.get("step") == "llm_alias_failover" for event in events
+        ))
+        self.assertTrue(any(event.get("type") == "error" for event in events))
 
     # ── Layer 2: a reasoning model is never force-armed ─────────────────────
 

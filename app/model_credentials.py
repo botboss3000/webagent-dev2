@@ -43,6 +43,12 @@ def _config(value: Any) -> dict:
     return {}
 
 
+def _decoded_row(row: dict) -> dict:
+    # Database backends may return the JSON column as text. Consumers of this
+    # ownership boundary always receive a dictionary without mutating DB rows.
+    return {**row, "config": _config(row.get("config"))}
+
+
 async def _verified_copy(destination, row: dict, *, owner: str, service: str, label: str):
     await destination.auth_element_set(
         user_id=owner, service=service, label=label,
@@ -54,7 +60,7 @@ async def _verified_copy(destination, row: dict, *, owner: str, service: str, la
         raise RuntimeError("Owned model credential copy could not be verified.")
     if row.get("secret_ref") and not copied.get("secret_ref"):
         raise RuntimeError("Owned model credential secret copy could not be verified.")
-    return copied
+    return _decoded_row(copied)
 
 
 async def get_owned(scope: str, *, owner: str, service: str, label: str = "default",
@@ -67,7 +73,7 @@ async def get_owned(scope: str, *, owner: str, service: str, label: str = "defau
             old = await legacy.auth_element_get(owner, service, label)
             if old:
                 await legacy.auth_element_delete(owner, service, label)
-        return row
+        return _decoded_row(row)
     if destination is legacy:
         return None
     old = await legacy.auth_element_get(owner, service, label)
@@ -75,7 +81,7 @@ async def get_owned(scope: str, *, owner: str, service: str, label: str = "defau
         return None
     copied = await _verified_copy(destination, old, owner=owner, service=service, label=label)
     await legacy.auth_element_delete(owner, service, label)
-    return copied
+    return _decoded_row(copied)
 
 
 async def list_owned(scope: str, *, owner: str, service: str,
@@ -87,7 +93,9 @@ async def list_owned(scope: str, *, owner: str, service: str,
     """
     destination = backend_for(scope, user_id=user_id, agent_id=agent_id)
     legacy = legacy_backend()
-    rows = list(await destination.auth_element_list(owner, service) or [])
+    rows = [_decoded_row(row) for row in
+            (await destination.auth_element_list(owner, service) or [])
+            if isinstance(row, dict)]
     labels = {str(row.get("label") or "") for row in rows if isinstance(row, dict)}
     if destination is legacy:
         return rows

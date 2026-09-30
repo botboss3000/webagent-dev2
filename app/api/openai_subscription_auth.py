@@ -3,6 +3,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from app import openai_subscription
 from app.auth.identity import request_user_id
@@ -204,3 +205,120 @@ async def auth_signout(request: Request, scope: str = "platform", agent_id: str 
 async def subscription_models(request: Request, scope: str = "platform", agent_id: str = ""):
     await _authorized_scope(request, scope, agent_id)
     return {"models": openai_subscription.models()}
+
+
+_SAVED_SUBSCRIPTION_SERVICE = "saved_model_subscription"
+
+
+class SubscriptionCredentialRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/credentials")
+async def saved_subscription_credentials(request: Request, scope: str = "platform", agent_id: str = ""):
+    from app.api.entitlements import _saved_credential_target
+    vault = await _saved_credential_target(request, scope, agent_id)
+    from app import model_credentials
+    from app.api.entitlements import _subscription_credential_projection
+    rows = await model_credentials.list_owned(
+        vault["scope"], owner=vault["owner"], service=_SAVED_SUBSCRIPTION_SERVICE,
+        user_id=vault.get("user_id", ""), agent_id=vault.get("agent_id", ""),
+    )
+    return {"credentials": [_subscription_credential_projection(row) for row in rows
+                            if row.get("secret_ref") and not (row.get("config") or {}).get("pending")]}
+
+
+@router.post("/credentials/save")
+async def save_subscription_credential(body: SubscriptionCredentialRequest, request: Request,
+                                       scope: str = "platform", agent_id: str = "", entry_id: str = ""):
+    target = await _authorize_entry(request, scope, agent_id, entry_id, allow_reserved=True)
+    from app.api.entitlements import _saved_credential_target
+    vault = await _saved_credential_target(request, scope, agent_id)
+    from app import model_credentials
+    from app.api.entitlements import _credential_label, _subscription_credential_projection
+    label = _credential_label(body.label)
+    transport = _transport_target(target)
+    owner = openai_subscription.credential_owner(
+        transport["scope"], user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+    )
+    try:
+        await openai_subscription.transport_auth(**transport)
+    except Exception:
+        raise HTTPException(status_code=409, detail="Validate the subscription connection before saving.")
+    tokens = await openai_subscription._load_tokens(
+        owner, entry_id, scope=transport["scope"],
+        user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+    )
+    if not tokens.get("access_token") or not tokens.get("refresh_token"):
+        raise HTTPException(status_code=409, detail="Connect the subscription before saving its credential.")
+    source = await model_credentials.get_owned(
+        transport["scope"], owner=owner, service="openai_subscription_oauth", label=entry_id,
+        user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+    ) or {}
+    source_config = source.get("config") or {}
+    identity = (source_config.get("saved_credential_id")
+                if source_config.get("saved_credential_label") == label else None) or str(uuid.uuid4())
+    saved = await model_credentials.set_owned(
+        vault["scope"], owner=vault["owner"], service=_SAVED_SUBSCRIPTION_SERVICE, label=label,
+        user_id=vault.get("user_id", ""), agent_id=vault.get("agent_id", ""),
+        config={**openai_subscription.token_metadata(tokens), "saved_credential_id": identity},
+        secret_ref=json.dumps(tokens, separators=(",", ":")),
+    )
+    await model_credentials.set_owned(
+        vault["scope"], owner=vault["owner"], service="saved_model_subscription_tokens", label=identity,
+        user_id=vault.get("user_id", ""), agent_id=vault.get("agent_id", ""),
+        config=openai_subscription.token_metadata(tokens),
+        secret_ref=json.dumps(tokens, separators=(",", ":")),
+    )
+    await model_credentials.set_owned(
+        transport["scope"], owner=owner, service="openai_subscription_oauth", label=entry_id,
+        user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+        config={**openai_subscription.token_metadata(tokens),
+                "saved_credential_label": label, "saved_credential_id": identity},
+        secret_ref=json.dumps(tokens, separators=(",", ":")),
+    )
+    return {"credential": _subscription_credential_projection(saved)}
+
+
+@router.post("/credentials/load")
+async def load_subscription_credential(body: SubscriptionCredentialRequest, request: Request,
+                                       scope: str = "platform", agent_id: str = ""):
+    # Always issue a new row identity. Loading in the add-model composer must
+    # never replace authorization on an existing saved model.
+    target = await _authorized_scope(request, scope, agent_id)
+    from app.api.entitlements import _saved_credential_target
+    vault = await _saved_credential_target(request, scope, agent_id)
+    from app import model_credentials
+    from app.api.entitlements import _credential_label, _subscription_credential_projection
+    saved = await model_credentials.get_owned(
+        vault["scope"], owner=vault["owner"], service=_SAVED_SUBSCRIPTION_SERVICE,
+        label=_credential_label(body.label),
+        user_id=vault.get("user_id", ""), agent_id=vault.get("agent_id", ""),
+    )
+    if not saved or not saved.get("secret_ref"):
+        raise HTTPException(status_code=404, detail="Saved subscription credential not found.")
+    try:
+        tokens = json.loads(saved["secret_ref"])
+    except (TypeError, ValueError):
+        tokens = {}
+    if not isinstance(tokens, dict) or not tokens.get("access_token") or not tokens.get("refresh_token"):
+        raise HTTPException(status_code=409, detail="Saved subscription must be connected again.")
+    target["entry_id"] = str(uuid.uuid4())
+    transport = _transport_target(target)
+    owner = openai_subscription.credential_owner(
+        transport["scope"], user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+    )
+    await model_credentials.set_owned(
+        transport["scope"], owner=owner, service="openai_subscription_oauth", label=target["entry_id"],
+        user_id=transport.get("user_id", ""), agent_id=transport.get("agent_id", ""),
+        config={**openai_subscription.token_metadata(tokens),
+                "saved_credential_label": saved["label"],
+                "saved_credential_id": (saved.get("config") or {}).get("saved_credential_id")},
+        secret_ref=json.dumps(tokens, separators=(",", ":")),
+    )
+    try:
+        await openai_subscription.transport_auth(**transport)
+    except Exception:
+        await openai_subscription.sign_out(**transport)
+        raise HTTPException(status_code=409, detail="Saved subscription must be validated again.")
+    return {"entry_id": target["entry_id"], "credential": _subscription_credential_projection(saved)}

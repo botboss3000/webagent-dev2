@@ -942,7 +942,8 @@ class ToolLoader:
             try:
                 from app.agent.ability_skills import ability_skill_payload as _asp
                 _pl = _asp(ability_id,
-                           [n for n in names if _rm(n, agent_modes) == _VIS])
+                           [n for n in names if _rm(n, agent_modes) == _VIS],
+                           await _gd().get_agent_skill_modes(agent_id) if agent_id else {})
                 skill_body = _pl.get("body") or ""
                 skill_handle = _pl.get("handle")
                 skill_summary = _pl.get("summary") or ""

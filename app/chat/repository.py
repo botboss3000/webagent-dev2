@@ -99,6 +99,23 @@ class ChatRepository:
             return self._publish(conn,session_id=session_id,run_id=None,
                                  kind="notice",payload=payload)
 
+    async def publish_closer_summary(self, session_id, source_row_id, text):
+        """Project a persisted closer row once into the public transcript."""
+        if not isinstance(text,str) or not text.strip():
+            return None
+        item_id=str(uuid.uuid5(uuid.NAMESPACE_URL,
+            f"webagent:closer:{self.owner_id}:{session_id}:{source_row_id}"))
+        payload=await self.encode({"text":text[:100000],
+            "control":{"kind":"output_closer","source_row_id":str(source_row_id)}})
+        with self.transaction() as conn:
+            self._session(conn,session_id)
+            existing=conn.execute("SELECT id,position FROM chat_publications WHERE id=?",
+                                  (item_id,)).fetchone()
+            if existing:
+                return {"id":existing["id"],"position":existing["position"]}
+            return self._publish(conn,session_id=session_id,run_id=None,
+                                 kind="notice",payload=payload,item_id=item_id)
+
     def receipt_for(self, session_id, author_id, command):
         """Return a committed acceptance before metering a transport retry.
 

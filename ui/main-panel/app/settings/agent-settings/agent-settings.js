@@ -109,6 +109,7 @@ function _liveAdminModelAdapter() {
       const payload = {
         providers: providers.map(p => ({
           entry_id: p.entry_id || '',
+          alias_group_id: p.alias_group_id || '',
           provider: p.provider === '_custom' ? 'custom' : p.provider,
           auth_mode: p.auth_mode || (p.provider === 'openai_subscription' ? 'chatgpt' : 'api_key'),
           base_url: p.base_url, api_key: p.api_key, model: p.model,
@@ -142,8 +143,8 @@ function _liveAdminModelAdapter() {
       } catch (_) {}
       return {
         openrouter:  { name: 'OpenRouter',      base_url: 'https://openrouter.ai/api/v1' },
-        openai:      { name: 'OpenAI API',       base_url: 'https://api.openai.com/v1' },
-        openai_subscription: { name: 'OpenAI Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt' },
+        openai:      { name: 'ChatGPT API',       base_url: 'https://api.openai.com/v1' },
+        openai_subscription: { name: 'ChatGPT Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt' },
         gemini:      { name: 'Google Gemini',    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
         groq:        { name: 'Groq',             base_url: 'https://api.groq.com/openai/v1' },
         together:    { name: 'Together AI',       base_url: 'https://api.together.xyz/v1' },
@@ -223,6 +224,7 @@ function _markModelScopeDirty() {
 function _modelRosterEntry(provider) {
   return {
     entry_id: provider.entry_id || '',
+    alias_group_id: provider.alias_group_id || '',
     display_name: provider.display_name || '',
     provider: provider.provider === '_custom' ? 'custom' : provider.provider,
     auth_mode: provider.auth_mode || (provider.provider === 'openai_subscription' ? 'chatgpt' : 'api_key'),

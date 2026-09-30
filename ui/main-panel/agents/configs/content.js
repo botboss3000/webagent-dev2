@@ -1271,8 +1271,8 @@ export function _renderConfigTab(body, agent, panelEl, _renderList, { onPageChan
         } catch (_) {}
         return {
           openrouter:  { name: 'OpenRouter',      base_url: 'https://openrouter.ai/api/v1' },
-          openai:      { name: 'OpenAI API',       base_url: 'https://api.openai.com/v1' },
-          openai_subscription: { name: 'OpenAI Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt' },
+          openai:      { name: 'ChatGPT API',       base_url: 'https://api.openai.com/v1' },
+          openai_subscription: { name: 'ChatGPT Subscription', base_url: 'codex://chatgpt', auth_mode: 'chatgpt' },
           gemini:      { name: 'Google Gemini',    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
           groq:        { name: 'Groq',             base_url: 'https://api.groq.com/openai/v1' },
           together:    { name: 'Together AI',       base_url: 'https://api.together.xyz/v1' },

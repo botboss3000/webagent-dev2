@@ -67,6 +67,76 @@ class ChatCoreTests(unittest.IsolatedAsyncioTestCase):
             "ui":"agent_auth","local_signup_mode":"invite","app_login_enabled":True})
         self.assertNotIn("must-not-publish",json.dumps(snapshot))
 
+    async def test_generated_file_is_a_durable_typed_public_item(self):
+        from unittest.mock import patch
+        from app.chat.runtime import Execution
+        run,generation=await self.start()
+        descriptor={"kind":"file_attachment","status":"ok","filename":"plot.png",
+                    "mime_type":"image/png","url":"/api/v1/content/token","bytes":42,
+                    "private_path":"must-not-publish"}
+        with patch("app.chat.publication.decode_content_grant",return_value={
+            "user_id":"alice","source_type":"artifact","artifact_id":"artifact-one"}):
+            await Execution(self.repo,run,generation).observe({
+                "type":"tool_result","tool":"save_file","result":json.dumps(descriptor)})
+        snapshot=await self.repo.snapshot("s")
+        item=next(item for item in snapshot["items"] if item["kind"]=="attachment")
+        self.assertEqual(item["payload"],{
+            "artifact_id":"artifact-one","source_type":"artifact",
+            "original_name":"plot.png","mime_type":"image/png","size_bytes":42})
+        self.assertNotIn("token",json.dumps(snapshot))
+        self.assertNotIn("must-not-publish",json.dumps(snapshot))
+        replay=await self.repo.snapshot("s")
+        self.assertEqual(replay["items"],snapshot["items"])
+
+    async def test_generated_file_cannot_publish_another_users_grant(self):
+        from unittest.mock import patch
+        from app.chat.runtime import Execution
+        run,generation=await self.start()
+        with patch("app.chat.publication.decode_content_grant",return_value={
+            "user_id":"bob","source_type":"artifact","artifact_id":"artifact-one"}):
+            await Execution(self.repo,run,generation).observe({
+                "type":"tool_result","tool":"save_file","result":{
+                    "kind":"file_attachment","status":"ok","filename":"secret.txt",
+                    "mime_type":"text/plain","url":"/api/v1/content/token","bytes":1}})
+        snapshot=await self.repo.snapshot("s")
+        self.assertFalse(any(item["kind"]=="attachment" for item in snapshot["items"]))
+
+    async def test_generated_images_and_screenshot_publish_owned_media(self):
+        from unittest.mock import patch
+        from app.chat.runtime import Execution
+        run,generation=await self.start()
+        def grant(token):
+            return {"user_id":"alice","source_type":"path",
+                    "storage_path":"alice/visuals/"+token+".png",
+                    "original_name":token+".png","mime_type":"image/png"}
+        with patch("app.chat.publication.decode_content_grant",side_effect=grant), \
+             patch("app.chat.publication.register_path_artifact",
+                   side_effect=["image-one","image-two","screenshot"]):
+            execution=Execution(self.repo,run,generation)
+            await execution.observe({"type":"tool_result","tool":"generate_image",
+                "result":{"status":"ok","images":[
+                    "/api/v1/content/one","/api/v1/content/two"]}})
+            await execution.observe({"type":"tool_result","tool":"browser_action",
+                "result":{"success":True,"mime_type":"image/png",
+                          "result":"/api/v1/content/shot"}})
+        snapshot=await self.repo.snapshot("s")
+        media=[item["payload"] for item in snapshot["items"] if item["kind"]=="attachment"]
+        self.assertEqual([item["artifact_id"] for item in media],
+                         ["image-one","image-two","screenshot"])
+
+    async def test_closer_summary_projects_once_after_final_answer(self):
+        run,generation=await self.start()
+        await self.pub.final(run,generation,"Done.",{"flag":"complete","cta":"Open"})
+        first=await self.repo.publish_closer_summary("s","closer-row","Summary of work.")
+        second=await self.repo.publish_closer_summary("s","closer-row","Summary of work.")
+        self.assertEqual(first["id"],second["id"])
+        snapshot=await self.repo.snapshot("s")
+        self.assertEqual([item["kind"] for item in snapshot["items"]],
+                         ["user","answer","notice"])
+        self.assertEqual(snapshot["items"][-1]["payload"]["control"]["kind"],
+                         "output_closer")
+        self.assertEqual(snapshot["items"][-1]["payload"]["text"],"Summary of work.")
+
     async def test_unsupported_interactive_tool_result_is_explicit(self):
         from app.chat.runtime import Execution
         run,generation=await self.start()

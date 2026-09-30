@@ -1412,7 +1412,9 @@ const _ENGINE_CATALOG = {
     label: 'Codex',
     models: [
       { v: '', label: 'Default', sub: "Codex's own default" },
-      { v: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', sub: 'Latest frontier agentic coding model.' },
+      { v: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', sub: 'Near-Astra performance for complex work at a lower cost.' },
+      { v: 'gpt-6-astra', label: 'GPT-6 Astra', sub: 'Most capable model for demanding work.' },
+      { v: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', sub: 'Frontier agentic coding model.' },
       { v: 'gpt-5.6-terra', label: 'GPT-5.6-Terra', sub: 'Balanced agentic coding model for everyday work.' },
       { v: 'gpt-5.6-luna', label: 'GPT-5.6-Luna', sub: 'Fast and affordable agentic coding model.' },
       { v: 'gpt-5.5', label: 'GPT-5.5', sub: 'Frontier model for complex coding, research, and real-world work.' },
@@ -3405,16 +3407,14 @@ export function initChatActivity() {
     const ticks = document.createElement('span');
     ticks.className = 'cml-effort-ticks';
     ticks.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 4; i += 1) ticks.appendChild(document.createElement('i'));
+    ticks.replaceChildren();
     effort.appendChild(ticks);
     const slider = document.createElement('input');
     slider.className = 'cml-effort-slider';
     slider.type = 'range';
     slider.min = '0';
-    slider.max = '3';
-    // A half step is reserved for the visual-only Default state, positioned
-    // midway between Low and Medium. User input is snapped to named levels.
-    slider.step = '0.5';
+    slider.max = '0';
+    slider.step = '1';
     slider.setAttribute('aria-label', 'Reasoning effort');
     slider.addEventListener('input', () => {
       slider.classList.remove('is-default');
@@ -3488,15 +3488,11 @@ export function initChatActivity() {
   // ── Persistent effort slider ─────────────────────────────────────────────
   // This is a panel-level control, not a model-row popover. It always controls
   // the active visible model and stays below the independently scrolling roster.
-  const _modelEffortLevels = ['minimal', 'low', 'medium', 'high'];
-
-  // User-facing names for the read-out under the slider. Positional and
-  // bottom-up: the four named ticks read Low → Medium → High → Ultra Effort.
+  let _modelEffortLevels = ['default'];
   const _modelEffortLabels = {
-    minimal: 'Low Effort',
-    low: 'Medium Effort',
-    medium: 'High Effort',
-    high: 'Ultra Effort',
+    none: 'None', minimal: 'Minimal Effort', low: 'Low Effort',
+    medium: 'Medium Effort', high: 'High Effort',
+    xhigh: 'Extra High Effort', max: 'Max Effort',
   };
   const _defaultEffortLabel = 'Default Effort';
 
@@ -3504,6 +3500,7 @@ export function initChatActivity() {
     try {
       const headers = { 'Content-Type': 'application/json', ...authHeaders() };
       const sid = app.currentSessionId || '';
+      if (!sid) return false;
       const payload = {
         slot_ref: slotRef,
         reasoning_effort: effort,
@@ -3520,9 +3517,8 @@ export function initChatActivity() {
     } catch (_) { return false; }
   }
 
-  // The empty session state is intentionally distinct from Minimal. It sends no
-  // provider effort hint and is displayed at the midpoint of the named range.
-  const _defaultEffortSliderIndex = (_modelEffortLevels.length - 1) / 2;
+  // Default is a selectable tick that clears the saved provider hint.
+  const _defaultEffortSliderIndex = 0;
 
   function _effortSliderIndex(value) {
     return Math.max(0, Math.min(_modelEffortLevels.length - 1, Math.round(Number(value) || 0)));
@@ -3543,11 +3539,12 @@ export function initChatActivity() {
   }
 
   function _paintModelListEffort(slider) {
-    const isDefault = slider.classList.contains('is-default');
-    const index = isDefault ? _defaultEffortSliderIndex : _effortSliderIndex(slider.value);
+    const index = _effortSliderIndex(slider.value);
     const level = _modelEffortLevels[index];
+    const isDefault = level === 'default';
+    slider.classList.toggle('is-default', isDefault);
     const label = isDefault ? _defaultEffortLabel : (_modelEffortLabels[level] || level);
-    const progress = `${(index / (_modelEffortLevels.length - 1)) * 100}%`;
+    const progress = `${(index / Math.max(1, _modelEffortLevels.length - 1)) * 100}%`;
     slider.style.setProperty('--cml-effort-progress', progress);
     const bar = slider.closest('.cml-effort-bar');
     bar?.style.setProperty('--cml-effort-progress', progress);
@@ -3565,7 +3562,12 @@ export function initChatActivity() {
     const slider = _modelListPanelEffort && _modelListPanelEffort.querySelector('.cml-effort-slider');
     if (!slider) return;
     const slot = (_allSlots || []).find(s => _slotRef(s) === _currentSlotRef) || (_allSlots || [])[0];
-    const disabled = !slot;
+    // Levels come from the real backend model even when its public name is an alias.
+    _modelEffortLevels = ['default', ...(slot?.reasoning_efforts || [])];
+    slider.max = String(_modelEffortLevels.length - 1);
+    const ticks = _modelListPanelEffort.querySelector('.cml-effort-ticks');
+    ticks.replaceChildren(..._modelEffortLevels.map(() => document.createElement('i')));
+    const disabled = !slot || !app.currentSessionId || _modelEffortLevels.length === 1;
     slider.disabled = disabled;
     slider.dataset.slotRef = disabled ? '' : _slotRef(slot);
     const level = _effortForModelSlot(slot);

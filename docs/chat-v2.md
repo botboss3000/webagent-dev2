@@ -87,14 +87,38 @@ Implemented in the isolated instance:
   session dropdown, and Sessions view. The notification API pages across all
   active sessions, and a read/unread change updates those surfaces.
 
-Still required: selected configuration/agent seeding, complete execution adapter
-coverage, typed transcript artifacts, compaction coordination, widget/embed/voice
-and other integrations, and removal of remaining legacy helpers, APIs, and
-browser authority paths. Attachment rendering remains incomplete in the main panel.
+Still required: broader agent and provider configuration coverage, remaining
+integrations, and removal of legacy helpers, APIs, and browser authority paths.
+Manual compaction, voice routing/control, and the served embed chat have V2 wiring;
+their full live integration matrix is not complete. Trusted save_file/attach_file
+results, generated images, and browser screenshots now publish durable, owner-scoped
+attachment items with stable artifact IDs. The main panel, floating widget, and
+served embed resolve fresh content grants and render media previews or downloads.
+Other agent-generated files must use the User Files producer contract to enter
+the public transcript. The Background Output
+Closer now projects its persisted summary once as a public notice; its legacy
+system interaction remains the recovery and audit source.
 Elements are owner-only session resources, synchronized separately from the public
-transcript through the V2 components endpoint. Admin activity groups are now connected as described below. The complete browser/fault/performance/regression
-matrix remains outstanding; this is not a finished or accepted chat rebuild.
-Provider credentials have not been copied or configured.
+transcript through the V2 components endpoint. Admin activity groups are now connected
+as described below. The complete browser/fault/performance/regression matrix remains
+outstanding; this is not a finished or accepted chat rebuild.
+
+The current shared-default agent has a Standard role assigned to a model. On
+2026-09-29 a new development chat generated one real, completed answer through
+the V2 main panel. Credential readiness for other agents and model roles remains
+unverified. The shared agent engine still supplies context, model calls, and tools;
+V2 owns acceptance, lease, private journal, publication, stop, and recovery.
+A scripted-provider integration test now drives a real safe tool and final answer
+through the agent loop into V2 storage and the authenticated snapshot/event
+endpoints. Additional deterministic checks exercise two agent identities across
+Ask, Plan, Auto, and Workspace modes; model-role authorization and publication;
+private reasoning; provider open/stream failures; DeepSeek transport fallback;
+OpenAI subscription request construction; a failing tool; interactive-tool
+privacy; attachment ownership; and image prompt formatting. Provider responses
+and authentication in those checks are scripted. Other live agent credentials,
+provider variants, process interruption, and the full attachment/vision journey
+remain unverified. Live generated-file, closer recovery, and media journeys
+remain unverified.
 
 Verification uses disposable databases and deterministic fixtures. The core suite
 covers acceptance conflicts, privacy, snapshot/replay equivalence, terminal
@@ -108,9 +132,10 @@ docker run --rm --network none --user 1000:1000 --entrypoint python \
   -m pytest -q -p no:cacheprovider tests/test_chat_v2_core.py
 ```
 
-Current focused checks: 58 backend and 48 client tests pass, including
-notification paging, acknowledgement, and older-message state/transport
-coverage. The main panel's 66-module dependency graph links successfully.
+Focused checks on 2026-09-29: 90 V2 backend tests (plus 8 agent/mode subcases)
+and 50 client tests passed, including notification paging, acknowledgement,
+older-message state/transport, compaction, and the scripted engine and provider
+matrices. The main panel's 66-module dependency graph links successfully.
 Projection tests use a deterministic DOM double, not a browser; they establish
 identity/reconciliation behavior but do not establish visual or latency acceptance.
 A live V2 API run confirmed send deduplication, conflicting-key rejection,
@@ -118,8 +143,9 @@ malformed-payload rejection, Stop terminality, linked Continue, acknowledgement
 bounds, concurrent deduplication, and public replay matching a snapshot across
 a V2 restart. Anonymous event access returned 401. Idle SSE requests completed
 in about 1.1 seconds. The bounded event feed is a sequence of authenticated
-SSE responses, each followed immediately by a cursor-based reconnect. The agent still lacks a
-Standard model role, so real answer generation remains unverified.
+SSE responses, each followed immediately by a cursor-based reconnect. The
+2026-09-29 real-answer check used the public development site in a new Codex
+in-app browser tab; attached Chrome acceptance remains unavailable.
 
 Run client tests on the server:
 
@@ -194,3 +220,15 @@ Focused checks: `tests/test_chat_v2_activity.py` and
 `tests/chat_v2_activity.test.mjs`. The public state/transport/projection tests
 remain applicable. Browser verification used the Codex in-app browser on the
 public development URL; attached-Chrome acceptance remains unverified.
+
+The footer reasoning-effort slider receives model-supported, tier-filtered levels
+from the agent-models endpoint, independently of the model's public alias.
+GPT-6.1 Sol and GPT-6 Astra offer Low, Medium, High, Extra High, and Max; Default
+clears the per-entry session override. Admin accounts can use Max, while other
+tiers retain their configured ceilings. The v2 model-effort endpoint rejects
+unsupported levels before storing them. Responses requests send
+`reasoning.effort`; native OpenAI Chat Completions sends `reasoning_effort`.
+Legacy Minimal hints for these two models resolve to Low within the tier ceiling.
+The slider is disabled until a session exists, and for models without supported
+reasoning levels. Deterministic API/transport checks cover these paths; attached
+browser and live-provider inference acceptance remain separate checks.

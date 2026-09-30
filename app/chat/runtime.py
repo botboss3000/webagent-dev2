@@ -46,6 +46,8 @@ async def submit(request, actor, repo, session, command):
     if receipt is not None:
         schedule(repo.owner_id,receipt["run_id"])
         return {**receipt,"status":"accepted","session_id":session["id"]}
+    if actor.startswith("anon_") and len(command.text)>32000:
+        raise Conflict("Anonymous messages are limited to 32,000 characters")
     from app.chat.execution import _is_compact_command
     compact = _is_compact_command(command.text)
     if compact and (command.attachment_ids or command.app_control or command.display_text is not None):
@@ -116,7 +118,12 @@ class Execution:
                 result=json.loads(result) if isinstance(result,str) else result
             except (ValueError,TypeError):
                 result=None
-            if isinstance(result,dict) and result.get("ui")=="agent_auth":
+            if isinstance(result,dict) and result.get("kind")=="file_attachment":
+                await self.publication.artifact(
+                    self.run_id,self.generation,event.get("tool"),result)
+            elif isinstance(result,dict) and event.get("tool") in {"generate_image","browser_action"}:
+                await self.publication.media(self.run_id,self.generation,event.get("tool"),result)
+            elif isinstance(result,dict) and result.get("ui")=="agent_auth":
                 await self.publication.agent_auth(self.run_id,self.generation,result)
             elif isinstance(result,dict) and isinstance(result.get("ui"),str):
                 await self.publication.notice(

@@ -395,7 +395,7 @@ export function mountModelTable(host, opts = {}) {
     } catch { return {}; }
   }
   async function fetchModels(args) {
-    if (adapter.fetchModels) return adapter.fetchModels(args);
+    // Subscription discovery is shared and scoped, including catalog adapters.
     if (args.provider === 'openai_subscription') {
       try {
         const r = await subscriptionRequest('/api/v1/openai-subscription/models');
@@ -403,6 +403,7 @@ export function mountModelTable(host, opts = {}) {
         return await r.json();
       } catch (e) { return { models: [], error: e.message }; }
     }
+    if (adapter.fetchModels) return adapter.fetchModels(args);
     const params = new URLSearchParams({ provider: args.provider || '' });
     if (args.api_key && args.base_url) { params.set('api_key', args.api_key); params.set('base_url', args.base_url); }
     try {
@@ -518,7 +519,10 @@ export function mountModelTable(host, opts = {}) {
   loadCredentialBtn.textContent = 'Load'; loadCredentialBtn.title = 'Load a saved credential for this provider';
   const saveCredentialBtn = document.createElement('button');
   saveCredentialBtn.type = 'button'; saveCredentialBtn.className = 'ac-btn ac-btn-ghost ac-btn-sm';
-  saveCredentialBtn.textContent = 'Save'; saveCredentialBtn.title = 'Save this API key to your private credential vault';
+  saveCredentialBtn.textContent = 'Save'; saveCredentialBtn.title = 'Validate a credential before saving it';
+  saveCredentialBtn.disabled = true;
+  let validatedCredential = '';
+  let credentialValidationTimer = null;
   const credentialSaveCheck = makeCheck();
   const credentialSelect = document.createElement('select');
   credentialSelect.className = 'ac-input ac-input-sm'; credentialSelect.setAttribute('aria-label', 'Saved credentials');
@@ -543,7 +547,10 @@ export function mountModelTable(host, opts = {}) {
   subscriptionConnect.type = 'button';
   subscriptionConnect.className = 'ac-btn ac-btn-primary ac-btn-sm';
   subscriptionConnect.textContent = 'Click to Issue verification code';
-  subscriptionCtrl.append(subscriptionState, subscriptionConnect);
+  const subscriptionActions = document.createElement('span');
+  subscriptionActions.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+  subscriptionActions.appendChild(subscriptionConnect);
+  subscriptionCtrl.append(subscriptionState, subscriptionActions);
   subscriptionRow.appendChild(subscriptionCtrl);
   table.appendChild(subscriptionRow);
   const displayNameHelp = 'Your own name for this model, shown to users wherever the model appears. '
@@ -685,7 +692,7 @@ export function mountModelTable(host, opts = {}) {
   savedCredentialsSection.className = 'ac-row ac-saved-credentials';
   const savedCredentialsHead = document.createElement('div');
   savedCredentialsHead.className = 'ac-ability-row';
-  savedCredentialsHead.innerHTML = '<span class="ac-ability-label"><span class="ac-ability-name">Saved credentials</span><span class="ac-ability-desc">Private API keys and connected subscriptions available to this account.</span></span>';
+  savedCredentialsHead.innerHTML = '<span class="ac-ability-label"><span class="ac-ability-name">Saved credentials</span><span class="ac-ability-desc">API keys and connected subscriptions saved in this model table’s vault.</span></span>';
   const savedCredentialsBody = document.createElement('div');
   savedCredentialsBody.className = 'ac-ability-body';
   savedCredentialsSection.append(savedCredentialsHead, savedCredentialsBody);
@@ -1124,6 +1131,7 @@ export function mountModelTable(host, opts = {}) {
     subscriptionCountdownHandles.add(timer);
   }
   function matchingSubscriptionRow() {
+    if (pendingSubscriptionRow) return pendingSubscriptionRow;
     const rows = S.providers.filter(row => row.provider === 'openai_subscription');
     if (S.selectedModel) {
       const matches = rows.filter(row => row.model === S.selectedModel);
@@ -1153,6 +1161,13 @@ export function mountModelTable(host, opts = {}) {
       return;
     }
     const subscription = isSubscriptionProvider();
+    // Reuse the API row's credential controls, feedback, and picker in the
+    // subscription row; the OAuth secret stays entirely server-side.
+    const credentialHost = subscription ? subscriptionActions : keyCtrl;
+    [loadCredentialBtn, saveCredentialBtn, credentialSaveCheck, credentialSelect].forEach(control => credentialHost.appendChild(control));
+    const vaultName = subscriptionScope === 'agent' ? "this agent's" : subscriptionScope === 'platform' ? "the app's" : 'your personal';
+    saveCredentialBtn.title = `Save this validated credential to ${vaultName} vault`;
+    updateCredentialSaveState();
     urlRow.style.display = subscription ? 'none' : '';
     keyRow.style.display = subscription ? 'none' : '';
     subscriptionRow.style.display = subscription ? '' : 'none';
@@ -1201,6 +1216,7 @@ export function mountModelTable(host, opts = {}) {
       row.credential_plan_type = state?.plan_type || '';
       if (row.credential_configured) {
         subscriptionVerification = null;
+        await loadModels();
         setModelStatus('ChatGPT account authorized.', true);
         renderSaved();
       } else {
@@ -1341,21 +1357,21 @@ export function mountModelTable(host, opts = {}) {
   }
   async function listSavedCredentials() {
     if (adapter.listCredentials) return adapter.listCredentials();
-    return credentialResponse(await fetchFn(apiPath('/api/v1/entitlements/me/model-credentials')));
+    return credentialResponse(await subscriptionRequest('/api/v1/entitlements/me/model-credentials'));
   }
   async function loadSavedCredential(label) {
     if (adapter.loadCredential) return adapter.loadCredential(label);
-    return credentialResponse(await fetchFn(apiPath(`/api/v1/entitlements/me/model-credentials/${encodeURIComponent(label)}`)));
+    return credentialResponse(await subscriptionRequest(`/api/v1/entitlements/me/model-credentials/${encodeURIComponent(label)}`));
   }
   async function saveSavedCredential(payload) {
     if (adapter.saveCredential) return adapter.saveCredential(payload);
-    return credentialResponse(await fetchFn(apiPath('/api/v1/entitlements/me/model-credentials'), {
+    return credentialResponse(await subscriptionRequest('/api/v1/entitlements/me/model-credentials', '', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }));
   }
   async function deleteSavedCredential(label) {
     if (adapter.deleteCredential) return adapter.deleteCredential(label);
-    return credentialResponse(await fetchFn(apiPath(`/api/v1/entitlements/me/model-credentials/${encodeURIComponent(label)}`), { method: 'DELETE' }));
+    return credentialResponse(await subscriptionRequest(`/api/v1/entitlements/me/model-credentials/${encodeURIComponent(label)}`, '', { method: 'DELETE' }));
   }
   const currentCredentialProvider = () => S.currentProvider === '_custom' ? 'custom' : S.currentProvider;
   async function renderSavedCredentials() {
@@ -1404,20 +1420,23 @@ export function mountModelTable(host, opts = {}) {
   }
   async function showCredentialPicker() {
     const provider = currentCredentialProvider();
-    if (!provider || provider === 'webagent_catalog' || isSubscriptionProvider()) {
-      setModelStatus('Saved API credentials are available for API-key providers.');
+    if (!provider || provider === 'webagent_catalog') {
+      setModelStatus('Select a provider to load its saved credentials.');
       return;
     }
     loadCredentialBtn.disabled = true;
     try {
-      const data = await listSavedCredentials();
-      const matches = (Array.isArray(data?.credentials) ? data.credentials : []).filter((credential) => credential.kind === 'api_key' && credential.provider === provider);
+      const data = isSubscriptionProvider()
+        ? await credentialResponse(await subscriptionRequest('/api/v1/openai-subscription/credentials'))
+        : await listSavedCredentials();
+      const kind = isSubscriptionProvider() ? 'subscription' : 'api_key';
+      const matches = (Array.isArray(data?.credentials) ? data.credentials : []).filter((credential) => credential.kind === kind && credential.provider === provider);
       credentialSelect.replaceChildren();
       const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = matches.length ? 'Select saved credential…' : `No saved ${provider} credentials`;
       credentialSelect.appendChild(placeholder);
       matches.forEach((credential) => {
         const option = document.createElement('option'); option.value = credential.label;
-        option.textContent = `${credential.label}${credential.credential_suffix ? ` (••••${credential.credential_suffix})` : ''}`;
+        option.textContent = `${credential.label}${credential.credential_email ? ` (${credential.credential_email})` : ''}${credential.credential_suffix ? ` (••••${credential.credential_suffix})` : ''}`;
         credentialSelect.appendChild(option);
       });
       credentialSelect.hidden = false;
@@ -1430,6 +1449,27 @@ export function mountModelTable(host, opts = {}) {
     if (!label) return;
     credentialSelect.disabled = true;
     try {
+      if (isSubscriptionProvider()) {
+        const data = await credentialResponse(await subscriptionRequest(
+          '/api/v1/openai-subscription/credentials/load', '', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label }),
+          },
+        ));
+        if (!data.entry_id || !data.credential?.credential_configured) throw new Error('Saved subscription is unavailable.');
+        pendingSubscriptionRow = {
+          entry_id: data.entry_id, provider: 'openai_subscription', auth_mode: 'chatgpt',
+          credential_scope: subscriptionScope, credential_configured: true,
+          credential_email: data.credential.credential_email || '',
+          credential_plan_type: data.credential.credential_plan_type || '',
+        };
+        subscriptionVerification = null;
+        credentialSelect.hidden = true; credentialSelect.value = '';
+        renderSubscriptionAuth();
+        setModelStatus(`Loaded saved credential “${data.credential.label}”.`, true);
+        await loadModels();
+        return;
+      }
       const data = await loadSavedCredential(label);
       const credential = data?.credential || {};
       if (!data?.api_key) throw new Error('Saved credential is unavailable.');
@@ -1450,10 +1490,66 @@ export function mountModelTable(host, opts = {}) {
     advToggle.classList.add('ac-model-credential-pulse');
     advToggle._credentialPulseT = setTimeout(() => advToggle.classList.remove('ac-model-credential-pulse'), 1800);
   }
+  function credentialFingerprint() {
+    return JSON.stringify([S.currentProvider, urlInput.value.trim(), keyInput.value.trim()]);
+  }
+  function updateCredentialSaveState() {
+    saveCredentialBtn.disabled = isSubscriptionProvider()
+      ? !matchingSubscriptionRow()?.credential_configured || !!activeSubscriptionVerification()
+      : !keyInput.value.trim() || !urlInput.value.trim() || validatedCredential !== credentialFingerprint();
+  }
+  function scheduleCredentialValidation() {
+    validatedCredential = '';
+    updateCredentialSaveState();
+    clearTimeout(credentialValidationTimer);
+    if (isSubscriptionProvider() || !keyInput.value.trim() || !urlInput.value.trim()) return;
+    const fingerprint = credentialFingerprint();
+    credentialValidationTimer = setTimeout(async () => {
+      try {
+        const data = await credentialResponse(await subscriptionRequest(
+          '/api/v1/entitlements/me/model-credentials/validate', '', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              label: 'Credential validation', provider: currentCredentialProvider(),
+              base_url: urlInput.value.trim(), api_key: keyInput.value.trim(),
+            }),
+          },
+        ));
+        if (data.validated && credentialFingerprint() === fingerprint) validatedCredential = fingerprint;
+      } catch (_) { /* Save remains disabled until this exact credential validates. */ }
+      if (credentialFingerprint() === fingerprint) updateCredentialSaveState();
+    }, 500);
+  }
+
+  async function saveCurrentSubscriptionCredential() {
+    const row = matchingSubscriptionRow();
+    if (!row?.entry_id || !row.credential_configured || activeSubscriptionVerification(row)) return setModelStatus('Connect and validate the subscription before saving its credential.');
+    const label = `${S.presets[S.currentProvider]?.name || 'ChatGPT Subscription'} credential`;
+    saveCredentialBtn.disabled = true;
+    try {
+      const data = await credentialResponse(await subscriptionRequest(
+        '/api/v1/openai-subscription/credentials/save', row.entry_id, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label }),
+        },
+      ));
+      flashCheck(credentialSaveCheck, true);
+      pulseAdvancedCredential();
+      setModelStatus(`Saved credential “${data?.credential?.label || label}”.`, true);
+      if (advRow.classList.contains('expanded')) await renderSavedCredentials();
+    } catch (error) {
+      row.credential_configured = false;
+      renderSubscriptionAuth();
+      setModelStatus(error.message || 'Could not save subscription credential.');
+    }
+    finally { updateCredentialSaveState(); }
+  }
+
   async function saveCurrentCredential() {
+    if (isSubscriptionProvider()) return saveCurrentSubscriptionCredential();
     const apiKey = keyInput.value.trim();
     const provider = currentCredentialProvider();
-    if (!apiKey) return setModelStatus('Enter an API key before saving it.');
+    if (!apiKey || validatedCredential !== credentialFingerprint()) return setModelStatus('Enter and validate the provider credential before saving.');
     if (!provider || provider === 'webagent_catalog' || isSubscriptionProvider()) return setModelStatus('Select an API-key provider before saving.');
     const label = `${S.presets[provider]?.name || provider} credential`;
     saveCredentialBtn.disabled = true;
@@ -1463,8 +1559,11 @@ export function mountModelTable(host, opts = {}) {
       pulseAdvancedCredential();
       setModelStatus(`Saved credential “${data?.credential?.label || label}”.`, true);
       if (advRow.classList.contains('expanded')) await renderSavedCredentials();
-    } catch (error) { setModelStatus(error.message || 'Could not save credential.'); }
-    finally { saveCredentialBtn.disabled = false; }
+    } catch (error) {
+      scheduleCredentialValidation();
+      setModelStatus(error.message || 'Could not save credential.');
+    }
+    finally { updateCredentialSaveState(); }
   }
 
   // ── Saved-models (roster) rendering ──
@@ -2812,6 +2911,7 @@ export function mountModelTable(host, opts = {}) {
     const saved = S.providerConfigs[S.currentProvider];
     urlInput.value = (saved && saved.base_url) || S.presets[S.currentProvider]?.base_url || '';
     keyInput.value = ''; keyInput.placeholder = 'sk-...';
+    validatedCredential = ''; clearTimeout(credentialValidationTimer);
     credentialSelect.hidden = true; credentialSelect.replaceChildren();
     S.selectedModel = (saved && saved.model) || '';
     modelSearch.value = S.selectedModel;
@@ -2822,8 +2922,8 @@ export function mountModelTable(host, opts = {}) {
     loadModels();
     autosaveSingle(provCheck);
   });
-  keyInput.addEventListener('input', () => { scheduleFetch(); scheduleAutosave(keyCheck); });
-  urlInput.addEventListener('input', () => { scheduleFetch(); scheduleAutosave(urlCheck); });
+  keyInput.addEventListener('input', () => { scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(keyCheck); });
+  urlInput.addEventListener('input', () => { scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(urlCheck); });
   loadCredentialBtn.addEventListener('click', showCredentialPicker);
   saveCredentialBtn.addEventListener('click', saveCurrentCredential);
   credentialSelect.addEventListener('change', () => applySavedCredential(credentialSelect.value));
@@ -3008,6 +3108,7 @@ export function mountModelTable(host, opts = {}) {
     window.visualViewport?.removeEventListener('scroll', repositionDropdowns);
     modelDd.remove();
     provDd.remove();   // portaled to body when open, so it needs removing too
+    clearTimeout(credentialValidationTimer);
     host.innerHTML = '';
   }
 

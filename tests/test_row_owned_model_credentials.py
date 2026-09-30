@@ -4,9 +4,12 @@ import re
 
 import pytest
 
-from app.admin.settings import _assign_slots, _runtime_config_from_roster
+from app.admin.settings import (
+    _assign_slots, _runtime_config_from_roster, alias_failover_candidates,
+)
 from app.entitlements.rosters import (
-    RosterError, assign_entry_ids, validate_live_voice_assignments,
+    RosterError, assign_entry_ids, normalize_alias_groups, normalize_entries,
+    validate_live_voice_assignments,
 )
 
 
@@ -52,6 +55,96 @@ def test_backend_preserves_owned_and_server_catalog_ids_but_rejects_unknown_or_d
 
     with pytest.raises(RosterError, match="duplicate roster entry_id"):
         assign_entry_ids([dict(owned), dict(owned)], existing_entries=[owned, platform_catalog])
+
+
+def test_alias_groups_repair_partial_relationships_to_one_stable_root():
+    rows = normalize_alias_groups([
+        {"entry_id": "one", "provider": "openai", "model": "gpt-a"},
+        {"entry_id": "two", "alias_group_id": "one", "provider": "openai", "model": "gpt-b"},
+        {"entry_id": "three", "alias_group_id": "two", "provider": "openai", "model": "gpt-c"},
+    ])
+
+    assert [row.get("alias_group_id") for row in rows] == ["one", "one", "one"]
+
+
+def test_alias_group_deleted_root_recanonicalizes_and_singleton_dissolves():
+    existing = [
+        {"entry_id": "one", "alias_group_id": "one", "provider": "openai", "model": "gpt-a"},
+        {"entry_id": "two", "alias_group_id": "one", "provider": "openai", "model": "gpt-b"},
+        {"entry_id": "three", "alias_group_id": "one", "provider": "openai", "model": "gpt-c"},
+    ]
+
+    survivors = assign_entry_ids(existing[1:], existing_entries=existing)
+    assert [row["alias_group_id"] for row in survivors] == ["two", "two"]
+
+    singleton = assign_entry_ids([existing[2]], existing_entries=existing)
+    assert "alias_group_id" not in singleton[0]
+
+
+def test_new_alias_gets_its_own_entry_id_and_keeps_anchor_identity():
+    root = {"entry_id": "one", "provider": "openai", "model": "same", "api_key": "root-key"}
+    rows = assign_entry_ids([
+        {**root, "alias_group_id": "one"},
+        {"alias_group_id": "one", "provider": "openai", "model": "same", "api_key": "alias-key"},
+    ], existing_entries=[root])
+
+    assert rows[0]["entry_id"] == "one"
+    assert rows[1]["entry_id"] != "one"
+    assert UUID4.fullmatch(rows[1]["entry_id"])
+    assert [row["alias_group_id"] for row in rows] == ["one", "one"]
+    assert [row["api_key"] for row in rows] == ["root-key", "alias-key"]
+
+
+def test_deterministic_roster_normalization_repairs_aliases_after_ids_exist():
+    rows = normalize_entries("roster-test", [
+        {"provider": "openai", "model": "gpt-a"},
+        {"provider": "openai", "model": "gpt-b"},
+    ])
+    root = rows[0]["entry_id"]
+    regrouped = normalize_entries("roster-test", [
+        {**rows[0], "alias_group_id": root},
+        {**rows[1], "alias_group_id": root},
+    ])
+
+    assert [row["alias_group_id"] for row in regrouped] == [root, root]
+
+
+def test_alias_failover_candidates_preserve_order_credentials_and_skip_unusable_rows():
+    root = "root"
+    roster = [
+        {"entry_id": root, "alias_group_id": root, "provider": "openai", "model": "primary",
+         "base_url": "https://primary.example/v1", "api_key": "primary-key", "text_capable": True},
+        {"entry_id": "disabled", "alias_group_id": root, "provider": "openai", "model": "disabled",
+         "api_key": "disabled-key", "enabled": False},
+        {"entry_id": "vision", "alias_group_id": root, "provider": "openai", "model": "vision",
+         "api_key": "vision-key", "text_capable": False},
+        {"entry_id": "missing-key", "alias_group_id": root, "provider": "openai", "model": "missing"},
+        {"entry_id": "second", "alias_group_id": root, "provider": "openrouter", "model": "backup-2",
+         "base_url": "https://openrouter.ai/api/v1", "api_key": "second-key"},
+        {"entry_id": "third", "alias_group_id": root, "provider": "ollama", "model": "backup-3",
+         "base_url": "http://localhost:11434/v1", "api_key": ""},
+    ]
+    config = {**roster[0], "multi_providers": roster, "role_assignments": {"standard": root}}
+
+    candidates = alias_failover_candidates(config)
+
+    assert [row["entry_id"] for row in candidates] == [root, "second", "third"]
+    assert [row["api_key"] for row in candidates] == ["primary-key", "second-key", ""]
+    assert candidates[1]["base_url"] == "https://openrouter.ai/api/v1"
+    assert candidates[2]["provider"] == "ollama"
+    assert all(row["multi_providers"] == candidates[0]["multi_providers"] for row in candidates)
+
+
+def test_alias_failover_candidates_do_not_expand_ungrouped_selection():
+    config = {
+        "entry_id": "only", "provider": "openai", "model": "primary", "api_key": "key",
+        "multi_providers": [
+            {"entry_id": "only", "provider": "openai", "model": "primary", "api_key": "key"},
+            {"entry_id": "other", "provider": "openai", "model": "other", "api_key": "other-key"},
+        ],
+    }
+
+    assert alias_failover_candidates(config) == [config]
 
 
 def test_live_voice_role_rejects_batch_only_models():

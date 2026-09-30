@@ -26,6 +26,7 @@ import { app } from '../../shared/js/state.js';
 import { apiPath } from '../../shared/js/config.js';
 import { authHeaders } from '../../shared/js/left-login.js';
 import { randomUUID } from '../../shared/js/uuid.js';
+import { renderPublishedArtifact, requestPublishedArtifactGrant } from '../../shared/js/published-artifact.js';
 import * as controlledChat from '../../chat/core/client.js';
 import { icon } from '../../shared/js/icons.js';
 import { chatMsg } from '../../shared/js/app-prompts.js';
@@ -41,11 +42,6 @@ import {
   wireChatSurfaceComposer,
   wireStatsCarousel,
 } from '../../shared/js/chat-surface.js';
-
-// How often the reconcile gate is checked, and how long the WS must be silent
-// for this session before the DB poll engages (mirrors chat-reconcile.js).
-const RECONCILE_INTERVAL_MS = 800;
-const WS_SILENCE_MS = 1200;
 
 // ── Widget registry (enumerate / close / restore all open widgets) ─────────
 const _openWidgets = new Set();
@@ -83,13 +79,6 @@ export function _widgetChatUiProfile() {
       .catch(() => null);
   }
   return _chatUiProfilePromise;
-}
-
-// Trim the trailing "[Tool calls: …]" annotation off a stored assistant row
-// (same as chat-stream.js _stripToolCalls).
-function _stripToolCalls(text) {
-  const idx = (text || '').indexOf('\n\n[Tool calls: ');
-  return idx !== -1 ? text.slice(0, idx) : text;
 }
 
 // ── Floating layer (singleton, stacks all docked widgets) ───────────────────
@@ -215,7 +204,6 @@ export function createChatWidget(opts = {}) {
     hadTurn: false,            // at least one turn has run (controls Continue)
     settled: true,             // current turn has reached a terminal state
     stopPending: false,        // stop clicked — pin "Stopping…" until a terminal state
-    unregister: null,
     unregisterPublic: null,
     publicSeen: new Map(),
     publicNodes: new Map(),
@@ -229,9 +217,6 @@ export function createChatWidget(opts = {}) {
     activityItems: [],         // chronological tools + panel-identical progress/response rows
     toolGroup: null,           // current exchange's shared activity disclosure bubble
     profile: null,             // merged chat_common + chat_widget profile
-    lastSeq: Math.max(0, Number(initialSessionSeq) || 0), // DB-tail cursor
-    reconcileTimer: null,
-    reconcileInFlight: false,
     collapseTimer: null,
     usage: null,
     activityTimer: null,
@@ -732,7 +717,6 @@ export function createChatWidget(opts = {}) {
     st.hadTurn = true;
     st.usage?.finish();
     _finalizeDanglingStreams();
-    _stopReconcile();
     if (typeof finalText === 'string' && finalText.trim()) st.lastAgentText = finalText.trim();
     if (st.status !== 'interrupted' && st.status !== 'error') _setStatus('done');
     if (typeof onDone === 'function') {
@@ -747,283 +731,6 @@ export function createChatWidget(opts = {}) {
         if (!st.closed && st.status === 'done' && !st.els.root.matches(':hover')) minimize();
       }, 1500);
     }
-  }
-
-  // ── Live event renderer (per-instance — independent of the main panel) ──
-
-  function _handleEvent(ev) {
-    if (st.closed || !ev || !ev.type) return;
-    st.usage?.event(ev);
-    const key = ev.asst_id || ev.turn_id || '';
-    if (ev.type === 'pipeline') {
-      const note = _pipelineActivity(ev.step);
-      if (note) _setActivity(note);
-      // Closer steps end with a matching *_end pipeline event — settle the
-      // activity note then so it doesn't stick on "Closer writing…".
-      else if (/^closer_.*_end$/.test(ev.step || '')) _clearActivity();
-    }
-    switch (ev.type) {
-      case 'user_message': {
-        const text = (ev.content || '').trim();
-        // GenUI-originated page sends carry a friendly label — render it as a
-        // green notice (compact surfaces never show the raw prompt).
-        const genuiLabel = (ev.genui_label || '').trim();
-        if (genuiLabel) {
-          const mid = ev.id || ev.interaction_id || '';
-          if (mid && st.els.body.querySelector(`.cw-bubble.info[data-msg-id="${CSS.escape(String(mid))}"]`)) break;
-          const b = _addBubble('info', genuiLabel);
-          b.classList.add('system-genui');
-          if (mid) b.setAttribute('data-msg-id', String(mid));
-          _beginTurn();           // a turn started (possibly from another device)
-          _setStatus('running');
-          break;
-        }
-        const messageId = String(ev.id || ev.interaction_id || ev.turn_id || '');
-        const users = st.els.body.querySelectorAll('.cw-bubble.user');
-        for (const u of users) {
-          if (u.textContent.trim() !== text) continue;
-          if (messageId) {
-            u.dataset.msgId = messageId;
-            u.dataset.turnId = messageId;
-          }
-          return; // dedup optimistic after attaching the durable owner id
-        }
-        const userBubble = _addBubble('user', ev.content || '');
-        if (messageId) {
-          userBubble.dataset.msgId = messageId;
-          userBubble.dataset.turnId = messageId;
-        }
-        _beginTurn();           // a turn started (possibly from another device)
-        _setStatus('running');
-        break;
-      }
-      case 'stream': {
-        if (!key) break;
-        _setActivity('Writing reply…');
-        st.usage?.stream(ev.content || '');
-        _seedStreaming(key, (st.turnBuffers.get(key) || '') + (ev.content || ''));
-        _setStatus('running');
-        break;
-      }
-      case 'agent_step_end':
-        _recordAgentStep(ev, key);
-        break;
-      case 'tool_call': {
-        const toolEntry = {
-          tool: ev.tool || 'tool', args: ev.args, status: 'running',
-          result: '', durationMs: null, errorType: null, turn: 0, open: false,
-        };
-        st.toolCalls.push(toolEntry);
-        st.activityItems.push(toolEntry);
-        _renderToolGroup();
-        _setActivity('Toolcall ' + (ev.tool || 'tool'), true);
-        _setStatus('running');
-        break;
-      }
-      case 'tool_result': {
-        for (let i = st.toolCalls.length - 1; i >= 0; i--) {
-          const t = st.toolCalls[i];
-          if (t.status === 'running' && t.tool === (ev.tool || 'tool')) {
-            t.status = ev.error ? 'error' : 'done';
-            t.result = ev.result || '';
-            t.durationMs = (typeof ev.duration_ms === 'number') ? ev.duration_ms : null;
-            t.errorType = ev.error_type || null;
-            break;
-          }
-        }
-        _renderToolGroup();
-        _setActivity((ev.error ? 'Error ' : 'Done ') + (ev.tool || 'tool'), true);
-        break;
-      }
-      case 'response': {
-        // The closing gate's verdict is the only promotion authority — mirror
-        // the panel: a terminal response the backend classified `progress` is
-        // activity, so it joins the run's group instead of becoming a bubble.
-        const phase = String(ev.message_phase || '').toLowerCase();
-        // Promotion is the closing gate's verdict only: an explicit main/final
-        // phase. A phase-less response is activity, matching this widget's own
-        // reload predicate (_isPromotedMessage) and the panel's live path.
-        if (String(ev.chat_render_kind || 'activity').toLowerCase() === 'promoted_answer') {
-          _finalizeKey(key, ev.content || st.turnBuffers.get(key) || '');
-          _settleTurn(ev.content || '');
-        } else {
-          _recordAgentStep({ content: ev.content, created_at: ev.emit_time }, key);
-          _settleTurn('');
-        }
-        break;
-      }
-      case 'interrupted':
-        st.usage?.finish();
-        _markInterruptedKey(key);
-        _setStatus('interrupted');
-        st.hadTurn = true;
-        st.settled = true;
-        _stopReconcile();
-        break;
-      case 'resumed':
-        st.settled = false;
-        st.stopPending = false;   // the run continues — stop no longer applies
-        _setStatus('running');
-        _startReconcile();
-        break;
-      case 'error':
-        st.usage?.finish();
-        _addBubble('agent', 'Error: ' + (ev.message || 'unknown')).classList.add('cw-error');
-        _setStatus('error');
-        st.settled = true;
-        _stopReconcile();
-        break;
-      case 'session_title':
-        if (ev.status === 'done' && ev.title) st.els.title.textContent = ev.title;
-        break;
-      case 'session_deleted':
-        // This widget's session was permanently deleted elsewhere (another device
-        // via the hybrid tombstone sync). Its transcript is gone — stop polling,
-        // show "Session not found", and lock the input so nothing more can be sent
-        // into a session that no longer exists.
-        if ((ev.session_id || ev.sessionId) === st.sessionId) {
-          _stopReconcile();
-          st.settled = true;
-          _addBubble('agent', chatMsg('session_deleted_notice')).classList.add('cw-error');
-          if (st.els.input) { st.els.input.value = ''; st.els.input.disabled = true; }
-          if (st.els.sendBtn) st.els.sendBtn.disabled = true;
-          _setStatus('error');
-        }
-        break;
-      default:
-        break; // pipeline / db / attachment etc. — not rendered in the mini view
-    }
-  }
-
-  // ── DB-tail reconcile (durable path — see header comment) ──
-
-  function _startReconcile() {
-    if (st.reconcileTimer || st.closed) return;
-    st.reconcileTimer = setInterval(_reconcileTick, RECONCILE_INTERVAL_MS);
-  }
-
-  function _stopReconcile() {
-    if (st.reconcileTimer) { clearInterval(st.reconcileTimer); st.reconcileTimer = null; }
-  }
-
-  function _reconcileTick() {
-    if (st.closed) { _stopReconcile(); return; }
-    const active = st.status === 'running' || st.status === 'starting';
-    if (!active) { _stopReconcile(); return; }
-    const last = (app._lastWsEventAt && app._lastWsEventAt[st.sessionId]) || 0;
-    if (Date.now() - last < WS_SILENCE_MS) return;   // WS delivering → stay dormant
-    _reconcileOnce();
-  }
-
-  function _messageMetadata(msg) {
-    let metadata = msg?.metadata || {};
-    if (typeof metadata === 'string') {
-      try { metadata = JSON.parse(metadata); } catch (_) { metadata = {}; }
-    }
-    return metadata && typeof metadata === 'object' ? metadata : {};
-  }
-
-  function _isPromotedMessage(msg) {
-    return String(msg?.chat_render_kind || 'activity').toLowerCase() === 'promoted_answer';
-  }
-
-  async function _reconcileOnce() {
-    if (st.reconcileInFlight) return;
-    st.reconcileInFlight = true;
-    try {
-      const token = localStorage.getItem('auth_token');
-      const url = apiPath(
-        `/api/v1/db/session-tail?db=user.db&session_id=${encodeURIComponent(st.sessionId)}`
-        + `&after_session_seq=${st.lastSeq}`
-        + (st.userId ? `&user_id=${encodeURIComponent(st.userId)}` : '')
-        + (token ? `&token=${encodeURIComponent(token)}` : ''),
-      );
-      let data;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return;
-        data = await res.json();
-      } catch (_) { return; }                          // network blip — next tick
-      if (st.closed || !data || data.restricted) return;
-
-      let maxSeq = st.lastSeq;
-      let sawInterrupted = false;
-      const msgs = Array.isArray(data.messages) ? data.messages : [];
-      for (const msg of msgs) {
-        if (typeof msg.session_seq === 'number') maxSeq = Math.max(maxSeq, msg.session_seq);
-        if (msg.role === 'user') { _reconcileUserRow(msg); continue; }
-        if (msg.role !== 'assistant') continue;        // tool rows arrive via WS only
-        st.hadTurn = true;                             // a real assistant row → a turn ran
-        const key = msg.id;
-        const text = _stripToolCalls(msg.content || '');
-        if (msg.status === 'streaming') _seedStreaming(key, text);
-        else if (msg.status === 'interrupted') { sawInterrupted = true; _markInterruptedKey(key); }
-        else if (msg.status === 'error') _finalizeKey(key, text);
-        else if (_isPromotedMessage(msg)) {
-          _finalizeKey(key, text);       // the closing gate's verdict: main/final
-        } else {
-          // Phase-less / `pending` / `progress` rows are activity, never a reply.
-          const metadata = _messageMetadata(msg);
-          _recordAgentStep({
-            content: text,
-            created_at: msg.created_at,
-            progress_kind: msg.progress_kind || metadata.progress_kind || '',
-          }, key);
-        }
-      }
-
-      const run = data.run || null;
-      if (run && run.active) _setStatus('running');
-      st.lastSeq = Math.max(st.lastSeq, maxSeq,
-        (run && typeof run.latest_session_seq === 'number') ? run.latest_session_seq : 0);
-
-      // Server marked the run finished — settle even if the WS response was lost.
-      if (run && run.active === false && !st.settled && st.hadTurn) {
-        if (sawInterrupted) {
-          // The DB row says the turn was stopped — settle to "Stopped" (which
-          // also releases the stop-pin) rather than the generic "Done".
-          st.usage?.finish();
-          _setStatus('interrupted');
-          st.settled = true;
-          _stopReconcile();
-        } else if (st.status !== 'interrupted' && st.status !== 'error') {
-          _settleTurn(st.lastAgentText);
-        }
-      }
-    } finally {
-      st.reconcileInFlight = false;
-    }
-  }
-
-  function _genuiLabelFromMeta(metaRaw) {
-    if (!metaRaw) return '';
-    let m = metaRaw;
-    if (typeof m === 'string') { try { m = JSON.parse(m); } catch (_) { return ''; } }
-    if (!m || typeof m !== 'object' || !m.genui) return '';
-    return String(m.genui_label || '').trim();
-  }
-
-  function _reconcileUserRow(msg) {
-    const mid = msg.id || '';
-    const cont = (msg.content || '').trim();
-    // GenUI-originated page sends: green label notice, never the raw prompt.
-    const genuiLabel = _genuiLabelFromMeta(msg.metadata);
-    if (genuiLabel) {
-      if (mid && st.els.body.querySelector(`.cw-bubble.info[data-msg-id="${CSS.escape(String(mid))}"]`)) return;
-      const b = _addBubble('info', genuiLabel);
-      b.classList.add('system-genui');
-      if (mid) b.setAttribute('data-msg-id', String(mid));
-      st.hadTurn = true;
-      return;
-    }
-    if (mid && st.els.body.querySelector(`.cw-bubble.user[data-msg-id="${CSS.escape(String(mid))}"]`)) return;
-    const users = st.els.body.querySelectorAll('.cw-bubble.user');
-    for (const u of users) {
-      if (u.textContent.trim() === cont) { if (mid) u.setAttribute('data-msg-id', String(mid)); return; }
-    }
-    const b = _addBubble('user', msg.content || '');
-    if (mid) b.setAttribute('data-msg-id', String(mid));
-    st.hadTurn = true;
   }
 
   // Only committed V2 public items may become widget bubbles. The item ID is
@@ -1045,6 +752,25 @@ export function createChatWidget(opts = {}) {
     }
     for (const item of state.items) {
       if (item.deleted || st.publicSeen.get(item.id) === item.revision) continue;
+      if (item.kind === 'attachment') {
+        const artifact = renderPublishedArtifact(item.payload, payload =>
+          requestPublishedArtifactGrant(payload, { headers: authHeaders() }));
+        if (!artifact) continue;
+        const previous = st.publicNodes.get(item.id);
+        if (previous) previous.remove();
+        const bubble = _addBubble('agent', '');
+        bubble.appendChild(artifact);
+        bubble.dataset.publicId = item.id;
+        bubble.dataset.publicPosition = String(item.position);
+        bubble.dataset.publicRevision = String(item.revision);
+        const next = [...st.els.body.children].find(node =>
+          Number(node.dataset.publicPosition || 0) > item.position);
+        if (next) st.els.body.insertBefore(bubble, next);
+        st.publicSeen.set(item.id, item.revision);
+        st.publicNodes.set(item.id, bubble);
+        st.hadTurn = true;
+        continue;
+      }
       if (!['user', 'answer', 'notice', 'failure'].includes(item.kind)) continue;
       if (typeof item.payload.text !== 'string') continue;
       const previous = st.publicNodes.get(item.id);
@@ -1159,7 +885,6 @@ export function createChatWidget(opts = {}) {
   function _markFailed(bubble, msg) {
     if (st.closed) return;
     st.settled = true;
-    _stopReconcile();
     _setStatus('error');
     bubble.classList.add('failed');
     const retry = document.createElement('button');
@@ -1331,8 +1056,6 @@ export function createChatWidget(opts = {}) {
     _openWidgets.delete(widget);
     if (st.collapseTimer) { clearTimeout(st.collapseTimer); st.collapseTimer = null; }
     _clearActivity();
-    _stopReconcile();
-    if (st.unregister) { st.unregister(); st.unregister = null; }
     if (st.unregisterPublic) { st.unregisterPublic(); st.unregisterPublic = null; }
     if (st.onSendStatus) window.removeEventListener('webagent-chat-send-status', st.onSendStatus);
     if (st.els.root) st.els.root.remove();

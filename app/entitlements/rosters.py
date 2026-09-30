@@ -401,7 +401,7 @@ def normalize_entries(roster_id: str, entries: Iterable[Mapping[str, Any]]) -> l
         seen_ids.add(entry_id)
         item["entry_id"] = entry_id
         normalized.append(item)
-    return normalized
+    return normalize_alias_groups(normalized)
 
 
 def config_to_roster(config: Mapping[str, Any], roster_id: str) -> tuple[list[dict[str, Any]], Optional[str], str]:

@@ -286,6 +286,18 @@ async def control_voice(session_id: str,body: VoiceControl,request: Request):
     cancel(repo.owner_id,session_id)
     return {"message":"Stopped." if stopped else "There is no active run to stop.","stopped":stopped}
 
+class TerminalInput(StrictModel):
+    text: str = Field(max_length=32000)
+
+@router.post("/sessions/{session_id}/terminal/input")
+async def terminal_input(session_id: str,body: TerminalInput,request: Request):
+    actor,_,_=await scope(request,session_id)
+    from app.db import get_user_db
+    from app.agent.terminal_tunnel import route_user_line
+    if not await route_user_line(get_user_db(actor),actor,session_id,body.text):
+        raise HTTPException(409,"Terminal tunnel is not active")
+    return {"status":"sent"}
+
 @router.get("/sessions/{session_id}/activity")
 async def activity(session_id: str,request: Request,after: int=Query(0,ge=0),owner_id: str | None=None):
     actor,repo,_=await scope(request,session_id,owner_id)

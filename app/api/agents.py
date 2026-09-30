@@ -4155,7 +4155,7 @@ async def set_agent_skill_visibility(
     skill_id: str = Query("core"),
 ):
     """Set how an ability's bundled **skill** is exposed to the agent: 'visible'
-    (its how-to body is shown every turn) or 'discoverable' (load on demand via
+    (its how-to body is shown every turn), 'off' (unavailable), or 'discoverable' (load on demand via
     load_skill). Any other value clears the override back to the descriptor
     default. Per-agent."""
     db = get_db()
@@ -4257,9 +4257,9 @@ async def ability_schema_preview(request: Request, agent_id: str, ability_id: st
             parts.append(f"- `{name}` — {desc}")
 
     feat = ability_feature_with_skill(ability_id)
-    if feat:
+    if feat and resolve_skill_mode(f"{ability_id}:core", sk_modes, feat.get("skill_mode")) != "off":
         n_total += 1
-        if resolve_skill_mode(ability_id, sk_modes, feat.get("skill_mode")) == VISIBLE:
+        if resolve_skill_mode(f"{ability_id}:core", sk_modes, feat.get("skill_mode")) == VISIBLE:
             n_visible += 1
             parts.append(f"# [SKILL: {display}]\n{(feat.get('skill') or '').strip()}".strip())
         else:

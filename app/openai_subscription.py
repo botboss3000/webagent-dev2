@@ -42,6 +42,8 @@ _MODELS = (
     {"id": "gpt-5.6-sol", "name": "GPT-5.6 Sol"},
     {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra"},
     {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna"},
+    {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol"},
+    {"id": "gpt-6-astra", "name": "GPT-6 Astra"},
 )
 
 _refresh_locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -192,6 +194,15 @@ async def _load_tokens(owner: str, entry_id: str, *, scope: str = "platform",
     )
     if not row or not row.get("secret_ref"):
         return {}
+    config = row.get("config") or {}
+    label, identity = config.get("saved_credential_label"), config.get("saved_credential_id")
+    if identity:
+        profile = await model_credentials.get_owned(
+            scope, owner=owner, service="saved_model_subscription_tokens", label=identity,
+            user_id=user_id, agent_id=agent_id,
+        )
+        if profile and profile.get("secret_ref"):
+            row = profile
     try:
         value = json.loads(row["secret_ref"])
         return value if isinstance(value, dict) else {}
@@ -204,6 +215,38 @@ async def _save_tokens(tokens: Dict[str, Any], owner: str, entry_id: str, *,
                        agent_id: str = "") -> None:
     from app import model_credentials
     metadata = token_metadata(tokens)
+    current = await model_credentials.get_owned(
+        scope, owner=owner, service=_VAULT_SERVICE, label=entry_id,
+        user_id=user_id, agent_id=agent_id,
+    ) or {}
+    config = current.get("config") or {}
+    label, identity = config.get("saved_credential_label"), config.get("saved_credential_id")
+    if tuple(str(metadata.get(key) or "") for key in ("account_id", "email")) != tuple(
+        str(config.get(key) or "") for key in ("account_id", "email")
+    ):
+        # Reauthorizing this model with another account must not switch every
+        # model that loaded the previous reusable subscription.
+        label = identity = None
+    if label and identity:
+        metadata.update(saved_credential_label=label, saved_credential_id=identity)
+        # Keep the canonical token generation even when its display label is
+        # replaced by another saved account. Existing models retain their account.
+        await model_credentials.set_owned(
+            scope, owner=owner, service="saved_model_subscription_tokens", label=identity,
+            user_id=user_id, agent_id=agent_id,
+            config=token_metadata(tokens), secret_ref=json.dumps(tokens, separators=(",", ":")),
+        )
+        saved = await model_credentials.get_owned(
+            scope, owner=owner, service="saved_model_subscription", label=label,
+            user_id=user_id, agent_id=agent_id,
+        )
+        if saved and (saved.get("config") or {}).get("saved_credential_id") == identity:
+            await model_credentials.set_owned(
+                scope, owner=owner, service="saved_model_subscription", label=label,
+                user_id=user_id, agent_id=agent_id,
+                config={**token_metadata(tokens), "saved_credential_id": identity},
+                secret_ref=json.dumps(tokens, separators=(",", ":")),
+            )
     await model_credentials.set_owned(
         scope, owner=owner, service=_VAULT_SERVICE, label=entry_id,
         user_id=user_id, agent_id=agent_id,
@@ -276,7 +319,15 @@ async def transport_auth(*, scope: str = "platform", user_id: str = "", agent_id
     owner, entry_id = _tenant(
         scope, user_id=user_id, agent_id=agent_id, entry_id=entry_id,
     )
-    lock = _refresh_locks.setdefault((owner, entry_id), asyncio.Lock())
+    from app import model_credentials
+    current = await model_credentials.get_owned(
+        scope, owner=owner, service=_VAULT_SERVICE, label=entry_id,
+        user_id=user_id, agent_id=agent_id,
+    ) or {}
+    identity = (current.get("config") or {}).get("saved_credential_id")
+    # Entries loaded from one reusable credential share refresh serialization.
+    # A replacement saved account gets a new identity and cannot rebind old rows.
+    lock = _refresh_locks.setdefault((owner, str(identity or entry_id)), asyncio.Lock())
     async with lock:
         tokens = await _load_tokens(
             owner, entry_id, scope=scope, user_id=user_id, agent_id=agent_id,
@@ -485,7 +536,9 @@ def models() -> list[dict]:
         "output_modalities": ["text"],
         "tool_capable": True,
         "modality_known": True,
-        "reasoning_efforts": ["low", "medium", "high", "xhigh"],
+        "reasoning_efforts": ["low", "medium", "high", "xhigh"] + (
+            ["max"] if item["id"] in {"gpt-6.1-sol", "gpt-6-astra"} else []
+        ),
         "default_reasoning_effort": "medium",
         "is_default": item["id"] == "gpt-5.5",
     } for item in _MODELS]

@@ -155,23 +155,17 @@ function _unmount() {
 // ── Network actions ──────────────────────────────────────────────────────────
 
 async function sendLine(text) {
-  // Route a keystroke line to the bound program. The backend /send endpoint
-  // detects the tunnel binding and types it into the PTY (persisted but kept
-  // out of the agent context). We don't add a chat bubble — the embedded
-  // terminal echoes the input.
+  // Route a keystroke line to the bound program without accepting a chat turn.
+  // The embedded terminal echoes the input.
   const sid = app.currentSessionId;
   if (!sid) return;
   try {
-    await fetch(apiPath('/api/v1/chat/send'), {
+    const response = await fetch(apiPath('/api/v2/chat/sessions/' + encodeURIComponent(sid) + '/terminal/input'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        message: text,
-        session_id: sid,
-        user_id: app.currentUserId,
-        agent_id: app.currentAgentId,
-      }),
+      body: JSON.stringify({ text }),
     });
+    if (!response.ok) throw new Error('Terminal input was not accepted');
   } catch (_) { /* best-effort; the terminal shows the actual state */ }
 }
 

@@ -210,6 +210,21 @@ def classify_provider_error(exc: BaseException) -> ProviderErrorInfo:
     return _info(Kind.UNKNOWN, Action.PROPAGATE, status, codes, False, text)
 
 
+def alias_failover_eligible(exc: BaseException) -> bool:
+    """Whether a pre-output provider failure may try an explicit alias.
+
+    Keep this allow-list narrow. Alias failover is for provider availability or
+    credential/quota failures, not for malformed prompts, policy rejections, or
+    deterministic request bugs that another model must not silently reinterpret.
+    """
+    return classify_provider_error(exc).kind in {
+        Kind.AUTH,
+        Kind.QUOTA,
+        Kind.TRANSIENT,
+        Kind.MODEL_SCOPED_REJECTION,
+    }
+
+
 def provider_stop_cause(exc: BaseException) -> str:
     """Stop cause for a supervised turn that died on a provider error.
 

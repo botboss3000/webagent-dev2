@@ -2179,7 +2179,8 @@ async def set_session_model_effort(
     if requested_effort not in {"", "default"}:
         from app.entitlements.service import resolve_capabilities
         capabilities = await resolve_capabilities(user_id, db=db)
-        order = {"default": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4}
+        from app.reasoning_effort import EFFORT_ORDER
+        order = EFFORT_ORDER
         maximum = str((capabilities.get("models") or {}).get("max_reasoning_effort") or "default")
         if requested_effort not in order or order[requested_effort] > order.get(maximum, 0):
             raise HTTPException(
@@ -2187,6 +2188,15 @@ async def set_session_model_effort(
                 detail={"code": "model_not_allowed", "reason": "reasoning_effort",
                         "maximum": maximum},
             )
+    if requested_effort not in {"", "default"}:
+        slot = next((slot for slot in options.get("slots") or []
+                     if _slot_ref_from_model_slot(slot) == slot_ref
+                     or slot_ref in {"role:" + str(role) for role in slot.get("roles") or []}), None)
+        supported = (slot or {}).get("reasoning_efforts", ["minimal", "low", "medium", "high"])
+        if requested_effort not in supported:
+            raise HTTPException(status_code=400, detail={
+                "code": "unsupported_reasoning_effort", "supported": supported,
+            })
     cfg = await db.set_session_model_effort(
         req.session_id, slot_ref, requested_effort or None)
     effort_map = (cfg or {}).get("model_effort") or {}

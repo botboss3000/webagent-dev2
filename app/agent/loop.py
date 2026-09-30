@@ -536,6 +536,7 @@ def _effective_reasoning_effort(
     configured_effort: Optional[str],
     provider_name: Optional[str],
     transport: str,
+    model_name: str = "",
 ) -> Optional[str]:
     """Encode DeepSeek Responses reasoning and constrained-call behavior.
 
@@ -545,6 +546,10 @@ def _effective_reasoning_effort(
     declines the force instead (see _model_allows_forced_tool_choice), and the
     combination can no longer be requested at all.
     """
+    if (str(model_name).rsplit("/", 1)[-1].lower().startswith("gpt-6")
+            or provider_name == "openai_subscription"):
+        from app.reasoning_effort import normalize_effort
+        configured_effort = normalize_effort(configured_effort, model_name, provider_name or "")
     is_deepseek_responses = (
         transport == "responses"
         and str(provider_name or "").strip().lower() == "deepseek"
@@ -2307,7 +2312,7 @@ async def _stream_agent_events_impl(
                     _modes2 = {}
                 _vis2 = [n for n in _ab_tools
                          if n in tools and _rm2(n, _modes2) == _VIS2]
-                _pl = _asp(_reveal_id, _vis2)
+                _pl = _asp(_reveal_id, _vis2, await db.get_agent_skill_modes(agent_id) if agent_id else {})
                 _sk_body = _pl.get("body") or ""
                 _sk_handle = _pl.get("handle") or ""
                 # Mini-skills for tools already being sent (visible) ride along
@@ -4304,6 +4309,7 @@ async def _stream_agent_events_impl(
                 reasoning_effort,
                 provider_name,
                 _chain_capability.transport,
+                model_name,
             )
 
             # ── Pipeline: LLM call start ──
@@ -4545,15 +4551,18 @@ async def _stream_agent_events_impl(
                 "strategy": _prompt_cache.get("strategy"),
                 "provider_family": _prompt_cache.get("family"),
             }
-            # Apply the per-session reasoning-effort hint, if any. Sent via the
-            # OpenRouter-normalised `extra_body.reasoning.effort`; a provider that
-            # rejects it (or the level) gets the call retried once without it, so an
-            # unsupported effort never breaks the turn.
-            if reasoning_effort:
-                _create_kwargs["extra_body"] = merge_extra_body(
-                    _create_kwargs.get("extra_body"),
-                    {"reasoning": {"effort": reasoning_effort}},
-                )
+            # Native OpenAI Chat Completions uses reasoning_effort; Responses
+            # receives reasoning.effort in build_responses_request below.
+            if _provider_reasoning_effort:
+                if _chain_capability.family in {"openai", "azure_openai"}:
+                    _create_kwargs["reasoning_effort"] = _provider_reasoning_effort
+                    if _provider_reasoning_effort != "none":
+                        _create_kwargs.pop("temperature", None)
+                else:
+                    _create_kwargs["extra_body"] = merge_extra_body(
+                        _create_kwargs.get("extra_body"),
+                        {"reasoning": {"effort": _provider_reasoning_effort}},
+                    )
             _responses_body = None
             if _chain_capability.enabled:
                 _responses_body = build_responses_request(
@@ -4779,6 +4788,190 @@ async def _stream_agent_events_impl(
                     body=body,
                     timeout=max(60.0, _open_s or 60.0),
                 )
+
+            async def _open_alias_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+                """Build and open one alias without mutating the active runtime."""
+                candidate_config = dict(candidate)
+                candidate_model = _runtime_model(candidate_config)
+                candidate_provider = str(candidate_config.get("provider") or "")
+                candidate_effort = (
+                    str(candidate_config.get("reasoning_effort") or "").strip().lower()
+                    or None
+                )
+                candidate_chain = response_chain_capability(
+                    provider=candidate_provider,
+                    base_url=str(candidate_config.get("base_url") or ""),
+                    model=candidate_model,
+                    mode=candidate_config.get("stateful_responses", "auto"),
+                )
+                candidate_profile = resolve_profile(
+                    family=candidate_chain.family,
+                    transport=candidate_chain.transport,
+                    stateful=candidate_chain.stateful,
+                    provider=candidate_provider,
+                    model=candidate_model,
+                )
+                candidate_scope = reasoning_replay_scope(
+                    provider=candidate_provider,
+                    base_url=str(candidate_config.get("base_url") or ""),
+                    model=candidate_model,
+                    credential_scope=str(candidate_config.get("credential_scope") or ""),
+                    entry_id=str(candidate_config.get("entry_id") or ""),
+                    credential_user_id=str(
+                        candidate_config.get("_credential_user_id") or user_id
+                    ),
+                    credential_agent_id=str(
+                        candidate_config.get("_credential_agent_id") or agent_id or ""
+                    ),
+                )
+                candidate_messages, rebase = prepare_portable_history(
+                    messages,
+                    current_scope=candidate_scope,
+                    current_provider=candidate_provider,
+                    current_model=candidate_model,
+                    target_profile=candidate_profile,
+                )
+                can_force = _model_allows_forced_tool_choice(
+                    candidate_model, candidate_provider, candidate_chain.transport
+                )
+                tool_choice: Any = "auto"
+                if _closing_status_pending and _closing_status_policy and can_force:
+                    tool_choice = {
+                        "type": "function",
+                        "function": {"name": "set_closer_status"},
+                    }
+                provider_effort = _effective_reasoning_effort(
+                    candidate_effort, candidate_provider, candidate_chain.transport, candidate_model
+                )
+                candidate_cache = prompt_cache_controls(
+                    provider=candidate_provider,
+                    base_url=str(candidate_config.get("base_url") or ""),
+                    model=candidate_model,
+                    user_id=user_id,
+                    system_hash=_sys_hash,
+                )
+                create_kwargs = {
+                    "model": candidate_model,
+                    "messages": _strip_reasoning_content_for_provider(
+                        candidate_messages, candidate_model, candidate_provider
+                    ),
+                    "tools": tool_definitions if tool_definitions else None,
+                    "tool_choice": tool_choice if tool_definitions else None,
+                    "temperature": 0.0,
+                    "max_tokens": _request_output_tokens,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                if candidate_cache.get("extra_body"):
+                    create_kwargs["extra_body"] = merge_extra_body(
+                        create_kwargs.get("extra_body"), candidate_cache["extra_body"]
+                    )
+                if provider_effort:
+                    if candidate_chain.family in {"openai", "azure_openai"}:
+                        create_kwargs["reasoning_effort"] = provider_effort
+                        if provider_effort != "none":
+                            create_kwargs.pop("temperature", None)
+                    else:
+                        create_kwargs["extra_body"] = merge_extra_body(
+                            create_kwargs.get("extra_body"),
+                            {"reasoning": {"effort": provider_effort}},
+                        )
+
+                responses_body = None
+                if candidate_chain.enabled:
+                    responses_body = build_responses_request(
+                        model=candidate_model,
+                        messages=candidate_messages,
+                        tools=tool_definitions if tool_definitions else None,
+                        max_output_tokens=_request_output_tokens,
+                        reasoning_effort=provider_effort,
+                        prompt_cache_key=candidate_cache.get("cache_key"),
+                        provider_family_name=candidate_chain.family,
+                        session_key=(
+                            f"wa-{hashlib.sha256(f'{user_id}:{session_id}'.encode()).hexdigest()[:40]}"
+                        ),
+                        stateful=candidate_chain.stateful,
+                    )
+                    provider_tool_choice = _responses_tool_choice(tool_choice)
+                    if provider_tool_choice is not None:
+                        responses_body["tool_choice"] = provider_tool_choice
+                    if candidate_provider == "openai_subscription":
+                        responses_body["store"] = False
+                        responses_body.pop("max_output_tokens", None)
+                        responses_body.pop("prompt_cache_key", None)
+                        responses_body["include"] = ["reasoning.encrypted_content"]
+
+                candidate_client = _client_for(candidate_config)
+                if responses_body is None:
+                    candidate_stream = await _open_stream(
+                        create_kwargs, _open_s, candidate_client
+                    )
+                elif candidate_provider == "openai_subscription":
+                    from app import openai_subscription as _subscription
+                    auth = await _subscription.transport_auth(
+                        scope=str(candidate_config.get("credential_scope") or "platform"),
+                        entry_id=str(candidate_config.get("entry_id") or ""),
+                        user_id=str(candidate_config.get("_credential_user_id") or user_id),
+                        agent_id=str(
+                            candidate_config.get("_credential_agent_id") or agent_id or ""
+                        ),
+                    )
+                    headers = {
+                        "originator": "webagent",
+                        "User-Agent": "webagent/1.0",
+                        "session-id": (
+                            f"wa-{hashlib.sha256(f'{user_id}:{session_id}'.encode()).hexdigest()[:40]}"
+                        ),
+                    }
+                    if auth.get("account_id"):
+                        headers["ChatGPT-Account-Id"] = auth["account_id"]
+                    if auth.get("residency"):
+                        headers["x-openai-internal-codex-residency"] = auth["residency"]
+                    candidate_stream = await open_responses_stream(
+                        base_url=str(candidate_config.get("base_url") or ""),
+                        api_key=auth["access_token"],
+                        family="openai",
+                        body=responses_body,
+                        timeout=max(60.0, _open_s or 60.0),
+                        request_url=_subscription.RESPONSES_ENDPOINT,
+                        extra_headers=headers,
+                    )
+                else:
+                    candidate_stream = await open_responses_stream(
+                        base_url=str(candidate_config.get("base_url") or ""),
+                        api_key=str(candidate_config.get("api_key") or ""),
+                        family=candidate_chain.family,
+                        body=responses_body,
+                        timeout=max(60.0, _open_s or 60.0),
+                    )
+                return {
+                    "stream": candidate_stream,
+                    "config": candidate_config,
+                    "model": candidate_model,
+                    "display_name": (
+                        str(candidate_config.get("display_name") or "").strip()
+                        or candidate_model
+                    ),
+                    "provider": candidate_provider,
+                    "reasoning_effort": candidate_effort,
+                    "reasoning_scope": candidate_scope,
+                    "chain": candidate_chain,
+                    "profile": candidate_profile,
+                    "chain_identity": response_chain_identity(
+                        provider=candidate_provider,
+                        base_url=str(candidate_config.get("base_url") or ""),
+                        model=candidate_model,
+                    ),
+                    "provider_effort": provider_effort,
+                    "can_force": can_force,
+                    "tool_choice": tool_choice,
+                    "messages": candidate_messages,
+                    "rebase": rebase,
+                    "create_kwargs": create_kwargs,
+                    "responses_body": responses_body,
+                    "prompt_cache": candidate_cache,
+                    "client": candidate_client,
+                }
             # DIAGNOSTIC (REMOVE-WHEN latency diagnosis done): measure WHY the first
             # token is slow. Logs the prompt size (proxy for prefill cost) and the
             # time the provider takes just to RETURN the stream object (headers) vs.
@@ -4883,8 +5076,6 @@ async def _stream_agent_events_impl(
                                   session_id=session_id, agent_id=agent_id, user_id=user_id)
                         except Exception:
                             pass
-                except asyncio.TimeoutError:
-                    raise  # an open stall, NOT an effort rejection — handled below
                 except Exception as e_eff:
                     _eff_err = str(e_eff)
                     from app.agent.provider_errors import (
@@ -5097,7 +5288,112 @@ async def _stream_agent_events_impl(
                         _work_policy_can_force = False
                         stream = await _open_stream(_create_kwargs, _open_s, llm_client)
                     else:
-                        raise
+                        # Every request-shape and same-model recovery above has been
+                        # exhausted. Only now may an explicitly grouped alias be tried,
+                        # and only while the turn is still pre-output/pre-tool-effect.
+                        from app.admin.settings import alias_failover_candidates
+                        from app.agent.provider_errors import alias_failover_eligible
+
+                        if not alias_failover_eligible(e_eff):
+                            raise
+                        source_entry_id = str(llm_config.get("entry_id") or "")
+                        source_provider = provider_name
+                        source_model = model_name
+                        aliases = [
+                            candidate
+                            for candidate in alias_failover_candidates(llm_config)
+                            if str(candidate.get("entry_id") or "") != source_entry_id
+                        ]
+                        if not aliases:
+                            raise
+
+                        last_alias_error: BaseException = e_eff
+                        alias_bundle = None
+                        for candidate in aliases:
+                            try:
+                                alias_bundle = await _open_alias_candidate(candidate)
+                                break
+                            except Exception as alias_error:
+                                last_alias_error = alias_error
+                                logger.warning(
+                                    "LLM alias failed before stream "
+                                    "(entry=%s provider=%s model=%s): %s",
+                                    str(candidate.get("entry_id") or ""),
+                                    str(candidate.get("provider") or ""),
+                                    str(candidate.get("model") or ""),
+                                    alias_error,
+                                )
+                                if not alias_failover_eligible(alias_error):
+                                    raise
+                        if alias_bundle is None:
+                            raise last_alias_error
+
+                        stream = alias_bundle["stream"]
+                        llm_config = alias_bundle["config"]
+                        model_name = alias_bundle["model"]
+                        model_display_name = alias_bundle["display_name"]
+                        provider_name = alias_bundle["provider"]
+                        reasoning_effort = alias_bundle["reasoning_effort"]
+                        _reasoning_scope = alias_bundle["reasoning_scope"]
+                        _chain_capability = alias_bundle["chain"]
+                        _target_profile = alias_bundle["profile"]
+                        _turn_chain_identity = alias_bundle["chain_identity"]
+                        _provider_reasoning_effort = alias_bundle["provider_effort"]
+                        _work_policy_can_force = alias_bundle["can_force"]
+                        _work_policy_tool_choice = alias_bundle["tool_choice"]
+                        messages = alias_bundle["messages"]
+                        _create_kwargs = alias_bundle["create_kwargs"]
+                        _responses_body = alias_bundle["responses_body"]
+                        _prompt_cache = alias_bundle["prompt_cache"]
+                        llm_client = alias_bundle["client"]
+                        _sent_messages = messages.copy()
+                        _sent_tools = (
+                            [tool for tool in tool_definitions]
+                            if tool_definitions else None
+                        )
+                        _response_chain_id = None
+                        _response_chain_checkpoint = 0
+                        _response_chain_identity = (
+                            _turn_chain_identity
+                            if (_chain_capability.enabled and _chain_capability.stateful)
+                            else None
+                        )
+                        _deepseek_responses_fallback = False
+                        _reasoning_sanitized = False
+                        _history_rebase_retry = False
+                        failover_detail = {
+                            "from_entry_id": source_entry_id,
+                            "from_provider": source_provider,
+                            "from_model": source_model,
+                            "to_entry_id": str(llm_config.get("entry_id") or ""),
+                            "to_provider": provider_name,
+                            "to_model": model_name,
+                            "transport": _chain_capability.transport,
+                            "rebase": alias_bundle["rebase"],
+                        }
+                        logger.warning(
+                            "LLM alias failover before output: %s/%s -> %s/%s",
+                            source_provider, source_model, provider_name, model_name,
+                        )
+                        yield {
+                            "type": "pipeline",
+                            "level": "warning",
+                            "step": "llm_alias_failover",
+                            **failover_detail,
+                        }
+                        try:
+                            from app.agent.diagnostics import record as _diag
+                            _diag(
+                                "warning", "recovery",
+                                "LLM alias selected after primary recovery failed",
+                                source="llm_alias_failover",
+                                detail=failover_detail,
+                                session_id=session_id,
+                                agent_id=agent_id,
+                                user_id=user_id,
+                            )
+                        except Exception:
+                            pass
             except asyncio.TimeoutError:
                 # Durable, structured signal (parity with the mid-stream stall) so
                 # open-stalls can be counted/correlated on the diagnostics page.

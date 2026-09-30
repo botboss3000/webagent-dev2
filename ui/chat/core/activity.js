@@ -68,7 +68,7 @@ export function activityGroups(activity, runs) {
     for (const row of rows) counts[row.category]++;
     const run=runs.find(r=>r.id===segment.run_id);
     const finalOutcome=lastByRun.get(segment.run_id)===segment.id && terminal.has(run?.state);
-    return {...segment,events,rows,counts,
+    return {...segment,events,rows,counts,kind:run?.kind,
       state:segment.closed && !finalOutcome?'finished':run?.state || 'queued'};
   });
 }

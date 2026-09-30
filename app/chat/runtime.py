@@ -47,15 +47,17 @@ async def submit(request, actor, repo, session, command):
         schedule(repo.owner_id,receipt["run_id"])
         return {**receipt,"status":"accepted","session_id":session["id"]}
     from app.chat.execution import _is_compact_command
-    if _is_compact_command(command.text):
-        raise Conflict("Manual compaction is unavailable in controlled chat")
+    compact = _is_compact_command(command.text)
+    if compact and (command.attachment_ids or command.app_control or command.display_text is not None):
+        raise Conflict("Compaction does not accept attachments or app control data")
     await _enforce_billing_access(db,agent,actor,command.text)
     await enforce_tier_chat(actor,request,message=command.text,agent_id=agent["id"])
     for attachment_id in command.attachment_ids:
         attachment=await db.get_attachment(attachment_id)
         if not attachment or attachment.get("user_id")!=actor:
             raise Conflict("Attachment is unavailable")
-    receipt=await repo.accept(session["id"],actor,command,resolve_policy(agent,command.execution_mode))
+    receipt=await repo.accept(session["id"],actor,command,resolve_policy(agent,command.execution_mode),
+                              kind="compaction" if compact else "chat")
     schedule(repo.owner_id,receipt["run_id"])
     return {**receipt,"status":"accepted","session_id":session["id"]}
 
@@ -152,8 +154,12 @@ async def _settle_execution(execution):
     """V2 alone settles an unfinished attempt; consumed effects are never replayed."""
     state = await execution.repo.run(execution.run_id)
     if state["state"] not in TERMINAL and not _shutting_down:
-        reason = ("Execution stopped with an unconfirmed tool result. Review activity before continuing."
-                  if await execution.repo.has_uncertain_tool_result(execution.run_id) else None)
+        if state["kind"]=="compaction":
+            reason = ("Compaction stopped before its result was confirmed. Its checkpoint may already have changed; "
+                      "review the session before retrying.")
+        else:
+            reason = ("Execution stopped with an unconfirmed tool result. Review activity before continuing."
+                      if await execution.repo.has_uncertain_tool_result(execution.run_id) else None)
         await execution.repo.fail_execution(execution.run_id, execution.generation,
                                            reason=reason)
 
@@ -171,6 +177,8 @@ async def _drive(owner,run_id):
         try:
             run=await repo.run(run_id)
             asyncio.current_task().chat_session_id=run["session_id"]
+            from app.agent.compaction import wait_for_automatic_compaction
+            await wait_for_automatic_compaction(owner,run["session_id"])
             while True:
                 try:
                     generation=repo.claim(run_id,_worker)
@@ -213,6 +221,12 @@ async def _drive(owner,run_id):
                 app_control=rows[-1].get("app_control"),
             )
             db=get_db()
+            if run["kind"]=="compaction":
+                from .compaction import run_manual_compaction
+                if not repo.begin_finalization(run_id,generation):
+                    raise RuntimeError("Compaction run received unexpected input")
+                await run_manual_compaction(execution,db,session)
+                return
             agent,interaction_id,first=await prepare_controlled_turn(db,request,rows)
             await execute_controlled_turn(db,request,agent,interaction_id,first=first)
             await execution.flush()

@@ -82,14 +82,8 @@ async def CONTEXT_COMPACT(
     db: Any, user_id: str, session_id: str, settings: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
     """Write side: fold older turns into the rolling summary when over threshold."""
-    from app.agent.compaction import maybe_compact, persist_compaction_success
-    info = await maybe_compact(db, user_id, session_id, settings)
-    if info and not info.get("status"):
-        await persist_compaction_success(
-            db, user_id, session_id, info,
-            trigger=str(settings.get("_compaction_trigger") or "automatic"),
-        )
-    return info
+    from app.agent.compaction import run_automatic_compaction
+    return await run_automatic_compaction(db, user_id, session_id, settings)
 
 
 def CONTEXT_STATUS(

@@ -21,6 +21,8 @@ def definitions(C, T, I):
         T("chat_runs", [
             text("id", primary_key=True), text("session_id", nullable=False),
             text("message_id", nullable=False), text("parent_run_id"),
+            text("kind", nullable=False, default="'chat'"),
+            integer("queue_seq", nullable=False, default="0"),
             text("state", nullable=False), integer("generation", nullable=False, default="0"),
             text("lease_owner"), C("lease_until", "REAL", nullable=False, default="0"),
             text("policy", nullable=False), text("candidate_id"), text("stop_reason"),

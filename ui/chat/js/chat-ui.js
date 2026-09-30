@@ -993,7 +993,10 @@ export function initChat() {
     if (!stopBtn || !continueBtn) return;
     const hasAgent = !!app.currentAgentId;
     const hasInput = app.chatInput && app.chatInput.value.trim();
-    const runActive = !!(app._runControlsActive || app.isProcessing);
+    // The v2 run snapshot owns controls while its public panel is open. Legacy
+    // status updates can arrive after a v2 run has already reached terminal.
+    const runActive = typeof app._v2RunActive === 'boolean'
+      ? app._v2RunActive : !!(app._runControlsActive || app.isProcessing);
     if (hasAgent) {
       stopBtn.hidden = !runActive;
       continueBtn.hidden = runActive || !!hasInput;

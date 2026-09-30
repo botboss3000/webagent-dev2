@@ -35,7 +35,7 @@ _SEED_DIR = Path(__file__).resolve().parents[1] / "defaults" / "model-rosters"
 _MANAGED_SOURCES = {"system-seed", "legacy-migration", "environment"}
 _ENTRY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ENTRY_FIELDS = frozenset({
-    "entry_id", "provider", "auth_mode", "model", "base_url", "label", "display_name",
+    "entry_id", "alias_group_id", "provider", "auth_mode", "model", "base_url", "label", "display_name",
     "name", "enabled", "text_capable", "image_capable",
     "image_out_capable", "voice_capable", "high_effort_capable",
     "tool_capable", "use_for_image", "use_for_image_out", "use_for_voice",
@@ -149,6 +149,13 @@ def validate_roster_entries(
         entry_id = str(item.get("entry_id") or "").strip()
         if entry_id and not _ENTRY_ID_RE.fullmatch(entry_id):
             raise RosterError(f"entries[{index}].entry_id has an invalid format")
+        alias_group_id = str(item.get("alias_group_id") or "").strip()
+        if alias_group_id and not _ENTRY_ID_RE.fullmatch(alias_group_id):
+            raise RosterError(f"entries[{index}].alias_group_id has an invalid format")
+        if alias_group_id:
+            item["alias_group_id"] = alias_group_id
+        else:
+            item.pop("alias_group_id", None)
         for field in ("provider", "auth_mode", "model", "label", "display_name", "name",
                       "credential_scope"):
             if field in item:
@@ -250,6 +257,79 @@ def _entry_identity(entry: Mapping[str, Any]) -> str:
 
 
 
+def normalize_alias_groups(entries: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return a deterministic roster whose alias groups use live stable IDs.
+
+    Alias relationships are edges between stable entry IDs.  Unioning those edges
+    repairs partially submitted groups, while grouping rows that still reference a
+    deleted anchor lets us recanonicalize that component to its first surviving
+    member.  Single-member components are deliberately dissolved.
+    """
+    normalized = [deepcopy(dict(raw)) for raw in entries if isinstance(raw, Mapping)]
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for index, item in enumerate(normalized):
+        entry_id = str(item.get("entry_id") or "").strip()
+        if not entry_id:
+            raise RosterError(f"entries[{index}].entry_id is required before alias normalization")
+        if entry_id in by_id:
+            raise RosterError(f"duplicate roster entry_id {entry_id!r}")
+        alias_group_id = str(item.get("alias_group_id") or "").strip()
+        if alias_group_id and not _ENTRY_ID_RE.fullmatch(alias_group_id):
+            raise RosterError(f"entries[{index}].alias_group_id has an invalid format")
+        item["entry_id"] = entry_id
+        if alias_group_id:
+            item["alias_group_id"] = alias_group_id
+        else:
+            item.pop("alias_group_id", None)
+        by_id[entry_id] = item
+        order.append(entry_id)
+
+    parent = {entry_id: entry_id for entry_id in order}
+
+    def find(entry_id: str) -> str:
+        root = entry_id
+        while parent[root] != root:
+            root = parent[root]
+        while parent[entry_id] != entry_id:
+            entry_id, parent[entry_id] = parent[entry_id], root
+        return root
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    missing_anchors: dict[str, list[str]] = {}
+    referenced_roots: list[str] = []
+    for entry_id in order:
+        group_id = str(by_id[entry_id].get("alias_group_id") or "")
+        if not group_id:
+            continue
+        if group_id in by_id:
+            union(entry_id, group_id)
+            if group_id not in referenced_roots:
+                referenced_roots.append(group_id)
+        else:
+            siblings = missing_anchors.setdefault(group_id, [])
+            if siblings:
+                union(entry_id, siblings[0])
+            siblings.append(entry_id)
+
+    components: dict[str, list[str]] = {}
+    for entry_id in order:
+        components.setdefault(find(entry_id), []).append(entry_id)
+    for members in components.values():
+        if len(members) < 2:
+            by_id[members[0]].pop("alias_group_id", None)
+            continue
+        member_set = set(members)
+        group_id = next((candidate for candidate in referenced_roots if candidate in member_set), members[0])
+        for entry_id in members:
+            by_id[entry_id]["alias_group_id"] = group_id
+    return normalized
+
+
 def assign_entry_ids(
     entries: Iterable[Mapping[str, Any]],
     *,
@@ -277,7 +357,8 @@ def assign_entry_ids(
         item["entry_id"] = entry_id
         seen.add(entry_id)
         assigned.append(item)
-    return assigned
+    return normalize_alias_groups(assigned)
+
 
 def stable_entry_id(
     roster_id: str,

@@ -2282,6 +2282,21 @@ body.light-mode .chat-activity-bar {
     min-height: 0;
     flex: 1 1 auto;
   }
+.chat-model-list-panel .cml-context-btn {
+    flex: 0 0 auto;
+    margin: 5px 4px 0;
+    padding: 6px 8px;
+    border: var(--border-width) solid var(--border-soft);
+    border-radius: var(--r-sm);
+    background: var(--bg-1);
+    color: var(--fg-1);
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+  }
+.chat-model-list-panel .cml-context-btn:hover { background: var(--bg-tint); }
+.chat-model-list-panel .cml-context-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chat-model-list-panel .cml-effort-bar {
     --cml-effort-progress: 0%;
     position: relative;

@@ -774,7 +774,7 @@ function _buildModelPicker() {
   // ── Context-compaction section ──
   // Two sliders tune THIS chat's absolute token budgets — activation target and
   // verbatim hot tail — saved as a per-session override. Manual compaction
-  // waits for an isolated controlled-run command.
+  // enters the isolated controlled-run command queue.
   const compact = document.createElement('div');
   compact.className = 'cmp-compact';
   compact.innerHTML =
@@ -811,7 +811,7 @@ function _buildModelPicker() {
     +   `<div class="cmp-cc-hint">Newest history budget kept word-for-word; completed older tool exchanges may be summarized.</div>`
     + `</div>`
     + `<button type="button" class="cmp-cc-btn">`
-    +   `<span class="cmp-cc-btn-label">Compact now (unavailable)</span>`
+    +   `<span class="cmp-cc-btn-label">Compact now</span>`
     +   `<span class="cmp-cc-btn-status"></span></button>`
     + `<div class="cmp-cc-note">Applies to this chat only — takes effect next turn.</div>`;
   picker.appendChild(compact);
@@ -1273,11 +1273,66 @@ async function _loadCompactionSettings() {
   } catch (_) { /* best-effort — sliders keep their defaults */ }
 }
 
-/** Make the unsupported action explicit without submitting a v1 command. */
-function _runCompactNow(btn) {
-  const statusEl = btn ? btn.querySelector('.cmp-cc-btn-status') : null;
-  if (statusEl) statusEl.textContent = 'Manual compaction is unavailable in controlled chat.';
+let _compactPending = null;
+
+async function _runCompactNow(btn) {
+  if (!btn || btn.disabled) return;
+  const sid = app.currentSessionId;
+  const statusEl = btn.querySelector('.cmp-cc-btn-status');
+  if (!sid || !app.currentAgentId) {
+    if (statusEl) statusEl.textContent = 'Open an agent chat first.';
+    return;
+  }
+  const clientId = crypto.randomUUID();
+  _compactPending = {sessionId: sid, clientId};
+  btn.disabled = true;
+  if (statusEl) statusEl.textContent = 'Waiting for acceptance…';
+  try {
+    const {queueSubmission} = await import('../../chat/core/panel.js');
+    await queueSubmission({client_message_id: clientId, text: '/compact',
+      attachment_ids: [], execution_mode: app.executionMode || 'ask'});
+  } catch (error) {
+    if (_compactPending?.clientId === clientId) _compactPending = null;
+    btn.disabled = false;
+    if (statusEl) statusEl.textContent = error.message || 'Could not queue compaction.';
+  }
 }
+
+window.addEventListener('webagent-chat-send-status', (event) => {
+  const pending = _compactPending;
+  if (!pending || event.detail?.sessionId !== pending.sessionId ||
+      event.detail?.id !== pending.clientId) return;
+  const btn = pending.sessionId === app.currentSessionId
+    ? _compactEl?.querySelector('.cmp-cc-btn') : null;
+  const statusEl = btn?.querySelector('.cmp-cc-btn-status');
+  if (event.detail.status === 'rejected') {
+    _compactPending = null;
+    if (btn) btn.disabled = false;
+    if (statusEl) statusEl.textContent = 'Compaction was not accepted.';
+  } else if (event.detail.status === 'offline') {
+    if (statusEl) statusEl.textContent = 'Waiting for connection…';
+  } else if (event.detail.status === 'accepted') {
+    _compactPending = null;
+    if (statusEl) statusEl.textContent = 'Compaction queued…';
+  }
+});
+
+window.addEventListener('webagent-public-chat-state', (event) => {
+  if (event.detail?.sessionId !== app.currentSessionId) return;
+  const btn = _compactEl?.querySelector('.cmp-cc-btn');
+  if (!btn) return;
+  const statusEl = btn.querySelector('.cmp-cc-btn-status');
+  const runs = (event.detail.runs || []).filter(run => run.kind === 'compaction');
+  const active = runs.find(run => ['queued','running','finalizing'].includes(run.state));
+  if (active) {
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = active.state === 'queued'
+      ? 'Compaction queued…' : 'Compacting…';
+  } else if (!_compactPending || _compactPending.sessionId !== app.currentSessionId) {
+    btn.disabled = false;
+    if (statusEl && runs.length) statusEl.textContent = 'Latest result is in chat.';
+  }
+});
 
 // Toggle the context panel open/close when clicking the footer left area
 function _toggleModelPicker() {
@@ -3332,6 +3387,16 @@ export function initChatActivity() {
     const list = document.createElement('div');
     list.className = 'csp-list';
     panel.appendChild(list);
+    const contextButton = document.createElement('button');
+    contextButton.type = 'button';
+    contextButton.className = 'cml-context-btn';
+    contextButton.textContent = 'Context compaction';
+    contextButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      panel.style.display = 'none';
+      _toggleModelPicker();
+    });
+    panel.appendChild(contextButton);
 
     // Persistent effort control: this sits outside the scrolling roster so it
     // remains visible at the panel bottom for whichever model is active.

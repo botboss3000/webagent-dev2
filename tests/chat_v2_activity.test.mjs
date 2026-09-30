@@ -19,6 +19,14 @@ test('pages deduplicate and preserve complete tool/result and message counts aft
  assert.equal(group.rows[0].events.length,2);
  assert.equal(group.rows[1].text,'Final');
 });
+test('one successful compaction has one durable activity row and counter',()=>{
+ const journal={events:[event(1,'compaction_completed',{compaction:{status:'success'}})],
+  segments:[segment('compact-command',1,1,1)],cursor:1};
+ const group=activityGroups(journal,[{id:'r',kind:'compaction',state:'completed'}])[0];
+ assert.equal(group.kind,'compaction');
+ assert.equal(group.counts.compactions,1);
+ assert.equal(group.rows[0].category,'compactions');
+});
 test('interrupt boundaries keep activity on the correct side of each user message',()=>{
  const journal={events:[event(1,'tool_call'),event(2,'agent_step_end'),event(3,'tool_call')],
   segments:[segment('first-user',1,2,1),segment('interrupt',3,3)],cursor:3};

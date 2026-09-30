@@ -139,6 +139,39 @@ class MixedHistory(unittest.TestCase):
         self.assertEqual(history_replay_violations(out, REPLAY_REQUIRED), [])
 
 
+class OpenAIResponsesRepair(unittest.TestCase):
+    def test_one_missing_reasoning_item_preserves_earlier_work_and_plain_turns(self):
+        scope = "scope-openai"
+        profile = resolve_profile(family="openai", transport="responses")
+        messages = [
+            {"role": "user", "content": "Build the feature"},
+            {"role": "assistant", "content": "The design is ready"},
+            {"role": "assistant", "content": None, "tool_calls": [dict(_CALL)],
+             "_reasoning_replay_scope": scope,
+             "_responses_reasoning": [{"type": "reasoning",
+                                      "encrypted_content": "valid-blob"}]},
+            {"role": "tool", "tool_call_id": "call-1", "content": "earlier source"},
+            {"role": "assistant", "content": "The source confirms the design"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call-2", "type": "function", "function": {
+                    "name": "read_source", "arguments": "{}"}}],
+             "_reasoning_replay_scope": scope},
+            {"role": "tool", "tool_call_id": "call-2", "content": "new source"},
+            {"role": "assistant", "content": "I will apply the change"},
+        ]
+        out, stats = prepare_portable_history(
+            messages, current_scope=scope, current_provider="openai",
+            current_model="gpt", target_profile=profile)
+
+        self.assertEqual(history_replay_violations(out, profile), [])
+        self.assertIn("The design is ready", [m.get("content") for m in out])
+        self.assertIn("The source confirms the design", [m.get("content") for m in out])
+        self.assertIn("I will apply the change", [m.get("content") for m in out])
+        self.assertIn("earlier source", [m.get("content") for m in out])
+        self.assertIn("new source", out[-2]["content"])
+        self.assertEqual(stats.get("unreplayable_turns_dropped", 0), 0)
+
+
 class ContentFloor(unittest.TestCase):
     """The drop pass must never hand back a content-free history.
 

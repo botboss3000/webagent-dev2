@@ -100,15 +100,21 @@ function render(state) {
     }
   }
   const active=state.runs.filter(run=>['queued','running','finalizing','stopping'].includes(run.state));
+  app._v2RunActive=active.length>0;
   app.isProcessing=active.length>0;
   if(active.length) {
-    const phase=active.at(-1).state;
-    app.chatActivityStart?.({queued:'Message queued…',running:'Working…',
-      finalizing:'Checking final response…',stopping:'Stopping…'}[phase]);
+    const latest=active.at(-1);
+    const phase=latest.state;
+    app.chatActivityStart?.(latest.kind==='compaction'
+      ? (phase==='queued' ? 'Compaction queued…' : 'Compacting…')
+      : {queued:'Message queued…',running:'Working…',
+          finalizing:'Checking final response…',stopping:'Stopping…'}[phase]);
   } else {
     app._stopPending=false;
+    app.endRunControls?.();
     app.chatActivityStop?.();
   }
+  app.refreshRunControls?.();
   renderActivity(state,app.chatMessages);
   app._reLandAnchor?.();
   window.dispatchEvent(new CustomEvent('webagent-public-chat-state',{detail:{sessionId:session,runs:state.runs}}));
@@ -143,6 +149,8 @@ export function disconnectPanel() {
   unsubscribe?.();unsubscribe=null;
   if(session) chat.closeSession(session);
   session=null;pending=[];lastState=null;
+  app._v2RunActive=null;
+  app.refreshRunControls?.();
 }
 export async function loadPanel(id,{persisted=true,onReady=()=>{}}={}) {
   if(session===id && lastState) {onReady();return refreshPanel();}

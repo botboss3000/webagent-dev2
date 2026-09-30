@@ -118,7 +118,7 @@ export function createChatClient({request, cache, onStatus = () => {}}) {
         // progress frame must never make a completed run active again.
         const terminal=new Map(previous.runs.filter(r=>['completed','failed','cancelled'].includes(r.state))
           .map(r=>[r.id,r]));
-        const runs=(payload.runs || []).map(r=>terminal.get(r.id) || r);
+        const runs=(payload.runs || []).map(r=>({...r,...(terminal.get(r.id) || {})}));
         if (canonical(previous.runs)!==canonical(runs)) await save({...previous,runs},controller);
       }
     });

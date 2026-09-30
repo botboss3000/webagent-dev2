@@ -121,7 +121,9 @@ class ChatRepository:
             return {"message_id": old["id"], "run_id": run["run_id"],
                     "cursor": event["cursor"], "duplicate": True}
 
-    async def accept(self, session_id, author_id, command, policy):
+    async def accept(self, session_id, author_id, command, policy, *, kind="chat"):
+        if kind not in {"chat", "compaction"}:
+            raise ValueError("Unknown run kind")
         payload = command.model_dump() if hasattr(command, "model_dump") else dict(command)
         cmid = payload["client_message_id"]
         fingerprint = digest(payload)
@@ -142,19 +144,22 @@ class ChatRepository:
                 return {"message_id": old["id"], "run_id": row["run_id"], "cursor": cursor, "duplicate": True}
             message_id, stamp = uid(), now()
             active = conn.execute("""SELECT * FROM chat_runs WHERE session_id=? AND state IN ('queued','running')
-                ORDER BY created_at DESC LIMIT 1""", (session_id,)).fetchone()
-            run_id = active["id"] if active else uid()
+                ORDER BY queue_seq DESC,rowid DESC LIMIT 1""", (session_id,)).fetchone()
+            joined = kind == "chat" and active is not None and active["kind"] == "chat"
+            run_id = active["id"] if joined else uid()
             conn.execute("INSERT INTO chat_messages VALUES (?,?,?,?,?,?,?)",
                          (message_id, session_id, author_id, cmid, fingerprint, encrypted, stamp))
-            if not active:
+            if not joined:
                 parent=None
-                if payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
+                if kind == "chat" and payload["text"].strip().casefold()=="continue" and not payload.get("attachment_ids"):
                     previous=conn.execute("""SELECT id FROM chat_runs WHERE session_id=?
                         AND state IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 1""",
                         (session_id,)).fetchone()
                     parent=previous["id"] if previous else None
-                conn.execute("""INSERT INTO chat_runs(id,session_id,message_id,parent_run_id,state,policy,created_at,updated_at)
-                    VALUES (?,?,?,?,'queued',?,?,?)""", (run_id,session_id,message_id,parent,frozen_policy,stamp,stamp))
+                queue_seq = conn.execute("SELECT COALESCE(MAX(queue_seq),0)+1 FROM chat_runs WHERE session_id=?",
+                                         (session_id,)).fetchone()[0]
+                conn.execute("""INSERT INTO chat_runs(id,session_id,message_id,parent_run_id,kind,queue_seq,state,policy,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,'queued',?,?,?)""", (run_id,session_id,message_id,parent,kind,queue_seq,frozen_policy,stamp,stamp))
             result = self._publish(conn, session_id=session_id, run_id=run_id, kind="user",
                                    payload=public, item_id=message_id, timestamp=stamp)
             conn.execute("INSERT INTO chat_inbox VALUES (?,?,?,0,?)",
@@ -164,10 +169,14 @@ class ChatRepository:
     def claim(self, run_id, worker_id, *, ttl=60):
         with self.transaction() as conn:
             row = self._run(conn, run_id, states={"queued"})
+            order = conn.execute("SELECT rowid FROM chat_runs WHERE id=?", (run_id,)).fetchone()[0]
             occupied = conn.execute("""SELECT 1 FROM chat_runs WHERE session_id=? AND id!=?
-                AND state IN ('running','finalizing','stopping')""", (row["session_id"],run_id)).fetchone()
+                AND state IN ('queued','running','finalizing','stopping')
+                AND (queue_seq<? OR (queue_seq=? AND rowid<?)
+                     OR state IN ('running','finalizing','stopping'))""",
+                (row["session_id"],run_id,row["queue_seq"],row["queue_seq"],order)).fetchone()
             if occupied:
-                raise Conflict("Another run owns this session")
+                raise Conflict("An earlier run owns this session")
             generation = row["generation"] + 1
             conn.execute("""UPDATE chat_runs SET state='running', generation=?, lease_owner=?,
                 lease_until=?,updated_at=? WHERE id=?""", (generation,worker_id,time.time()+ttl,now(),run_id))
@@ -268,6 +277,14 @@ class ChatRepository:
             conn.execute("UPDATE chat_runs SET candidate_id=? WHERE id=?",(candidate_id,run_id))
             if not accepted:
                 return {"candidate_id":candidate_id,"accepted":False}
+            if (terminal and run["kind"]=="compaction" and kind=="notice"
+                    and (payload.get("compaction") or {}).get("status")=="success"):
+                event = conn.execute("""INSERT INTO chat_execution
+                    (event_id,session_id,run_id,generation,kind,payload,created_at)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (uid(),run["session_id"],run_id,generation,"compaction_completed",encrypted,now()))
+                conn.execute("""UPDATE chat_segments SET first_seq=COALESCE(first_seq,?),last_seq=?
+                    WHERE run_id=? AND closed=0""",(event.lastrowid,event.lastrowid,run_id))
             result = self._publish(conn,session_id=run["session_id"],run_id=run_id,kind=kind,
                                    payload=encrypted,terminal=terminal,candidate_id=candidate_id)
             if terminal:
@@ -279,12 +296,16 @@ class ChatRepository:
 
     async def stop(self, session_id):
         payload = await self.encode({"text":"Stopped.","flag":"partial","system_outcome":"cancelled"})
+        uncertain = await self.encode({"text":"Compaction stopped. Its checkpoint may already have changed; review the session before retrying.",
+                                       "system_outcome":"cancelled","compaction":{"status":"uncertain"}})
         with self.transaction() as conn:
             self._session(conn,session_id)
             runs = list(conn.execute("SELECT * FROM chat_runs WHERE session_id=? AND state IN ('queued','running','finalizing','stopping')",(session_id,)))
             for run in runs:
                 conn.execute("UPDATE chat_runs SET state='cancelled',generation=generation+1,lease_until=0,stop_reason='user_stop',updated_at=? WHERE id=?",(now(),run["id"]))
-                self._publish(conn,session_id=session_id,run_id=run["id"],kind="notice",payload=payload,terminal=True)
+                self._publish(conn,session_id=session_id,run_id=run["id"],kind="notice",
+                              payload=uncertain if run["kind"]=="compaction" and run["state"] in {"running","finalizing"} else payload,
+                              terminal=True)
             return [row["id"] for row in runs]
 
     async def run(self, run_id):
@@ -348,10 +369,11 @@ class ChatRepository:
                 return {"run_id":existing["id"],"parent_run_id":parent["id"],"duplicate":True}
             run_id,stamp=uid(),now()
             conn.execute("""INSERT INTO chat_runs
-                (id,session_id,message_id,parent_run_id,state,policy,candidate_id,stop_reason,created_at,updated_at)
-                VALUES (?,?,?,?,'queued',?,?,?,?,?)""",
-                (run_id,session_id,source["message_id"],parent["id"],source["policy"],
-                 candidate_id,marker,stamp,stamp))
+                (id,session_id,message_id,parent_run_id,queue_seq,state,policy,candidate_id,stop_reason,created_at,updated_at)
+                VALUES (?,?,?,?,?,'queued',?,?,?,?,?)""",
+                (run_id,session_id,source["message_id"],parent["id"],
+                 conn.execute("SELECT COALESCE(MAX(queue_seq),0)+1 FROM chat_runs WHERE session_id=?",
+                              (session_id,)).fetchone()[0],source["policy"],candidate_id,marker,stamp,stamp))
             return {"run_id":run_id,"parent_run_id":parent["id"],"duplicate":False}
 
     async def has_uncertain_tool_result(self, run_id):
@@ -376,7 +398,7 @@ class ChatRepository:
     async def fail_execution(self, run_id, generation, *, reason=None):
         """Terminally close an execution error without offering draft-only retry."""
         payload=await self.encode({
-            "text":reason or "Execution stopped before a final answer was available. You can continue in a new run.",
+            "text":reason or "Execution stopped before a final answer was available. You can send a message to continue.",
             "system_outcome":"failed",
         })
         with self.transaction() as conn:
@@ -394,8 +416,8 @@ class ChatRepository:
             cursor = conn.execute("SELECT COALESCE(MAX(cursor),0) FROM chat_delivery WHERE session_id=?",(session_id,)).fetchone()[0]
             rows = [dict(r) for r in conn.execute("""SELECT * FROM chat_publications WHERE session_id=?
                 AND (? IS NULL OR position<?) ORDER BY position DESC LIMIT ?""",(session_id,before,before,limit+1))]
-            runs = [dict(r) for r in conn.execute("""SELECT id,state,generation,message_id,parent_run_id FROM chat_runs
-                WHERE session_id=? ORDER BY created_at""",(session_id,))]
+            runs = [dict(r) for r in conn.execute("""SELECT id,kind,state,generation,message_id,parent_run_id FROM chat_runs
+                WHERE session_id=? ORDER BY queue_seq,rowid""",(session_id,))]
         items = [await self._item(row) for row in reversed(rows[:limit])]
         return {"items":items,"cursor":cursor,"has_more":len(rows)>limit,"runs":runs,"schema_version":1}
 
@@ -471,6 +493,8 @@ class ChatRepository:
             "text": "Execution stopped during a server restart. Review activity before continuing.",
             "system_outcome": "failed",
         })
+        uncertain = await self.encode({"text":"Compaction was interrupted by a server restart. Its checkpoint may already have changed; review the session before retrying.",
+                                       "system_outcome":"failed","compaction":{"status":"uncertain"}})
         recovered = []
         with self.transaction() as conn:
             rows = list(conn.execute("""SELECT r.* FROM chat_runs r JOIN sessions s ON s.id=r.session_id
@@ -485,7 +509,7 @@ class ChatRepository:
                         lease_owner=NULL,lease_until=0,stop_reason='server_restart',
                         updated_at=? WHERE id=?""", (now(), row["id"]))
                     self._publish(conn,session_id=row["session_id"],run_id=row["id"],
-                                  kind="failure",payload=payload,terminal=True)
+                                  kind="failure",payload=uncertain if row["kind"]=="compaction" else payload,terminal=True)
                 else:
                     conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
                         lease_owner=NULL,lease_until=0,updated_at=? WHERE id=?""",
@@ -499,25 +523,34 @@ class ChatRepository:
             "text":"Execution was interrupted. Some tool results may be unknown; review the activity before continuing.",
             "system_outcome":"failed",
         })
+        uncertain = await self.encode({"text":"Compaction was interrupted. Its checkpoint may already have changed; review the session before retrying.",
+                                       "system_outcome":"failed","compaction":{"status":"uncertain"}})
         recovered = []
         with self.transaction() as conn:
             expired = list(conn.execute("""SELECT r.* FROM chat_runs r JOIN sessions s ON s.id=r.session_id
                 WHERE s.user_id=? AND s.status='active' AND r.state IN ('running','finalizing','stopping')
                 AND r.lease_until<=?""",(self.owner_id,time.time())))
             for row in expired:
+                consumed = conn.execute("""SELECT 1 FROM chat_inbox WHERE run_id=? AND consumed=1 LIMIT 1""",
+                                        (row["id"],)).fetchone()
+                if row["kind"]=="compaction" and not consumed:
+                    conn.execute("""UPDATE chat_runs SET state='queued',generation=generation+1,
+                        lease_owner=NULL,lease_until=0,updated_at=? WHERE id=?""",(now(),row["id"]))
+                    recovered.append(row["id"])
+                    continue
                 conn.execute("""UPDATE chat_runs SET state='failed',generation=generation+1,lease_until=0,
                     stop_reason='lease_expired',updated_at=? WHERE id=?""",(now(),row["id"]))
                 self._publish(conn,session_id=row["session_id"],run_id=row["id"],
-                              kind="failure",payload=payload,terminal=True)
+                              kind="failure",payload=uncertain if row["kind"]=="compaction" else payload,terminal=True)
                 pending = conn.execute("""SELECT message_id FROM chat_inbox
                     WHERE run_id=? AND consumed=0 ORDER BY ordinal LIMIT 1""",(row["id"],)).fetchone()
                 if pending:
                     # Preserve accepted input that never reached the execution engine.
                     next_id,stamp = uid(),now()
                     conn.execute("""INSERT INTO chat_runs
-                        (id,session_id,message_id,parent_run_id,state,policy,created_at,updated_at)
-                        VALUES (?,?,?,?,'queued',?,?,?)""",
-                        (next_id,row["session_id"],pending["message_id"],row["id"],row["policy"],stamp,stamp))
+                        (id,session_id,message_id,parent_run_id,kind,queue_seq,state,policy,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,'queued',?,?,?)""",
+                        (next_id,row["session_id"],pending["message_id"],row["id"],row["kind"],row["queue_seq"],row["policy"],stamp,stamp))
                     conn.execute("UPDATE chat_inbox SET run_id=? WHERE run_id=? AND consumed=0",
                                  (next_id,row["id"]))
                 recovered.append(row["id"])
@@ -527,4 +560,4 @@ class ChatRepository:
         with self.transaction(write=False) as conn:
             return [r[0] for r in conn.execute("""SELECT r.id FROM chat_runs r
                 JOIN sessions s ON s.id=r.session_id WHERE s.user_id=? AND s.status='active'
-                AND r.state='queued' ORDER BY r.created_at""",(self.owner_id,))]
+                AND r.state='queued' ORDER BY r.queue_seq,r.rowid""",(self.owner_id,))]

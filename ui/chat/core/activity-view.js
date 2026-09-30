@@ -91,8 +91,10 @@ function paint() {
     const phase={running:'Working…',queued:'Queued…',finalizing:'Checking response…',
       stopping:'Stopping…',completed:'Completed',failed:'Failed',cancelled:'Stopped',
       finished:'Finished'}[group.state] || group.state;
+    const progress=group.kind==='compaction' && ['queued','running','finalizing'].includes(group.state)
+      ? (group.state==='queued' ? 'Compaction queued…' : 'Compacting…') : phase;
     node.firstElementChild.textContent='Activity'+(parts.length?' · '+parts.join(' · '):'')+
-      ' · '+(error || phase);
+      ' · '+(error || progress);
     node.setAttribute('aria-label','Activity group');
     if(node.open) updateRows(node,group);
     const anchor=tails.get(group.boundary_item_id) || boundary;

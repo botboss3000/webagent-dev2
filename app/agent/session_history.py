@@ -412,9 +412,9 @@ def _enforce_target_profile(
     The transform above is driven by *provenance* — "did this turn come from the
     target?" — rather than by the target's own rules, so it can return a history
     that is self-consistently labelled and still invalid: a turn carrying none of
-    the reasoning the endpoint requires back. Checking the result is what closes
-    that gap, and the repair is to drop those turns rather than rewrite them —
-    see the comment at the repair for why rewriting does not work.
+    the reasoning the endpoint requires back. The repair follows the target's
+    rule: convert an unreplayable tool exchange to prose when plain assistant
+    turns are allowed, or drop it when every assistant turn needs reasoning.
     """
     from app.agent.provider_profile import (
         history_replay_violations,
@@ -429,24 +429,29 @@ def _enforce_target_profile(
     index = 0
     while index < len(messages):
         message = messages[index]
-        # Every turn is judged, not just the ones carrying tool calls: a plain
-        # assistant message without reasoning is rejected by the same rule (that is
-        # what an earlier, convert-to-prose version of this repair walked into).
         if (str(message.get("role") or "") != "assistant"
-                or message_reasoning_count(message, profile)):
+                or message_reasoning_count(message, profile)
+                or (not profile.every_assistant_turn_needs_reasoning
+                    and not message.get("tool_calls"))):
             repaired.append(message)
             index += 1
             continue
-        # Drop the turn and the tool results that answered it. Rewriting its calls
-        # as prose does NOT repair it: the rewritten turn is still an assistant
-        # turn without reasoning, which is what the endpoint rejects — the earlier
-        # version converted instead of dropping and was rejected again on retry.
-        stats["unreplayable_turns_dropped"] = (
-            stats.get("unreplayable_turns_dropped", 0) + 1)
-        index += 1
-        while (index < len(messages)
-               and str(messages[index].get("role") or "") == "tool"):
-            index += 1
+        cursor = index + 1
+        while (cursor < len(messages)
+               and str(messages[cursor].get("role") or "") == "tool"):
+            cursor += 1
+        if not profile.every_assistant_turn_needs_reasoning:
+            # Encrypted-reasoning endpoints check tool calls, but accept plain
+            # assistant messages. Preserve the missing-reasoning exchange as
+            # readable evidence while keeping all other turns intact.
+            repaired.append(_tool_group_as_prose(message, messages[index + 1:cursor]))
+            stats["tool_groups_converted"] = stats.get("tool_groups_converted", 0) + 1
+        else:
+            # Plain-thinking endpoints reject even prose without its reasoning.
+            # Drop this turn and the results that belong to it.
+            stats["unreplayable_turns_dropped"] = (
+                stats.get("unreplayable_turns_dropped", 0) + 1)
+        index = cursor
 
     # Floor: the drop pass must never hand back a history with no content. A resume
     # replays this history with no user message of its own, so if every assistant

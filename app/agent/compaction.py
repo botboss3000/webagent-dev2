@@ -28,6 +28,7 @@ unchanged.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -52,6 +53,62 @@ _MAX_MSG_CHARS = 1_500
 # Rolling-checkpoint defaults (overridable via Context Control settings).
 _DEFAULT_SEGMENT_TARGET_TOKENS = 5_000    # rolling checkpoint output ceiling
 _CHARS_PER_TOKEN = 4                       # rough text→token ratio for car sizes
+
+_AUTO_FOLDS: dict[tuple[str, str], asyncio.Task] = {}
+
+
+async def run_automatic_compaction(
+    db: Any, user_id: str, session_id: str, settings: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Keep an automatic fold and its completion record alive after chat Stop."""
+    key = (user_id, session_id)
+    task = _AUTO_FOLDS.get(key)
+    if task is None or task.done():
+        async def complete():
+            # An auto fold can outlive its controlled chat run. It must not
+            # inherit that run's publication authority after Stop fences it.
+            from app.chat.context import current
+            token = current.set(None)
+            try:
+                info = await maybe_compact(db, user_id, session_id, settings)
+                if info and not info.get("status"):
+                    await persist_compaction_success(
+                        db, user_id, session_id, info,
+                        trigger=str(settings.get("_compaction_trigger") or "automatic"),
+                    )
+                return info
+            finally:
+                current.reset(token)
+
+        task = asyncio.create_task(complete(), name=f"auto-compaction:{session_id}")
+        _AUTO_FOLDS[key] = task
+
+        def finished(done):
+            if _AUTO_FOLDS.get(key) is done:
+                del _AUTO_FOLDS[key]
+            if not done.cancelled():
+                try:
+                    done.result()
+                except Exception:
+                    logger.exception("Automatic compaction failed for %s", session_id)
+
+        task.add_done_callback(finished)
+    # Cancelling the chat caller leaves the checkpoint and completion record
+    # running. Manual /compact never enters this path.
+    return await asyncio.shield(task)
+
+
+async def wait_for_automatic_compaction(user_id: str, session_id: str) -> None:
+    """Do not start a successor chat turn against a checkpoint being rewritten."""
+    task = _AUTO_FOLDS.get((user_id, session_id))
+    if task is not None:
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            # Automatic compaction is best effort; its failure cannot strand a
+            # newly accepted chat turn. The owner task logs the failure.
+            pass
+
 
 def render_segment_message(seg: Dict[str, Any], part: int, total: int) -> Dict[str, Any]:
     """Render one frozen car as a system message for the assembled context.
@@ -628,6 +685,24 @@ def format_compaction_success(notice: Dict[str, Any]) -> str:
     )
 
 
+async def build_compaction_notice(
+    user_id: str,
+    session_id: str,
+    info: Dict[str, Any],
+    *,
+    trigger: str = "manual",
+    detail_suffix: str = "",
+) -> Dict[str, Any]:
+    """Build the public result without writing a legacy transcript or WebSocket event."""
+    exact_tokens, _ = await _latest_provider_context_measurement(user_id, session_id)
+    notice = _compaction_notice(info, max(0, int(exact_tokens or 0)), trigger)
+    detail = format_compaction_success(notice)
+    if detail_suffix.strip():
+        detail += "\n\n" + detail_suffix.strip()
+    notice["detail"] = detail
+    return notice
+
+
 async def persist_compaction_success(
     db: Any,
     user_id: str,
@@ -638,18 +713,10 @@ async def persist_compaction_success(
     detail_suffix: str = "",
 ) -> Dict[str, Any]:
     """Persist and broadcast one structured successful-compaction record."""
-    exact_tokens, exact_created_at = await _latest_provider_context_measurement(
-        user_id, session_id,
+    notice = await build_compaction_notice(
+        user_id, session_id, info, trigger=trigger, detail_suffix=detail_suffix,
     )
-    # A compaction result may report history estimates only. Its provider
-    # baseline is the last exact usage record; never route it through a
-    # projection helper.
-    provider_before = max(0, int(exact_tokens or 0))
-    notice = _compaction_notice(info, provider_before, trigger)
-    detail = format_compaction_success(notice)
-    if detail_suffix.strip():
-        detail += "\n\n" + detail_suffix.strip()
-    notice["detail"] = detail
+    detail = notice["detail"]
     interaction_id: Optional[str] = None
     try:
         session_seq = await db.next_session_seq(session_id)
@@ -794,7 +861,7 @@ async def _maybe_compact_impl(
         n = await db.count_interactions(user_id, session_id)
     except Exception as e:
         logger.warning("compaction: count_interactions failed: %s", e)
-        return None
+        return {"status":"failed","reason":"Could not read session history."} if force else None
     if n <= 0:
         return None
 
@@ -807,7 +874,7 @@ async def _maybe_compact_impl(
             user_id, session_id, covered)
     except Exception as e:
         logger.warning("compaction: fetch_interactions_from_offset failed: %s", e)
-        return None
+        return {"status":"failed","reason":"Could not read the recent session history."} if force else None
 
     # Current effective conversation history = checkpoint(s) + verbatim tail.
     # Legacy sessions can still have several cars until this pass replaces them.
@@ -937,7 +1004,7 @@ async def _maybe_compact_impl(
             user_id, session_id, checkpoint)
     except Exception as e:
         logger.warning("compaction: replace_session_segments failed: %s", e)
-        return None
+        return {"status":"failed","reason":"Could not save the new checkpoint."} if force else None
 
     owner_turn_id = next(
         (

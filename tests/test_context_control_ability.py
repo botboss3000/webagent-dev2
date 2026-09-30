@@ -3,6 +3,7 @@ import importlib
 from unittest.mock import AsyncMock, patch
 
 from app import abilities
+from app.agent import compaction
 from app.admin import ability_config
 from app.agent.context_control import (
     apply_tool_evidence_override,
@@ -44,6 +45,115 @@ def test_automatic_and_memory_guard_triggers_share_one_finalizer():
     assert automatic_persist.await_args.kwargs["trigger"] == "automatic"
     guarded_persist.assert_awaited_once()
     assert guarded_persist.await_args.kwargs["trigger"] == "memory_guard"
+
+
+def test_parallel_auto_checks_share_one_fold_and_release_no_ops():
+    strategy = importlib.import_module(
+        "plugins.abilities.Memory.context_control.context_control"
+    )
+
+    async def run():
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = 0
+        result = {"tokens_before": 8_000, "tokens_after": 4_000}
+
+        async def fold(*args):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return result
+
+        persist = AsyncMock()
+        with (
+            patch("app.agent.compaction.maybe_compact", fold),
+            patch("app.agent.compaction.persist_compaction_success", persist),
+        ):
+            first = asyncio.create_task(strategy.CONTEXT_COMPACT(
+                object(), "user", "session", {"enabled": True},
+            ))
+            await asyncio.wait_for(entered.wait(), 1)
+            second = asyncio.create_task(strategy.CONTEXT_COMPACT(
+                object(), "user", "session", {"enabled": True},
+            ))
+            await asyncio.sleep(0)
+            release.set()
+            assert await asyncio.gather(first, second) == [result, result]
+            assert calls == 1
+            persist.assert_awaited_once()
+
+        with patch("app.agent.compaction.maybe_compact", AsyncMock(return_value=None)):
+            assert await strategy.CONTEXT_COMPACT(
+                object(), "user", "session", {"enabled": True},
+            ) is None
+        await asyncio.sleep(0)
+        assert ("user", "session") not in compaction._AUTO_FOLDS
+        with patch("app.agent.compaction.maybe_compact", AsyncMock(side_effect=RuntimeError("fold failed"))):
+            try:
+                await strategy.CONTEXT_COMPACT(
+                    object(), "user", "session", {"enabled": True},
+                )
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("Automatic fold failure was hidden")
+        await asyncio.sleep(0)
+        assert ("user", "session") not in compaction._AUTO_FOLDS
+
+    asyncio.run(run())
+
+
+def test_automatic_fold_finishes_after_its_chat_caller_is_stopped():
+    strategy = importlib.import_module(
+        "plugins.abilities.Memory.context_control.context_control"
+    )
+
+    async def run(trigger):
+        started, release, saved = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        cancelled = False
+
+        async def fold(*args):
+            nonlocal cancelled
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            return {"tokens_before": 8_000, "tokens_after": 4_000}
+
+        async def persist(*args, **kwargs):
+            saved.set()
+
+        with (
+            patch("app.agent.compaction.maybe_compact", fold),
+            patch("app.agent.compaction.persist_compaction_success", persist),
+        ):
+            settings = {"enabled": True, "_compaction_trigger": trigger}
+            caller = asyncio.create_task(strategy.CONTEXT_COMPACT(
+                object(), "user", "session", settings,
+            ))
+            await asyncio.wait_for(started.wait(), 1)
+            caller.cancel()
+            try:
+                await caller
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("Stopping the chat did not cancel its caller")
+            successor = asyncio.create_task(
+                compaction.wait_for_automatic_compaction("user", "session")
+            )
+            await asyncio.sleep(0)
+            assert not successor.done()
+            release.set()
+            await asyncio.wait_for(saved.wait(), 1)
+            await asyncio.wait_for(successor, 1)
+            assert not cancelled
+            assert ("user", "session") not in compaction._AUTO_FOLDS
+
+    asyncio.run(run("automatic"))
+    asyncio.run(run("memory_guard"))
 
 
 def test_context_control_has_agent_and_app_surfaces():

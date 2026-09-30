@@ -79,6 +79,16 @@ test('delayed progress cannot revive controls after terminal publication',async(
   assert.equal(client.stateFor('s').runs[0].state,'completed');
   client.dispose();
 });
+test('terminal compaction keeps its run kind when publication precedes state',async()=>{
+  const client=createChatClient({cache:cache(),request:async()=>response(snap())});
+  await client.openSession('s',{subscribe:false});
+  await client.receive('s','publication',{cursor:1,item:row('result',1,{
+    kind:'notice',terminal:true,payload:{text:'Nothing eligible',compaction:{status:'no_op'}}})});
+  await client.receive('s','state',{runs:[{id:'r',kind:'compaction',state:'completed'}]});
+  assert.deepEqual(client.stateFor('s').runs[0],{id:'r',kind:'compaction',state:'completed'});
+  client.dispose();
+});
+
 test('submission stores the public boundary before later events arrive',async()=>{
   const store=cache();
   const client=createChatClient({cache:store,request:async()=>response(snap([

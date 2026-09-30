@@ -153,8 +153,8 @@ async def events(session_id: str,request: Request,after: int=Query(0,ge=0),owner
             await scope(request,session_id,owner_id)
             changes=await repo.changes(session_id,after)
             with repo.transaction(write=False) as conn:
-                runs=[dict(r) for r in conn.execute("""SELECT id,state,message_id,parent_run_id FROM chat_runs
-                    WHERE session_id=? ORDER BY created_at""",(session_id,))]
+                runs=[dict(r) for r in conn.execute("""SELECT id,kind,state,message_id,parent_run_id FROM chat_runs
+                    WHERE session_id=? ORDER BY queue_seq,rowid""",(session_id,))]
         except (HTTPException,NotFound):
             body="event: revoked\ndata: {}\n\n"
             break

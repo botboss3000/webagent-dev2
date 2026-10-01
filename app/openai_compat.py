@@ -55,10 +55,12 @@ class _AsyncOpenAICompat:
             if tool_choice:
                 body["tool_choice"] = tool_choice
 
-            headers = {
-                "Authorization": f"Bearer {self._parent.api_key}",
-                "Content-Type": "application/json",
-            }
+            headers = {"Content-Type": "application/json"}
+            api_key = str(self._parent.api_key or "").strip()
+            if api_key:
+                # Only attach Authorization when a key is present. An empty
+                # ``Bearer `` value is rejected by httpx as an illegal header.
+                headers["Authorization"] = f"Bearer {api_key}"
 
             response = await self._parent._client.post(
                 f"{self._parent.base_url}/chat/completions",

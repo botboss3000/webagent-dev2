@@ -24,6 +24,7 @@ async def record_background_usage(
     *,
     model: str,
     provider: str = "",
+    entry_id: Optional[str] = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
     label: str = "",
@@ -79,12 +80,13 @@ async def record_background_usage(
                     "id, agent_id, user_id, interaction_id, input_tokens, output_tokens, "
                     "provider_cost_cents, end_user_charge_cents, "
                     "agent_admin_earnings_cents, strategy, is_byo_llm, is_trial, is_exempt, "
-                    "model, provider, cost_usd, cost_source, session_id, source"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "model, provider, entry_id, cost_usd, cost_source, session_id, source"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         row_id, a_id, u_id, interaction_id, in_tok, out_tok,
                         0, 0, 0, "free", 0, 0, 1,
-                        model, provider or "", float(cost_usd or 0), cost_source,
+                        model, provider or "", entry_id or None,
+                        float(cost_usd or 0), cost_source,
                         session_id, src,
                     ),
                 )
@@ -99,6 +101,7 @@ async def record_background_usage(
                 "agent_admin_earnings_cents": 0,
                 "strategy": "free", "is_byo_llm": 0, "is_trial": 0, "is_exempt": 1,
                 "model": model, "provider": provider or "",
+                "entry_id": entry_id or None,
                 "cost_usd": float(cost_usd or 0), "cost_source": cost_source,
                 "session_id": session_id, "source": src,
             }).execute()

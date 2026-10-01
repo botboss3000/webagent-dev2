@@ -972,6 +972,24 @@ def _get_client(base_url: Optional[str] = None, api_key: Optional[str] = None):
     return _client
 
 
+def _provider_requires_api_key(config: Dict[str, Any]) -> bool:
+    """True when the resolved provider needs a non-empty ``api_key``.
+
+    OAuth-backed ChatGPT subscriptions and local keyless endpoints (Ollama,
+    LM Studio) legitimately run without one.  Everything else — DeepSeek,
+    OpenRouter, OpenAI, Groq, etc. — must fail with a clear configuration
+    error instead of building an ``Authorization: Bearer `` header with an
+    empty value, which httpx rejects at the HTTP layer.
+    """
+    provider = str((config or {}).get("provider") or "").strip().lower()
+    if provider in {"openai_subscription", "ollama", "lmstudio"}:
+        return False
+    auth_mode = str((config or {}).get("auth_mode") or "").strip().lower()
+    if auth_mode in {"chatgpt", "oauth", "subscription", "none", "keyless"}:
+        return False
+    return True
+
+
 def _global_max_output_tokens() -> int:
     """Deployment-wide default output-token ceiling.
 
@@ -1116,6 +1134,7 @@ async def _record_billing_usage(
     llm_cost: Optional[float],
     model_name: Optional[str] = None,
     provider_name: Optional[str] = None,
+    entry_id: Optional[str] = None,
     interaction_id: Optional[str] = None,
     session_id: Optional[str] = None,
     cost_usd: float = 0.0,
@@ -1145,6 +1164,7 @@ async def _record_billing_usage(
         provider_cost_cents=provider_cents,
         model=model_name,
         provider=provider_name,
+        entry_id=entry_id,
         interaction_id=interaction_id,
         session_id=session_id,
         cost_usd=cost_usd,
@@ -2009,6 +2029,23 @@ async def _stream_agent_events_impl(
     if not llm_config.get("base_url"):
         yield {"type": "error", "level": "fatal",
                "message": "No LLM provider configured. Open Settings → Providers to set one up."}
+        return
+    if (_provider_requires_api_key(llm_config)
+            and not str(llm_config.get("api_key") or "").strip()):
+        # Fail closed with an actionable message.  Without this the Responses
+        # transport would build ``Authorization: Bearer `` (empty) and httpx
+        # would raise "Illegal header value b'Bearer '" — a transport crash
+        # that the self-healing layer would then keep retrying.
+        yield {
+            "type": "error",
+            "level": "fatal",
+            "code": "missing_llm_api_key",
+            "stop_cause": "failed",
+            "message": (
+                f"No API key is configured for {provider_name or 'this provider'}. "
+                "Open the model's settings and add its API key, then retry."
+            ),
+        }
         return
 
     llm_client = _client_for(llm_config)
@@ -5867,6 +5904,7 @@ async def _stream_agent_events_impl(
             _billing_event = await _record_billing_usage(
                 db, agent_id, user_id, input_tokens, output_tokens, llm_cost,
                 model_name=model_name, provider_name=provider_name,
+                entry_id=str(llm_config.get("entry_id") or "") or None,
                 interaction_id=parent_interaction_id, session_id=session_id,
                 cost_usd=call_cost_usd, cost_source=_cost_source,
                 credit_units=call_credit_units, credit_source=_credit_source,

@@ -261,6 +261,7 @@ async def generate_working_intro(
             getattr(usage, "completion_tokens", None), None,
             model_name=model,
             provider_name=str(llm_config.get("provider") or ""),
+            entry_id=str(llm_config.get("entry_id") or "") or None,
             interaction_id=current_interaction_id,
             session_id=session_id,
         )

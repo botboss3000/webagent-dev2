@@ -2227,6 +2227,9 @@ def pick_image_generator(caps: dict) -> Optional[dict]:
     if _ok(e or {}):
         return {"model": e["model"], "provider": e.get("provider", ""),
                 "base_url": e.get("base_url", ""), "api_key": e.get("api_key", ""),
+                # MODEL-ROW-USAGE: keep the row identity so the image charge is
+                # attributed to the exact saved connection, not just model+provider.
+                "entry_id": e.get("entry_id", ""),
                 "api_shape": _infer_api_shape(e.get("base_url", ""), e.get("provider", ""))}
     return None
 
@@ -4016,11 +4019,21 @@ async def _is_admin(db, user_id: str) -> bool:
 async def get_model_usage(
     model: str = Query(""),
     provider: str = Query(""),
+    entry_id: str = Query(""),
+    include_unassigned: int = Query(0),
     scope: str = Query("user"),
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
 ):
-    """Aggregate real token usage and cost for one model+provider combo.
+    """Aggregate real token usage and cost for ONE saved model row.
+
+    MODEL-ROW-USAGE: ``entry_id`` identifies the exact saved model-connection
+    row. model+provider can repeat across rows (same model saved twice with a
+    different credential / effort / injected prompt), so the per-row USAGE cell
+    must key on the stable roster ID, not the model string. Legacy rows written
+    before entry_id existed carry NULL; ``include_unassigned=1`` folds those
+    model/provider rows in — the caller sets it only when the roster has a
+    single row for that model, so they can never double-count.
 
     scope='user' (default) sums only the current user's calls. scope='global'
     (admin only) sums every agent, every user, and background tasks (git commit
@@ -4041,25 +4054,47 @@ async def get_model_usage(
         total_cost_cents = 0
         total_cost_usd = 0.0
 
+        # MODEL-ROW-USAGE: build the WHERE clause once so the two DB backends
+        # filter identically. entry_id wins over model when present; the legacy
+        # NULL-entry rows are opt-in so a duplicate model never double-counts.
+        where: list = []
+        params: list = []
+        if not want_global:
+            where.append("user_id=?")
+            params.append(user_id)
+        if entry_id:
+            if include_unassigned:
+                where.append("(entry_id=? OR (entry_id IS NULL AND model=?))")
+                params.extend([entry_id, model])
+            else:
+                where.append("entry_id=?")
+                params.append(entry_id)
+        else:
+            where.append("model=?")
+            params.append(model)
+        # Global sums every provider for this model (the same model can be billed
+        # via different provider strings, and background rows carry their own);
+        # user-scope keeps the provider filter for precision, but a blank provider
+        # means "any provider".
+        if provider:
+            where.append("provider=?")
+            params.append(provider)
+
+        def _legacy_match(row: dict) -> bool:
+            if not entry_id:
+                return True
+            row_entry = str(row.get("entry_id") or "")
+            if row_entry == entry_id:
+                return True
+            return bool(include_unassigned) and not row_entry and str(row.get("model") or "") == model
+
         if hasattr(db, "_get_conn"):
             conn = db._get_conn()
             try:
-                # Global sums every provider for this model (the same model can be
-                # billed via different provider strings, and background rows carry
-                # their own); user-scope keeps the provider filter for precision,
-                # but a blank provider means "any provider".
                 cols = ("SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), "
                         "COALESCE(SUM(provider_cost_cents),0), COALESCE(SUM(cost_usd),0) "
                         "FROM usage_events WHERE ")
-                if want_global:
-                    sql = cols + "model=?"
-                    params = [model]
-                else:
-                    sql = cols + "user_id=? AND model=?"
-                    params = [user_id, model]
-                if provider:
-                    sql += " AND provider=?"
-                    params.append(provider)
+                sql = cols + " AND ".join(where)
                 rows = conn.execute(sql, tuple(params)).fetchall()
                 if rows:
                     total_in, total_out = int(rows[0][0]), int(rows[0][1])
@@ -4069,14 +4104,16 @@ async def get_model_usage(
                 conn.close()
         elif hasattr(db, "get_raw_client"):
             q = db.get_raw_client().table("usage_events") \
-                .select("input_tokens, output_tokens, provider_cost_cents, cost_usd") \
-                .eq("model", model)
-            if provider:
-                q = q.eq("provider", provider)
+                .select("input_tokens, output_tokens, provider_cost_cents, cost_usd, entry_id, model")
             if not want_global:
                 q = q.eq("user_id", user_id)
+            q = q.eq("model", model)
+            if provider:
+                q = q.eq("provider", provider)
             resp = q.execute()
             for row in resp.data:
+                if not _legacy_match(row):
+                    continue
                 total_in += row.get("input_tokens", 0)
                 total_out += row.get("output_tokens", 0)
                 total_cost_cents += row.get("provider_cost_cents", 0)
@@ -4986,57 +5023,66 @@ async def get_agent_usage(
     user_id = _resolve_user_id(authorization or "", token or "")
     if not user_id:
         return {"error": "not_authenticated", "total_cost_usd": 0.0,
-                "total_input_tokens": 0, "total_output_tokens": 0, "by_model": {}}
+                "total_input_tokens": 0, "total_output_tokens": 0, "by_model": {}, "by_entry": {}}
     if not agent_id:
         return {"error": None, "total_cost_usd": 0.0,
-                "total_input_tokens": 0, "total_output_tokens": 0, "by_model": {}}
+                "total_input_tokens": 0, "total_output_tokens": 0, "by_model": {}, "by_entry": {}}
 
     try:
         from app.db import get_app_db
         db = get_app_db()
         by_model: dict = {}
+        # MODEL-ROW-USAGE: the exact saved row (entry_id) that served each call.
+        # Two rows can share a model/provider with different credentials/effort/
+        # injections, so the table's USAGE cell resolves by_entry first; by_model
+        # stays as the legacy fallback for rows that predate entry_id.
+        by_entry: dict = {}
         total_cost = 0.0
         total_in = 0
         total_out = 0
+
+        def _accumulate(model_key: str, entry_key: str, inp: int, out: int, cost: float) -> None:
+            nonlocal total_in, total_out, total_cost
+            total_in += inp
+            total_out += out
+            total_cost += cost
+            if model_key:
+                cur = by_model.setdefault(model_key, {"input": 0, "output": 0, "total": 0, "cost_usd": 0.0})
+                cur["input"] += inp
+                cur["output"] += out
+                cur["total"] += inp + out
+                cur["cost_usd"] = round(cur["cost_usd"] + cost, 6)
+            if entry_key:
+                cur = by_entry.setdefault(entry_key, {"input": 0, "output": 0, "total": 0, "cost_usd": 0.0})
+                cur["input"] += inp
+                cur["output"] += out
+                cur["total"] += inp + out
+                cur["cost_usd"] = round(cur["cost_usd"] + cost, 6)
 
         if hasattr(db, "_get_conn"):
             conn = db._get_conn()
             try:
                 rows = conn.execute(
-                    "SELECT model, COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), "
-                    "COALESCE(SUM(cost_usd),0) FROM usage_events "
-                    "WHERE agent_id=? AND user_id=? GROUP BY model",
+                    "SELECT model, entry_id, COALESCE(SUM(input_tokens),0), "
+                    "COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost_usd),0) "
+                    "FROM usage_events WHERE agent_id=? AND user_id=? "
+                    "GROUP BY model, entry_id",
                     (agent_id, user_id),
                 ).fetchall()
                 for r in rows or []:
-                    m = r[0] or ""
-                    inp, out, cost = int(r[1] or 0), int(r[2] or 0), float(r[3] or 0)
-                    total_in += inp
-                    total_out += out
-                    total_cost += cost
-                    if m:
-                        by_model[m] = {"input": inp, "output": out,
-                                       "total": inp + out, "cost_usd": round(cost, 6)}
+                    _accumulate(str(r[0] or ""), str(r[1] or ""),
+                                int(r[2] or 0), int(r[3] or 0), float(r[4] or 0))
             finally:
                 conn.close()
         elif hasattr(db, "get_raw_client"):
             resp = db.get_raw_client().table("usage_events") \
-                .select("model, input_tokens, output_tokens, cost_usd") \
+                .select("model, entry_id, input_tokens, output_tokens, cost_usd") \
                 .eq("agent_id", agent_id).eq("user_id", user_id).execute()
             for row in resp.data or []:
-                m = row.get("model") or ""
-                inp = row.get("input_tokens", 0) or 0
-                out = row.get("output_tokens", 0) or 0
-                cost = row.get("cost_usd", 0) or 0
-                total_in += inp
-                total_out += out
-                total_cost += cost
-                if m:
-                    cur = by_model.setdefault(m, {"input": 0, "output": 0, "total": 0, "cost_usd": 0.0})
-                    cur["input"] += inp
-                    cur["output"] += out
-                    cur["total"] += inp + out
-                    cur["cost_usd"] = round(cur["cost_usd"] + cost, 6)
+                _accumulate(str(row.get("model") or ""), str(row.get("entry_id") or ""),
+                            int(row.get("input_tokens", 0) or 0),
+                            int(row.get("output_tokens", 0) or 0),
+                            float(row.get("cost_usd", 0) or 0))
 
         return {
             "error": None,
@@ -5044,10 +5090,12 @@ async def get_agent_usage(
             "total_input_tokens": total_in,
             "total_output_tokens": total_out,
             "by_model": by_model,
+            "by_entry": by_entry,
         }
     except Exception as e:
         return {"error": str(e), "total_cost_usd": 0.0,
-                "total_input_tokens": 0, "total_output_tokens": 0, "by_model": {}}
+                "total_input_tokens": 0, "total_output_tokens": 0,
+                "by_model": {}, "by_entry": {}}
 
 
 @router.post("/agent-usage/reset")

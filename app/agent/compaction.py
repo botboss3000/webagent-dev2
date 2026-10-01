@@ -395,6 +395,7 @@ async def _record_usage(resp: Any, cfg: Dict[str, Any], *,
             from plugins.billing.usage import record_background_usage
             await record_background_usage(
                 model=cfg.get("model") or "",
+                entry_id=str(cfg.get("entry_id") or "") or None,
                 input_tokens=getattr(_u, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(_u, "completion_tokens", 0) or 0,
                 label="compact",

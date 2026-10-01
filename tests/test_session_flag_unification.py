@@ -304,6 +304,24 @@ def test_title_bar_renders_the_rows_live_counter_beside_the_flag():
     assert "#session-dropdown-status .session-row-status-group" in css
 
 
+def test_v2_unread_sessions_keep_live_time_ago_in_header_and_menu():
+    source = _read(DROPDOWN_LIST)
+    header = source.split("} else if (found && found.has_unread) {", 1)[1].split("} else {", 1)[0]
+    menu = source.split("} else if (menuCfg.status && s.has_unread) {", 1)[1].split("} else if (menuCfg.status) {", 1)[0]
+    # V2 answer notifications may lack both flag and legacy run_status. Unread
+    # must not replace the timestamp with a check icon when activity is known.
+    for branch, owner in ((header, "found"), (menu, "s")):
+        assert f"const at = {owner}.activity_at || {owner}.updated_at;" in branch
+        assert 'data-ts="${_esc(at)}"' in branch
+        assert "${_formatRelativeTime(at)}" in branch
+        assert "session-status-unread" in branch
+        assert "icon('check-circle'" in branch  # only the no-timestamp fallback
+    ticker = source.split("function _startCompletedTimeTick() {", 1)[1].split("// ── Session-list tree", 1)[0]
+    assert "#session-dropdown-status [data-ts], #session-dropdown-menu [data-ts]" in ticker
+    assert "_formatRelativeTime(at)" in ticker
+    assert "}, 1000);" in ticker
+
+
 def test_shared_chip_restores_the_caller_rendered_label():
     source = _read(NEEDS_INPUT_CHIP)
 
@@ -684,4 +702,43 @@ def test_desktop_counter_beside_chat_opens_the_shared_panel():
     # The desktop pill strip is styled globally too, so both surfaces coexist.
     assert _enclosing_at_rules(css, ".session-notification-inline {") == []
     assert ".sn-pill {" in css
+
+
+def test_dropdown_v2_working_phases_use_existing_spinner():
+    source = _read(DROPDOWN_LIST)
+    assert "window.addEventListener('webagent-public-chat-state'" in source
+    assert "['running', 'resuming', 'finalizing', 'stopping']" in source
+    assert "_sessionIsWorking(found) ? null : sessionAttentionFlag(found)" in source
+    assert "_sessionIsWorking(s) ? null : sessionAttentionFlag(s)" in source
+    assert "found && _sessionIsWorking(found)" in source
+    assert "menuCfg.status && _sessionIsWorking(s)" in source
+    assert "publicRunStatesAtFetch = new Map(_publicSessionRunStates)" in source
+    assert "_publicSessionRunStates.delete(row.id)" in source
+    assert 'session-radial-loader sm' in source
+
+
+def test_session_list_v2_bulk_run_priority():
+    import ast
+    import sqlite3
+    source = _read(ROOT / 'app/api/db_viewer.py')
+    tree = ast.parse(source)
+    query = next(node.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                 and node.value.startswith('SELECT session_id, state, updated_at FROM chat_runs '))
+    conn = sqlite3.connect(':memory:')
+    conn.execute('CREATE TABLE chat_runs (id TEXT, session_id TEXT, state TEXT, updated_at TEXT, created_at TEXT)')
+    conn.executemany('INSERT INTO chat_runs VALUES (?,?,?,?,?)', [
+        ('old', 'working', 'completed', '1', '1'),
+        ('active', 'working', 'running', '2', '2'),
+        ('queue', 'working', 'queued', '3', '3'),
+        ('first', 'done', 'running', '1', '1'),
+        ('last', 'done', 'completed', '2', '2'),
+    ])
+    # Active work must beat both older terminal records and newer queued work.
+    rows = list(conn.execute(query))
+    assert next(row for row in rows if row[0] == 'working')[1] == 'running'
+    conn.execute("UPDATE chat_runs SET state='completed' WHERE id='first'")
+    rows = list(conn.execute(query))
+    assert next(row for row in rows if row[0] == 'done')[2] == '2'
+    conn.close()
 

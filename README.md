@@ -1,6 +1,6 @@
 
 > **V2 development note (2026-09-29):** The development target runs the
-> isolated controlled-chat application from `/home/ar/webagent-dev-v2` through
+> isolated controlled-chat application from `/home/ar/webagent-dev2` through
 > `app.v2:app`. The authoritative chat architecture is documented in
 > [`docs/chat-v2.md`](docs/chat-v2.md). Customer-visible transcript items come
 > only from the validated `/api/v2/chat` publication path; execution output,

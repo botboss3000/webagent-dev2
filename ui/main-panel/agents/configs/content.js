@@ -1086,9 +1086,25 @@ export function _renderConfigTab(body, agent, panelEl, _renderList, { onPageChan
       // agent-usage breakdown. So every USAGE cell is the viewer's own spend with
       // this agent, never the agent's all-users total, the user's all-agents total,
       // or the app-wide total. (inherited is accepted but no longer changes scope.)
-      fetchModelUsage: async ({ model }) => {
+      fetchModelUsage: async ({ model, entry_id: entryId }) => {
         const d = await _fetchAgentUsage();
-        const u = d && d.by_model && d.by_model[model];
+        // MODEL-ROW-USAGE: prefer the exact saved row's own ledger. Two rows can
+        // share a model/provider with different credentials/effort/injections, so
+        // the shared by_model bucket must only back the LEGACY (pre-entry_id)
+        // events — and only while this is the model's sole roster row, otherwise
+        // both rows would show the same combined total (the bug this fixes).
+        // A backend that does not yet return by_entry (rolling deploy) keeps the
+        // legacy model bucket so the table never blanks out mid-upgrade.
+        const hasEntryBuckets = !!(d && d.by_entry);
+        let u = entryId && d && d.by_entry && d.by_entry[entryId];
+        if (!u && (!hasEntryBuckets || !entryId)) {
+          u = d && d.by_model && d.by_model[model];
+        }
+        if (!u && entryId && hasEntryBuckets) {
+          const rows = Array.isArray(agentCfg.multi_providers) ? agentCfg.multi_providers : [];
+          const sameModel = rows.filter(row => String(row.model || '') === String(model || ''));
+          if (sameModel.length <= 1) u = d && d.by_model && d.by_model[model];
+        }
         if (!u) return { total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 };
         return {
           total_input_tokens: u.input || 0,

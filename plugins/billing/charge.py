@@ -41,6 +41,7 @@ async def record_and_charge(
     provider_cost_cents: int = 0,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    entry_id: Optional[str] = None,
     interaction_id: Optional[str] = None,
     session_id: Optional[str] = None,
     cost_usd: float = 0.0,
@@ -145,9 +146,9 @@ async def record_and_charge(
                         "id, agent_id, user_id, interaction_id, input_tokens, output_tokens, "
                         "provider_cost_cents, end_user_charge_cents, "
                         "agent_admin_earnings_cents, strategy, is_byo_llm, is_trial, is_exempt, "
-                        "model, provider, cost_usd, cost_source, credit_units, credit_source, session_id, source, "
+                        "model, provider, entry_id, cost_usd, cost_source, credit_units, credit_source, session_id, source, "
                         "cached_input_tokens, cache_write_tokens, uncached_input_tokens, reasoning_tokens"
-                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             event_id, agent_id, user_id, interaction_id,
                             usage.input_tokens, usage.output_tokens,
@@ -156,7 +157,7 @@ async def record_and_charge(
                             1 if result.is_byo_llm else 0,
                             1 if result.is_trial else 0,
                             1 if result.is_exempt else 0,
-                            model, provider,
+                            model, provider, entry_id or None,
                             float(cost_usd or 0), cost_source,
                             locked_credit_units, locked_credit_source, session_id, source,
                             int(cached_input_tokens or 0), int(cache_write_tokens or 0),
@@ -183,6 +184,7 @@ async def record_and_charge(
                     "is_exempt": 1 if result.is_exempt else 0,
                     "model": model,
                     "provider": provider,
+                    "entry_id": entry_id or None,
                     "cost_usd": float(cost_usd or 0),
                     "cost_source": cost_source,
                     "credit_units": locked_credit_units,

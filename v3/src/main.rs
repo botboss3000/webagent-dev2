@@ -1,4 +1,5 @@
 mod abilities;
+mod browser_login;
 mod accounts;
 mod cache;
 mod context;
@@ -69,6 +70,7 @@ struct App {
     secure: bool,
     chat_ui_config_path: PathBuf,
     message_api_token_hash: Option<[u8; 32]>,
+    browser_login_bridge: Option<browser_login::Bridge>,
 }
 #[derive(Debug)]
 struct ApiError(StatusCode, String);
@@ -3068,6 +3070,7 @@ fn router(app: App) -> Router {
     let shared = std::env::var("V3_SHARED_UI_ROOT").unwrap_or_else(|_| "/opt/v3/shared-ui".into());
     Router::new().route("/api/v3/pages/catalog",get(ui_pages::catalog))
         .route("/api/v3/auth/login",post(login))
+        .route("/api/v3/diagnostics/browser-login",post(browser_login::login))
         .route("/api/v3/auth/setup-status",get(setup_status))
         .route("/api/v3/auth/setup-admin",post(setup_admin))
         .nest("/api/v3",api)
@@ -3138,6 +3141,10 @@ async fn main() -> Result<()> {
     let catalog = abilities::Catalog::load(&PathBuf::from(abilities_root))?;
     store.ensure_agent_connections(&catalog.ids()).await?;
     let app = App {
+        browser_login_bridge: browser_login::Bridge::configure(
+            &std::env::var("V3_BROWSER_LOGIN_TOKEN").unwrap_or_default(),
+            &std::env::var("V3_BROWSER_LOGIN_CALLER_ID").unwrap_or_default(),
+        )?,
         message_api_token_hash: message_api_token_hash(&std::env::var("V3_MESSAGE_API_TOKEN").unwrap_or_default())?,
         store,
         abilities: Arc::new(catalog),

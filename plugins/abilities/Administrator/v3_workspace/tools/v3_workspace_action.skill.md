@@ -1,0 +1,1 @@
+Worker mode supports isolated workspace operations. Without worker URL, only review is supported using the existing v3 login bridge; workspace_id is then a v3 session UUID. All other operations explicitly return unsupported; do not retry them unchanged.

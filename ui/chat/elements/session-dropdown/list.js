@@ -28,6 +28,29 @@ import {enrichSessions} from '../../core/notifications.js';
 
 let _sessionsCache = [];
 
+// V2 public snapshots are the live authority for sessions observed by this tab.
+// Keep phases across metadata refreshes, which may still carry legacy run state.
+const _publicSessionRunStates = new Map();
+function _sessionRunStatus(session) {
+  return _publicSessionRunStates.get(session?.id) ?? session?.run_status;
+}
+function _sessionIsWorking(session) {
+  return ['running', 'resuming', 'finalizing', 'stopping'].includes(_sessionRunStatus(session));
+}
+window.addEventListener('webagent-public-chat-state', event => {
+  const { sessionId, runs } = event.detail || {};
+  if (!sessionId || !Array.isArray(runs)) return;
+  const active = runs.filter(run => ['queued', 'running', 'finalizing', 'stopping'].includes(run.state));
+  const latest = active.at(-1) || runs.at(-1);
+  const status = { completed: 'complete', failed: 'error', cancelled: 'interrupted' }[latest?.state]
+    || latest?.state || 'idle';
+  if (_publicSessionRunStates.get(sessionId) === status) return;
+  _publicSessionRunStates.set(sessionId, status);
+  _renderSessionRows();
+  _setTriggerLabel();
+});
+document.addEventListener('webagent-auth-transition-start', () => _publicSessionRunStates.clear());
+
 // React-island boundary. Existing vanilla consumers retain the mutable cache;
 // React reads immutable snapshots and is notified only after a visible render.
 const _sessionDropdownListeners = new Set();
@@ -1427,7 +1450,7 @@ function _setTriggerLabel() {
     // (ui/shared/js/needs-input-chip.js) runs in both places. The status span
     // stays the passive container and the chip is its child: that child is the
     // one click the trigger handler routes to the chip instead of the menu.
-    const ackFlag = sessionAttentionFlag(found);
+    const ackFlag = _sessionIsWorking(found) ? null : sessionAttentionFlag(found);
     if (ackFlag) {
       const ackLabel = flagLabel(ackFlag);
       const ackRead = sessionFlagIsRead(found);
@@ -1447,7 +1470,7 @@ function _setTriggerLabel() {
       statusEl.innerHTML = `<span class="session-row-status-group"><button type="button" class="session-row-status session-status-needs-input session-needs-input-chip flag-tone-${ackTone}" data-session-id="${_esc(found.id)}" data-state="needs-input" data-flag="${_esc(ackFlag)}" data-needs-input-label="${_escAttr(ackLabel)}" data-needs-input-verb="${ackVerb}" data-needs-input-note="${_escAttr(ackNote)}" title="${_escAttr(ackHint)}" aria-label="${_escAttr(ackHint)}">${_esc(ackLabel)}</button>${needsInputCounter}</span>`;
       statusEl.className = 'session-row-status session-dropdown-status session-dropdown-status-chip';
       statusEl.title = ackHint;
-    } else if (found && (found.run_status === 'running' || found.run_status === 'resuming')) {
+    } else if (found && _sessionIsWorking(found)) {
       statusEl.innerHTML = '<span class="session-radial-loader sm"></span>';
       statusEl.className = 'session-row-status session-dropdown-status session-status-running';
       // 'resuming' = stopped involuntarily and still inside the auto-resume
@@ -1484,9 +1507,14 @@ function _setTriggerLabel() {
       statusEl.className = 'session-row-status session-dropdown-status ' + statusClass + readClass;
       statusEl.title = readLabel + resultLabel + ' ' + _parseDate(completedAt).toLocaleString();
     } else if (found && found.has_unread) {
-      statusEl.innerHTML = icon('check-circle', { size: '12px' });
+      // V2 answer notifications can have no flag/run_status. Keep the legacy
+      // live recency label rather than replacing it with an unread check.
+      const at = found.activity_at || found.updated_at;
+      statusEl.innerHTML = at
+        ? `<span data-ts="${_esc(at)}">${_formatRelativeTime(at)}</span>`
+        : icon('check-circle', { size: '12px' });
       statusEl.className = 'session-row-status session-dropdown-status session-status-unread';
-      statusEl.title = 'New response ready';
+      statusEl.title = at ? 'New response ready · Last active ' + _parseDate(at).toLocaleString() : 'New response ready';
     } else {
       // Idle current session: same muted live "time ago" as the Sessions page.
       const at = found && (found.activity_at || found.updated_at);
@@ -1876,7 +1904,7 @@ function _renderSessionRows() {
     // visibly unfinished. A grey chip's click puts the session back to unread
     // (restoring the coloured flag), which is why it carries
     // data-needs-input-verb="unread" and the coloured one "read".
-    const ackFlag = sessionAttentionFlag(s);
+    const ackFlag = _sessionIsWorking(s) ? null : sessionAttentionFlag(s);
     if (menuCfg.status && ackFlag) {
       // Keep the action-required flag and its activity counter together so the
       // flag does not displace the recency value shown by the other row states.
@@ -1894,7 +1922,7 @@ function _renderSessionRows() {
         ? `<span class="session-row-status session-status-idle session-needs-input-counter flag-tone-${ackTone}" title="Last active ${_parseDate(needsInputAt).toLocaleString()}" data-ts="${_esc(needsInputAt)}">${_formatRelativeTime(needsInputAt)}</span>`
         : '';
       statusHtml = `<span class="session-row-status-group"><button type="button" class="session-row-status session-status-needs-input session-needs-input-chip flag-tone-${ackTone}" data-session-id="${_esc(s.id)}" data-state="needs-input" data-flag="${_esc(ackFlag)}" data-needs-input-label="${_escAttr(ackLabel)}" data-needs-input-verb="${ackVerb}" data-needs-input-note="${_escAttr(ackNote)}" title="${_escAttr(ackHint)}" aria-label="${_escAttr(ackHint)}">${_esc(ackLabel)}</button>${needsInputCounter}</span>`;
-    } else if (menuCfg.status && (s.run_status === 'running' || s.run_status === 'resuming')) {
+    } else if (menuCfg.status && _sessionIsWorking(s)) {
       // 'resuming' keeps the spinning loader: the run stopped involuntarily and
       // is waiting for the watchdog/boot sweep to re-ignite it (not finished).
       const _spinTitle = s.run_status === 'resuming'
@@ -1925,7 +1953,12 @@ function _renderSessionRows() {
       const resultLabel = _wasComplete ? 'Completed' : (s.run_status === 'error' ? 'Errored' : 'Stopped');
       statusHtml = `<span class="session-row-status ${statusClass}${readClass}" title="${readLabel}${resultLabel} ${_parseDate(completedAt).toLocaleString()}" data-ts="${_esc(completedAt)}">${_formatRelativeTime(completedAt)}</span>`;
     } else if (menuCfg.status && s.has_unread) {
-      statusHtml = `<span class="session-row-status session-status-unread" title="New response ready">${icon('check-circle', { size: '12px' })}</span>`;
+      // Match the collapsed header: V2 notifications without a flag still
+      // show time ago, refreshed by the existing one-second [data-ts] ticker.
+      const at = s.activity_at || s.updated_at;
+      statusHtml = at
+        ? `<span class="session-row-status session-status-unread" title="New response ready · Last active ${_parseDate(at).toLocaleString()}" data-ts="${_esc(at)}">${_formatRelativeTime(at)}</span>`
+        : `<span class="session-row-status session-status-unread" title="New response ready">${icon('check-circle', { size: '12px' })}</span>`;
     } else if (menuCfg.status) {
       // Idle session (no active run): mirror the Sessions page — a muted,
       // live-ticking "time ago" of last activity instead of an empty cell.
@@ -2186,6 +2219,7 @@ async function populateSessionSelect(userId, { preferCache = false } = {}) {
     return;
   }
   const mySeq = ++_sessionFetchSeq;
+  const publicRunStatesAtFetch = new Map(_publicSessionRunStates);
   // A fetch triggered by the retry timer keeps the current retry budget; any
   // user/poll-initiated fetch starts a fresh one, so opening the dropdown
   // always gets a full skeleton + retry window even after a background burst.
@@ -2310,6 +2344,14 @@ async function populateSessionSelect(userId, { preferCache = false } = {}) {
       userId,
       sessions.filter(row => row.external_authority !== 'codex'),
     );
+  }
+  // A successful metadata refresh supersedes older public snapshots, but
+  // cannot erase a newer phase delivered while this request was in flight.
+  for (const row of sessions) {
+    if (publicRunStatesAtFetch.has(row.id)
+        && _publicSessionRunStates.get(row.id) === publicRunStatesAtFetch.get(row.id)) {
+      _publicSessionRunStates.delete(row.id);
+    }
   }
   _sessionsCache = _reconcileSessionReadState(sessions);
   _ensureCurrentSessionStub();

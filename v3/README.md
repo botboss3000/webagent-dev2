@@ -8,8 +8,8 @@ Source lives here within the primary development checkout; v2 remains independen
 On the development server:
 
 ```sh
-sh /home/ar/webagent-dev-v2/v3/deploy.sh build
-sh /home/ar/webagent-dev-v2/v3/deploy.sh start
+sh /home/ar/webagent-dev2/v3/deploy.sh build
+sh /home/ar/webagent-dev2/v3/deploy.sh start
 curl -fsS http://100.112.23.15:8081/health/ready
 ```
 

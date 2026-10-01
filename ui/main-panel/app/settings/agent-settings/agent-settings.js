@@ -628,15 +628,23 @@ function _userCatalogModelAdapter() {
       })) }
       : { models: [] },
     fetchModelInfo: async () => ({}),
-    fetchModelUsage: async ({ model }) => {
+    fetchModelUsage: async ({ model, entry_id, include_unassigned }) => {
       // USAGE-ALL-AGENTS: this column reports what the signed-in user has spent
-      // on THAT MODEL ACROSS ALL THEIR AGENTS — the same scope as the analytics
-      // chart mounted above it (view.js passes scope: 'user'). Deliberately
-      // provider-agnostic: a model billed under several provider strings, or a
-      // row added through the WebAgent Catalog (provider 'webagent_catalog'),
-      // still totals correctly when no provider filter is sent.
+      // on THAT MODEL ROW ACROSS ALL THEIR AGENTS — the same scope as the
+      // analytics chart mounted above it (view.js passes scope: 'user').
+      // MODEL-ROW-USAGE: key on the saved row's entry_id so two rows with the
+      // same model/provider track independently. The model string is still sent
+      // for the legacy NULL-entry fallback (include_unassigned), which the
+      // shared table sets only when the row is the model's sole connection.
+      // Deliberately provider-agnostic: a model billed under several provider
+      // strings, or a row added through the WebAgent Catalog, still totals
+      // correctly when no provider filter is sent.
       try {
         const params = new URLSearchParams({ model: model || '', provider: '', scope: 'user' });
+        if (entry_id) {
+          params.set('entry_id', entry_id);
+          if (include_unassigned) params.set('include_unassigned', '1');
+        }
         const response = await _fetch(apiPath(`/admin/settings/model-usage?${params.toString()}`));
         const payload = response.ok ? await response.json() : null;
         return (payload && !payload.error && payload.total_input_tokens != null) ? payload : null;

@@ -1,0 +1,26 @@
+[Unit]
+Description=Private WebAgent v3 workspace adapter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=webagent-v3-workspace
+Group=webagent-v3-workspace
+EnvironmentFile=/etc/webagent-v3-workspace-worker.env
+WorkingDirectory=/home/ar/webagent-dev2
+ExecStart=/usr/bin/python3 -B /home/ar/webagent-dev2/scripts/v3_workspace_worker.py --repo /home/ar/webagent-dev2 --state /var/lib/webagent-v3-workspace --bind 100.112.23.15 --port 8093
+StateDirectory=webagent-v3-workspace
+UMask=0077
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

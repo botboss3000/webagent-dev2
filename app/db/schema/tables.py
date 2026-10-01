@@ -1037,6 +1037,11 @@ TABLES: List[Table] = [
         Column("is_exempt", "INTEGER", nullable=False, default="0"),
         Column("model", "TEXT"),
         Column("provider", "TEXT"),
+        # MODEL-ROW-USAGE: the exact saved model-connection row (roster entry_id)
+        # that served this call. model+provider can repeat across rows (same model
+        # with a different credential / effort / injections), so per-row usage
+        # must key on this. NULL on legacy rows written before the column existed.
+        Column("entry_id", "TEXT"),
         # Locked-in published-price cost of this single call in USD (model rate ×
         # this call's tokens, computed at save time). Summing it gives accurate
         # session / agent / global cost even when the session switches models.
@@ -1553,6 +1558,11 @@ INDEXES: List[Index] = [
     Index("idx_usage_events_user_created", "usage_events", "user_id, created_at"),
     Index("idx_usage_events_model_created", "usage_events", "model, created_at"),
     Index("idx_usage_events_session", "usage_events", "session_id"),
+    # NOTE: idx_usage_events_entry_created is deliberately NOT in the shared
+    # INDEXES list. entry_id is a migrated column (ALTER in app/db/local.py), and
+    # the plane DDL runs BEFORE that migration, so indexing it here would raise
+    # "no such column: entry_id" on every pre-existing DB. It is created after
+    # the ALTER in the local.py migration block and in migrations/038.
     Index("idx_wallet_tx_wallet", "wallet_transactions", "wallet_id"),
     Index("idx_payments_user", "payments", "user_id"),
     Index("idx_payments_external", "payments", "processor, external_payment_id"),

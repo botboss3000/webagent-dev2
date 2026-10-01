@@ -1645,6 +1645,11 @@ CREATE TABLE IF NOT EXISTS usage_events (
     is_exempt                   INTEGER NOT NULL DEFAULT 0,
     model                       TEXT,
     provider                    TEXT,
+    -- MODEL-ROW-USAGE: the exact saved model-connection row (roster entry_id)
+    -- that served this call. model+provider can repeat across rows (same model
+    -- with a different credential / effort / injections), so per-row usage must
+    -- key on this. NULL on legacy rows written before the column existed.
+    entry_id                    TEXT,
     -- Canonical, locked-in cost of this single call in USD: computed at save
     -- time from the model's published per-1M price × this call's tokens, so it
     -- never re-prices when the session later switches models. Summing this
@@ -3104,6 +3109,7 @@ class LocalBackend(StorageBackend):
                 ("reasoning_tokens", "ALTER TABLE usage_events ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0"),
                 ("session_id", "ALTER TABLE usage_events ADD COLUMN session_id TEXT"),
                 ("source", "ALTER TABLE usage_events ADD COLUMN source TEXT NOT NULL DEFAULT 'chat'"),
+                ("entry_id", "ALTER TABLE usage_events ADD COLUMN entry_id TEXT"),
             ]
             _ue_added = []
             for _col, _sql in _ue_adds:
@@ -3113,6 +3119,10 @@ class LocalBackend(StorageBackend):
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usage_events_model_created "
                 "ON usage_events(model, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_usage_events_entry_created "
+                "ON usage_events(entry_id, created_at)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usage_events_session "

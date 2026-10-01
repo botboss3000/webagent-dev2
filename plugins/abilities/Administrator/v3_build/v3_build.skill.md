@@ -5,3 +5,55 @@ Use for compiling/testing the repository's v3 Rust application and building its 
 Native tasks require Rust 1.90, Cargo, a C compiler for bundled SQLite, dependency-download access (or a populated cache), and writable temporary/cache space. Image builds require a reachable Docker daemon and registry access; the pinned Dockerfile supplies Rust and runtime dependencies. Builds can consume substantial disk, memory, and time. Cargo and Docker execute repository build code, so grant this ability only to trusted agents/callers.
 
 No arbitrary commands, paths, image tags, installation, Docker socket mounting, service lifecycle changes, or deployments. This ability runs on the WebAgent server, not a user's device or an SSH host. If infrastructure is missing, report the exact prerequisite; arrange a trusted build host separately rather than widening privileges. A successful image build is not deployment or a working chat verification.
+
+# Rust v3 — port the UI, implement the feature
+
+## Direction and boundaries
+
+V3 is an independent Rust application in `v3/`, built incrementally from v2's working features. The goal is to move the **actual v2 UI** over and implement the Rust backend contracts that make each feature work—not build a lookalike, connect v3 to the v2 backend, or treat copied markup as feature parity. V2 remains independently available.
+
+Rust owns authentication, APIs, provider requests, policy/approval gates, run state, recovery, and storage. An isolated Python worker performs permitted filesystem and process operations. A separate promotion broker handles approved live-source changes. Keep those boundaries intact; loading an ability never bypasses policy.
+
+Read `CLAUDE.md`, `v3/README.md`, and `v3/docs/ui-journeys.md` first. They are the current operational references; recheck source and the target deployment rather than treating this guide as a permanent capability inventory.
+
+## Source map and current baseline
+
+- `v3/src/main.rs`: API routing and run orchestration; `provider.rs`: subscription adapter; `store.rs`: persistence; `abilities.rs`: catalog and effective tool discovery.
+- `v3/worker.py`: workspace tool execution. `v3/deploy.sh`, `Dockerfile`, and `launch.py`: build, mounts, and startup.
+- `v3/ui/`: independent shell, chat partial/styles, and page modules. Pages under `main-panel/<id>/` use `page.json`; the Rust `/api/v3/pages/catalog` discovers them. Entry modules export `start(mount)`.
+- Root `ui/` and `index.html`: v2 reference implementations. V3 already reuses selected v2 CSS/assets and the Agents partial. Inspect the exact component's markup, styling, events, lifecycle, and API callers before adapting it; retain shared design tokens and sister-panel consistency.
+
+The documented baseline includes setup/account, Agents model/ability controls, chat, approvals/recovery, and Codebase Admin workspace tools. This is **not full v2 parity**: other Administrator abilities can be catalog-only, and v2 controls may remain unsupported. A manifest, displayed row, or saved visibility mode does not establish executable support.
+
+## Port one complete feature at a time
+
+1. Trace the v2 control through UI events, API request/response shapes, authorization, persistence, and runtime effects. State exactly what will be reused and any intentional v3 differences.
+2. Define and implement the matching `/api/v3` contract in Rust, including validation, ownership, CSRF for browser writes, policy/approval checks, durable state, and explicit errors. Preserve run pinning, cancellation, shutoff, and recovery semantics where applicable. Reject unsupported operations instead of returning fake success.
+3. Adapt the real component in `v3/ui`; keep v3-only behavior out of shared v2 files. Mark pending features honestly until the backend and execution path exist. Do not import v2 accounts, sessions, credentials, or provider tokens.
+4. Test the Rust contract and worker boundary, then exercise the authenticated v3 control end-to-end. Verify persistence after reload, failures, both themes, and mobile layout. Resolve routes from the **v3** journey registry, not v2's. Capture a final screenshot and visible assertion; API tests alone do not prove a UI port.
+
+## Deployment and workspace discipline
+
+The README records v3 development at `https://dev.webagent.live/app` on host port 8081, separate from v2 on 8080; confirm the active target before acting. Mounted UI edits generally need a browser refresh. Rust/worker/dependency edits require an image rebuild and container recreation; mount or environment changes require recreation. Skill/manifest changes require a v3 restart to reload. Do not restart v2 to validate v3.
+
+Within v3, use `workspace_seed`, edit the isolated snapshot, verify with bounded `cargo check` / `cargo test --locked`, inspect a complete `source_review`, and use `promotion_propose`. Workspace edits are not live deployment. Follow the broker's allowed paths; UI promotion is currently excluded. Use authenticated APIs for live state, never shell/Python to open v3's encrypted application databases or keys.
+
+## Investigation lesson — historical, not a live diagnosis
+
+Session `403498b7-6822-44e9-adae-a2fd9ce32600` found provider HTTP/stream errors discarded in `provider.rs` and collapsed into generic retry/failure text in the runner. It did **not** establish the underlying chat failure or account/model entitlement. Preserve sanitized actionable errors; do not leak tokens or provider payloads.
+
+That session added `/api/v3/admin/messaging` create/send/read routes in source but reported no deployment or compiled-test verification. Machine access is disabled without `V3_MESSAGE_API_TOKEN`; it is narrowly scoped and does not approve tools or unlock settings. HTTP 202 means a run was accepted, not that chat succeeded: poll its status/reply. Check current code, configuration, tests, and live evidence before claiming this API—or any migrated feature—works.
+
+## Dedicated worker
+When V3_BUILD_WORKER_URL is configured, status probes the host worker. Use v3_worker_submit for build, then poll v3_worker_job. Deploy only the successful build_job_id after explicit deployment authorization. Keep identical request_id/body on uncertain retries. Never substitute local Docker when remote configuration fails. See docs/v3-build-worker.md for host installation; do not expose the worker publicly or store tokens in chat/source.
+
+## Authenticated v3 browser validation
+
+`login_as_current_user_v3` belongs to **V3 Build**, not Diagnostics. It runs on the v2 WebAgent server to authenticate its owned/shared server browser against the independent v3 development app. It is not a tool implemented inside the v3 isolated worker and does not provide cross-version SSO or import v2 credentials. Browser Control must also be enabled to exercise the resulting browser session.
+
+A trusted administrator must configure `V3_BROWSER_LOGIN_TOKEN` (a separate secret, 32–256 printable non-space ASCII characters) and `V3_BROWSER_LOGIN_CALLER_ID` (the exact signed-in v2 administrator ID) on both the WebAgent tool server and the v3 server. Configure `V3_DIAGNOSTICS_ORIGIN` on the tool server; it defaults to `https://dev.webagent.live`, accepts an HTTPS origin or loopback HTTP, and cannot be selected by tool input. Deploy the Rust `/api/v3/diagnostics/browser-login` endpoint and recreate services after environment changes. Never put these secrets in chat, source, page JavaScript, or the isolated worker. The bridge is disabled when its credential/mapping is absent, and is separate from `V3_MESSAGE_API_TOKEN` and the build-worker credential.
+
+1. Resolve the affected route from `v3/docs/ui-journeys.md` or the v3 page module. Call `login_as_current_user_v3(path="/app?tab=account")`, replacing the path with that relative route. Omit `browser_session_id` unless explicitly targeting an owned/shared tab. The tool checks the run-bound caller and platform-admin role, selects the server-backed browser, installs a ten-minute HttpOnly session cookie, navigates, and verifies `/api/v3/auth/me`.
+2. Require `status="ok"`, `application="v3"`, `backend="server"`, and `verified.http_status=200`, `verified.user_id="admin"`, `verified.is_admin=true`. This is an explicit mapping to v3's existing independent administrator, not an assertion that v2 and v3 user IDs match. No token, password, cookie value, or CSRF credential is returned. A failed or blocked result is not a verified login; report the exact configuration/deployment limitation.
+3. Load Browser Control's `browser_action` and use the returned `browser_session_id` for reading and acting on the v3 page. **Do not use v2's `dev_browser_action` or `dev_browser_url` facade:** those are bound to v2's localhost origin and identity contract. Navigate → read → act → assert the requested visible state, then reload to check persistence. Check relevant themes/layouts and failures. Capture a final screenshot and share it with the user. Close the controlled browser when finished unless a live handoff is required.
+4. Record the actual origin, route, actions, visible assertion, screenshot, and pass/fail/blocked result. Login success alone, source tests, or a successful image build do not prove an app workflow works. An HTTP 401/403/404 or identity mismatch invalidates that journey; re-establish authentication before drawing capability conclusions. Re-authenticate if the ten-minute session expires.

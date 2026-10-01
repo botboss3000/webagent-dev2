@@ -2986,6 +2986,29 @@ async def _list_sessions_impl(
                     }
             except Exception:
                 pass
+            # V2 runs use a separate authority from legacy session_runs. Read
+            # them in bulk so background sessions/reloads retain working status.
+            # Active work wins over history; executing work wins over its queue.
+            try:
+                cur2.execute(
+                    "SELECT session_id, state, updated_at FROM chat_runs "
+                    "ORDER BY CASE WHEN state IN ('running','finalizing','stopping') THEN 0 "
+                    "WHEN state = 'queued' THEN 1 ELSE 2 END, created_at DESC, id DESC"
+                )
+                v2_seen = set()
+                for r in cur2.fetchall():
+                    if r[0] in v2_seen:
+                        continue
+                    v2_seen.add(r[0])
+                    run_statuses[r[0]] = {
+                        "status": {"completed": "complete", "failed": "error",
+                                   "cancelled": "interrupted"}.get(r[1], r[1]),
+                        "updated_at": r[2], "stop_cause": None,
+                        "resume_attempts": 0, "max_resume_attempts": 0,
+                    }
+            except Exception:
+                # Older user databases do not have controlled-chat tables yet.
+                pass
             # Pre-fetch child counts so a parent row can show an expand caret.
             # A session has children only if it is an orchestrator (spawned
             # helpers in agent_spawns). Optimizer Planner/Closer sessions are

@@ -1,7 +1,5 @@
 # Codebase Admin — v3
 
-For Rust v3 development and v2 feature ports, read `plugins/abilities/Administrator/codebase_admin/skills/v3_migration.skill.md` within the seeded `webagent-v3/` snapshot using `file_read`. It explains the actual-UI migration workflow, Rust backend contracts, deployment boundaries, and investigation lessons. The current v3 catalog loads this main guide and tool guides, not individual `skills/` files automatically.
-
 Use this ability for source work inside the current session workspace. The workspace is separate from the WebAgent host checkout and other application data. Inspect the workspace first. For WebAgent v3 source work, use `workspace_seed` to create a clean source snapshot and Git baseline in `webagent-v3/`. It never imports live data or credentials. For other repositories, report a missing source prerequisite rather than editing a similarly named file elsewhere.
 
 Use `prompt_slot_read` to list or get the shared_default agent's ordered instruction slots. Each slot has a revision. `prompt_slot_write` can put or delete a slot only after approval; supply the revision you just read (0 to create). A stale revision is rejected. Changes affect newly accepted runs; an in-flight run retains its pinned instructions. The v3 app supports one administrator and agent, with no per-user overrides yet. `__skills__` is reserved and cannot be managed as an ordinary prompt slot. Never store credentials in a prompt slot.

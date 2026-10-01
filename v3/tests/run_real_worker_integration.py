@@ -3,7 +3,7 @@
 From the development server:
 docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add KILL \
   --security-opt no-new-privileges:true --pids-limit 256 --memory 4g --cpus 2 \
-  --mount type=bind,src=/home/ar/webagent-dev-v2/v3,dst=/build,readonly \
+  --mount type=bind,src=/home/ar/webagent-dev2/v3,dst=/build,readonly \
   --tmpfs /run:rw,nosuid,nodev,size=16m \
   --tmpfs /workspaces:rw,nosuid,nodev,size=32m \
   --workdir /build rust:1.90-bookworm \

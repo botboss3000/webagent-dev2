@@ -7,7 +7,7 @@ Runtime data, databases, uploads, secrets, environment files and caches were exc
 
 ## Isolation
 
-Checkout: `/home/ar/webagent-dev-v2`. Container: `webagent-dev-v2`.
+Checkout: `/home/ar/webagent-dev2`. Container: `webagent-dev-v2`.
 Image: `webagent:dev-v2`. Binds `100.112.23.15:8081:8080` and `127.0.0.1:8082:8080`.
 Mount only V2 checkout-local data; never mount existing development or production data.
 The independent instance starts with fresh split storage and field encryption.
@@ -143,7 +143,7 @@ Continue linkage, and malformed controls. Run it on the server:
 
 ```sh
 docker run --rm --network none --user 1000:1000 --entrypoint python \
-  -v /home/ar/webagent-dev-v2:/app:ro -w /app webagent:dev-v2 \
+  -v /home/ar/webagent-dev2:/app:ro -w /app webagent:dev-v2 \
   -m pytest -q -p no:cacheprovider tests/test_chat_v2_core.py
 ```
 
@@ -175,7 +175,7 @@ journey guides in its place. No browser acceptance is asserted.
 
 ## Resume work (2026-09-30)
 
-The handoff target is the remote `/home/ar/webagent-dev-v2` checkout on
+The handoff target is the remote `/home/ar/webagent-dev2` checkout on
 `ar@100.112.23.15`, with `app.v2:app` in `webagent-dev-v2`. Use the
 project control instructions for SSH, data boundaries, deployment, and UI
 journeys. Start with `git status --short --branch` and inspect existing

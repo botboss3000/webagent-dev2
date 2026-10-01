@@ -1,0 +1,26 @@
+{
+  "display_name": "V3 Workspace",
+  "kind": "ability",
+  "icon": "folder-git-2",
+  "description": "Trusted-admin isolated v3 source preparation, review, patching, fixed verification and frozen proposals through a dedicated private adapter. No live apply or deployment.",
+  "skill_summary": "Load for approved v3 workspace editing without a browser; proposals do not promote themselves.",
+  "simple": true,
+  "placeholder": false,
+  "order": 10,
+  "tools": [
+    "v3_workspace_status",
+    "v3_workspace_action",
+    "v3_workspace_receipt"
+  ],
+  "tool_metadata": {
+    "v3_workspace_status": {
+      "destructive": false
+    },
+    "v3_workspace_action": {
+      "destructive": true
+    },
+    "v3_workspace_receipt": {
+      "destructive": false
+    }
+  }
+}

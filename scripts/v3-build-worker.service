@@ -1,0 +1,25 @@
+[Unit]
+Description=Scoped WebAgent v3 development build worker
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ar
+SupplementaryGroups=docker
+WorkingDirectory=/home/ar/webagent-dev2
+EnvironmentFile=/etc/webagent-v3-build-worker.env
+ExecStart=/usr/bin/python3 -B /home/ar/webagent-dev2/scripts/v3_build_worker.py --bind 100.112.23.15
+Restart=on-failure
+RestartSec=5
+StateDirectory=webagent-v3-build-worker
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/webagent-v3-build-worker
+
+[Install]
+WantedBy=multi-user.target

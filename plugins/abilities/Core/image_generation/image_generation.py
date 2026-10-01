@@ -265,7 +265,8 @@ async def generate_image(
         else:
             return json.dumps({"status": "error", "message": f"Unknown api_shape '{api_shape}'"})
         await _bill_image(user_id=user_id, agent_id=agent_id, session_id=session_id,
-                          model=model, provider=provider, result_str=out)
+                          model=model, provider=provider, result_str=out,
+                          entry_id=str(cfg.get("entry_id") or ""))
         return out
     except Exception as e:
         logger.exception("generate_image failed")
@@ -273,7 +274,7 @@ async def generate_image(
 
 
 async def _bill_image(user_id: str, agent_id: str, session_id: str, model: str,
-                      provider: str, result_str: str) -> None:
+                      provider: str, result_str: str, entry_id: str = "") -> None:
     """Best-effort billing for a successful image render: estimate the provider
     cost, then run the shared charge path (trial grant first, then credits).
 
@@ -304,6 +305,7 @@ async def _bill_image(user_id: str, agent_id: str, session_id: str, model: str,
             provider_cost_cents=int(round(est_usd * 100)),
             model=model or "",
             provider=provider or "",
+            entry_id=entry_id or None,
             session_id=session_id or None,
             cost_usd=est_usd,
             cost_source="image_estimate",

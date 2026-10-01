@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run only on the development server; never operates on v2 or production.
 set -eu
-cd /home/ar/webagent-dev-v2
+cd /home/ar/webagent-dev2
 case "${1:-build}" in
   build)
     # Explicit allowlist works with both legacy Docker and BuildKit. No runtime data enters context.
@@ -22,19 +22,21 @@ case "${1:-build}" in
       --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID \
       --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
       --publish 100.112.23.15:8081:8080 \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/v3/data,dst=/state \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/v3/workspaces,dst=/workspaces \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/v3,dst=/live-v3 \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/v3/ui,dst=/opt/v3/ui,readonly \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/data/config/chat_ui.json,dst=/opt/v3/chat_ui.json,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/data,dst=/state \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3,dst=/live-v3 \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/ui,dst=/opt/v3/ui,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/data/config/chat_ui.json,dst=/opt/v3/chat_ui.json,readonly \
       --env V3_CHAT_UI_CONFIG_PATH=/opt/v3/chat_ui.json \
       --env V3_MESSAGE_API_TOKEN \
+      --env V3_BROWSER_LOGIN_TOKEN \
+      --env V3_BROWSER_LOGIN_CALLER_ID \
       --env V3_ABILITIES_ROOT=/live-v3/plugins/abilities \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/ui/shared/css,dst=/opt/v3/shared-ui/shared/css,readonly \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/ui/main-panel/agents,dst=/opt/v3/shared-ui/main-panel/agents,readonly \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/ui/vendor/fonts,dst=/opt/v3/shared-ui/vendor/fonts,readonly \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/ui/vendor/lucide,dst=/opt/v3/shared-ui/vendor/lucide,readonly \
-      --mount type=bind,src=/home/ar/webagent-dev-v2/ui/favicon.svg,dst=/opt/v3/shared-ui/favicon.svg,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/ui/shared/css,dst=/opt/v3/shared-ui/shared/css,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/ui/main-panel/agents,dst=/opt/v3/shared-ui/main-panel/agents,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/ui/vendor/fonts,dst=/opt/v3/shared-ui/vendor/fonts,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/ui/vendor/lucide,dst=/opt/v3/shared-ui/vendor/lucide,readonly \
+      --mount type=bind,src=/home/ar/webagent-dev2/ui/favicon.svg,dst=/opt/v3/shared-ui/favicon.svg,readonly \
       --tmpfs /run:rw,nosuid,nodev,size=16m --tmpfs /tmp:rw,nosuid,nodev,size=32m \
       --stop-timeout 15 webagent-dev-v3:local
     ;;

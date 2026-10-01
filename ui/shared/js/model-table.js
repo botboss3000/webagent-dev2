@@ -4,6 +4,7 @@ import { makeRowsReorderable } from './ordering.js';
 import { tipBadge } from './field-tip.js';
 import { copyText } from './clipboard.js';
 import { advanceDeleteBtn, resetDeleteBtn } from './delete-control.js';
+import { modelAddGuard } from './model-add-guard.js';
 
 // COLOR SCHEME → ui/shared/css/design-system.css (single source of truth).
 // Don't write hex/rgb colour literals when styling elements. CSS variables resolve
@@ -425,6 +426,10 @@ export function mountModelTable(host, opts = {}) {
     if (adapter.fetchModelUsage) return adapter.fetchModelUsage(args);
     try {
       const params = new URLSearchParams({ model: args.model || '', provider: args.provider || '', scope: usageScope });
+      if (args.entry_id) {
+        params.set('entry_id', args.entry_id);
+        if (args.include_unassigned) params.set('include_unassigned', '1');
+      }
       const r = await fetchFn(apiPath(`/admin/settings/model-usage?${params.toString()}`));
       const d = r.ok ? await r.json() : null;
       return (d && !d.error) ? d : null;
@@ -1717,10 +1722,34 @@ export function mountModelTable(host, opts = {}) {
   // row. Those are separate usage calculations — the inherited row reports the
   // app-wide total, the own row reports just this agent's spend — so the cache
   // key (and the fetch) are scoped by `inherited` to keep them apart.
-  function _usageKey(p, inherited) { return `usage|${inherited ? 'inh' : 'own'}|${p.provider || ''}|${p.model || ''}`; }
+  // MODEL-ROW-USAGE: identity is the saved row's entry_id, NOT provider+model.
+  // The same model can be saved twice with different credentials / effort /
+  // injected prompts, and each row must accrue its own tokens and cost. A row
+  // with no persisted entry_id (still unsaved) falls back to provider+model —
+  // it has no identity to split on yet.
+  function _usageKey(p, inherited) {
+    const id = String(p?.entry_id || '');
+    const scope = inherited ? 'inh' : 'own';
+    return id
+      ? `usage|${scope}|id|${id}`
+      : `usage|${scope}|mp|${p?.provider || ''}|${p?.model || ''}`;
+  }
   async function fillUsage(p, statIn, statOut, statCost, inherited) {
     const k = _usageKey(p, inherited);
-    if (!usageCache[k]) { const d = await fetchModelUsage({ model: p.model, provider: p.provider, inherited: !!inherited }); if (d) usageCache[k] = d; }
+    if (!usageCache[k]) {
+      // Rows written before entry_id existed carry no row identity. Fold those
+      // legacy events in only when this is the ONLY roster row for the model —
+      // with two same-model rows the unassigned bucket would be double-counted.
+      const sameModel = (S.providers || []).filter(row =>
+        String(row.provider || '') === String(p.provider || '')
+        && String(row.model || '') === String(p.model || ''));
+      const includeUnassigned = !!p.entry_id && sameModel.length <= 1;
+      const d = await fetchModelUsage({
+        model: p.model, provider: p.provider, entry_id: p.entry_id || '',
+        inherited: !!inherited, include_unassigned: includeUnassigned,
+      });
+      if (d) usageCache[k] = d;
+    }
     const u = usageCache[k] || {};
     if (u.total_input_tokens != null) {
       if (statIn) statIn.textContent = fmtTokens(u.total_input_tokens);
@@ -2973,11 +3002,13 @@ export function mountModelTable(host, opts = {}) {
     const becomesStandard = !catalogOnly && !subscription && !S.providers.length;
     // Platform entries already have server-owned IDs. Picking one already in
     // this roster links that connection rather than submitting a duplicate ID.
-    const dupe = platformCatalog ? S.providers.find(row => String(row.entry_id) === String(S.selectedModel)) : null;
-    if (dupe && !aliasTarget) return setModelStatus('This model is already in your roster');
-    // Backup self-link validation applies only while adding to an alias group;
-    // normal Add has neither a duplicate nor a target (both can be null).
-    if (aliasTarget && dupe === aliasTarget) return setModelStatus('Choose a different connection for the backup');
+    // MODEL-ADD-GUARD keeps the alias-only self-link validation from firing on
+    // a normal Add (where both the duplicate lookup and the alias target are
+    // null) — see ui/shared/js/model-add-guard.js.
+    const { dupe, message: guardMessage } = modelAddGuard({
+      platformCatalog, providers: S.providers, selectedModel: S.selectedModel, aliasTarget,
+    });
+    if (guardMessage) return setModelStatus(guardMessage);
     if (!dupe) {
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
       // Persisted IDs are owned by the server. `_uid` is the only client-side row

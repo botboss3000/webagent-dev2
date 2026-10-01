@@ -307,10 +307,15 @@ def _responses_url(base_url: str) -> str:
 
 def _headers(*, api_key: str, base_url: str, family: str) -> Dict[str, str]:
     headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    key = str(api_key or "").strip()
     if family == "azure_openai" or "openai.azure.com" in urlsplit(base_url).netloc.lower():
-        headers["api-key"] = api_key
-    else:
-        headers["Authorization"] = f"Bearer {api_key}"
+        if key:
+            headers["api-key"] = key
+    elif key:
+        # Never emit ``Authorization: Bearer `` with an empty value — httpx
+        # rejects it at the HTTP layer ("Illegal header value b'Bearer '"),
+        # which surfaces as a transport crash instead of an actionable error.
+        headers["Authorization"] = f"Bearer {key}"
     return headers
 
 
@@ -509,6 +514,15 @@ async def open_responses_stream(
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(timeout, read=None), transport=transport,
     )
+    if not str(api_key or "").strip():
+        # Fail with a configuration error before httpx ever sees an empty
+        # ``Authorization`` header.  A missing key is a deterministic, user-
+        # fixable problem — not a transport crash to retry.
+        await client.aclose()
+        raise ValueError(
+            "No API key is configured for this provider. "
+            "Open the model's settings and add its API key, then retry."
+        )
     headers = _headers(api_key=api_key, base_url=base_url, family=family)
     if extra_headers:
         headers.update({

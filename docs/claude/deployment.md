@@ -4,7 +4,7 @@
 For current development work, use the isolated V2 deployment rather than the
 legacy VM details below:
 
-- Checkout: `/home/ar/webagent-dev-v2`
+- Checkout: `/home/ar/webagent-dev2`
 - Entrypoint: `app.v2:app`
 - Container: `webagent-dev-v2`
 - Container port: `8080`; host origin: `100.112.23.15:8081`

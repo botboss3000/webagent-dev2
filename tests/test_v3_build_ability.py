@@ -14,7 +14,7 @@ def test_discovery_and_schemas():
     feature = abilities.ability_feature_with_skill("v3_build")
     assert feature and feature["display_name"] == "V3 Build"
     assert set(m.build_tools()) == set(m.TOOL_SCHEMAS)
-    assert m.DESTRUCTIVE == {"v3_cargo_task", "v3_build_image"}
+    assert m.DESTRUCTIVE == {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "login_as_current_user_v3"}
     descriptor = json.loads(PATH.with_suffix(".json").read_text())
     assert set(descriptor["tools"]) == set(m.TOOL_SCHEMAS)
 
@@ -83,3 +83,38 @@ def test_subprocess_timeout():
     import sys
     result = asyncio.run(m._run([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.05))
     assert result["timed_out"] and result["exit_code"] != 0
+
+def test_v3_login_only_in_build_ability():
+    from plugins.abilities.Administrator.diagnostics import diagnostics
+    assert "login_as_current_user_v3" not in diagnostics.build_tools()
+    assert "login_as_current_user_v3" not in diagnostics.TOOL_SCHEMAS
+    assert "login_as_current_user_v3" in m.build_tools(user_id="fixture-admin")
+
+def test_v3_login_missing_identity_and_configuration(monkeypatch):
+    result = json.loads(asyncio.run(m.build_tools()["login_as_current_user_v3"]()))
+    assert result["status"] == "error" and "signed-in" in result["message"]
+    monkeypatch.delenv("V3_BROWSER_LOGIN_TOKEN", raising=False)
+    monkeypatch.delenv("V3_BROWSER_LOGIN_CALLER_ID", raising=False)
+    result = json.loads(asyncio.run(m.build_tools(user_id="fixture-admin")["login_as_current_user_v3"]()))
+    assert result["status"] == "error" and "not configured" in result["message"]
+
+def test_v3_login_mapping_and_origin(monkeypatch):
+    import pytest
+    monkeypatch.setenv("V3_BROWSER_LOGIN_TOKEN", "x" * 40)
+    monkeypatch.setenv("V3_BROWSER_LOGIN_CALLER_ID", "fixture-admin")
+    monkeypatch.setenv("V3_DIAGNOSTICS_ORIGIN", "https://dev.webagent.live")
+    assert m._v3_login_config("fixture-admin")[0] == "https://dev.webagent.live"
+    with pytest.raises(ValueError, match="Current user"):
+        m._v3_login_config("other-user")
+    for origin in ["http://remote.example", "https://user:pass@example.com", "https://example.com/path"]:
+        monkeypatch.setenv("V3_DIAGNOSTICS_ORIGIN", origin)
+        with pytest.raises(ValueError, match="HTTPS origin"):
+            m._v3_login_config("fixture-admin")
+
+def test_v3_login_rejects_external_route(monkeypatch):
+    monkeypatch.setenv("V3_BROWSER_LOGIN_TOKEN", "x" * 40)
+    monkeypatch.setenv("V3_BROWSER_LOGIN_CALLER_ID", "fixture-admin")
+    monkeypatch.setenv("V3_DIAGNOSTICS_ORIGIN", "https://dev.webagent.live")
+    for path in ["https://other.example/app", "//other.example/app", "/app\\bad", "/app\n"]:
+        result = json.loads(asyncio.run(m.build_tools(user_id="fixture-admin")["login_as_current_user_v3"](path=path)))
+        assert result["status"] == "error" and "relative route" in result["message"]

@@ -3,15 +3,18 @@
   "kind": "ability",
   "icon": "hammer",
   "color": "#7aa2f7",
-  "description": "Check v3 build prerequisites, run fixed Rust checks/tests/builds, and build its development image. Does not deploy or grant host access.",
-  "skill_summary": "Use to compile or test v3, inspect Rust/Docker prerequisites, or build the allowlisted development image.",
+  "description": "Check v3 prerequisites, run local Rust tasks, or submit and poll fixed builds/deployments through a dedicated private development worker. Includes trusted-admin browser login to validate the independent v3 app.",
+  "skill_summary": "Use to build/test v3 and authenticate the server browser for v3 app validation.",
   "simple": true,
   "placeholder": false,
   "order": 9,
   "tools": [
     "v3_build_status",
     "v3_cargo_task",
-    "v3_build_image"
+    "v3_build_image",
+    "v3_worker_submit",
+    "v3_worker_job",
+    "login_as_current_user_v3"
   ],
   "tool_metadata": {
     "v3_build_status": {
@@ -21,6 +24,15 @@
       "destructive": true
     },
     "v3_build_image": {
+      "destructive": true
+    },
+    "v3_worker_submit": {
+      "destructive": true
+    },
+    "v3_worker_job": {
+      "destructive": false
+    },
+    "login_as_current_user_v3": {
       "destructive": true
     }
   }

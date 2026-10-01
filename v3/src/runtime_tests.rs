@@ -37,6 +37,7 @@ async fn fixture() -> (TempDir, App) {
         .unwrap();
     let app = App {
         message_api_token_hash: None,
+        browser_login_bridge: None,
         store,
         abilities: Arc::new(
             abilities::Catalog::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities"))

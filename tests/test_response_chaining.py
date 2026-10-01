@@ -5,6 +5,7 @@ import httpx
 
 from app.agent.response_chaining import (
     _EventState,
+    _headers,
     build_responses_request,
     is_unsupported_deepseek_responses_error,
     response_chain_capability,
@@ -415,6 +416,34 @@ class ResponseRequestTests(unittest.TestCase):
         ))
 
 class ResponseChainPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_api_key_raises_before_sending(self):
+        sent = []
+
+        async def handler(request):
+            sent.append(request)
+            return httpx.Response(200, text="data: [DONE]\n\n")
+
+        with self.assertRaises(ValueError):
+            await open_responses_stream(
+                base_url="https://api.deepseek.com/v1", api_key="",
+                family="deepseek", body={"model": "deepseek-v4-flash"},
+                transport=httpx.MockTransport(handler),
+            )
+        self.assertEqual(sent, [])
+
+    def test_headers_never_emit_empty_bearer(self):
+        headers = _headers(
+            api_key="", base_url="https://api.deepseek.com/v1", family="deepseek",
+        )
+        self.assertNotIn("Authorization", headers)
+        self.assertEqual(
+            _headers(
+                api_key="secret", base_url="https://api.deepseek.com/v1",
+                family="deepseek",
+            )["Authorization"],
+            "Bearer secret",
+        )
+
     async def test_http_sse_adapter_streams_and_captures_response_id(self):
         async def handler(request):
             self.assertEqual(request.url.path, "/v1/responses")

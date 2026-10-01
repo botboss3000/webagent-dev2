@@ -1,7 +1,7 @@
 
 > **V2 scope:** This document describes the historical development-to-
 > production release process. The active controlled-chat development target is
-> `/home/ar/webagent-dev-v2`, served by `webagent-dev-v2` and
+> `/home/ar/webagent-dev2`, served by `webagent-dev-v2` and
 > `cloudflared-webagent-dev-named`. Its runtime data is isolated and must not
 > be copied into production. V2 chat changes are validated through
 > `docs/chat-v2.md`; they are not made production-ready by running the legacy

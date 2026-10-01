@@ -15,7 +15,9 @@
 #chat-input-area{position:relative!important;inset:auto!important;padding:8px 14px 20px;background:transparent!important;pointer-events:none}
 #chat-input-row{pointer-events:auto!important}
 #chat-input-row .chat-pill-layout-rows{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center}
-#chat-input-row .v3-chat-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+#chat-input-row .v3-chat-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0;pointer-events:none}
+/* Shared composer overlays disable inherited pointer input; v3 binds these buttons directly. */
+#chat-input-row .v3-chat-actions > button{pointer-events:auto!important}
 #chat-input-row #chat-input{min-width:0}
 #chat-input-row #run-status{justify-self:center}
 #chat-input-row{position:relative!important;inset:auto!important;transform:none!important;width:min(100%,var(--v3-pill-width,500px))!important;max-width:100%!important;margin-inline:auto;border-radius:var(--v3-pill-radius,41px)!important}

@@ -286,3 +286,52 @@ python3 -B -m unittest discover -s tests -p 'test_*.py'
 
 Build and run these commands on the development server, using the pinned Rust build image if needed.
 UI journey routes and visible checkpoints are in docs/ui-journeys.md.
+
+## Phase 1 workflow foundation
+
+The existing in-process runner now records fixed checkpoints: admission,
+attachment preparation, context assembly, model dispatch/output, pre-tool,
+tool result, and publication. They are not reorderable. Native authorization,
+approval revision checks, cancellation, shutoff and uncertain-write recovery
+remain mandatory. Optional module lists are empty; configuring an uninstalled
+module is rejected, not silently ignored. Receipts record the latest visit to each
+checkpoint within private run state, with generation, policy revision, input
+digest and turn/call index. They are audit metadata, not tool authorizations.
+Policy/approval denials mark the pre-tool receipt rejected; a denied tool result
+also records rejection while retaining its dispatch generation and policy revision.
+Receipt reasons use fixed labels rather than copying arbitrary tool output.
+
+`src/workflow.defaults.json` is embedded at compile time. Authenticated
+`GET /api/v3/workflow/policy` returns effective policy/revision;
+`PUT` validates JSON overrides and persists the resolved policy in the application
+plane. Browser writes require the existing CSRF contract. Unknown fields,
+uninstalled modules, invalid budgets and values exceeding shipped ceilings are
+rejected. Policy is read at loop boundaries and rechecked before normal model
+dispatch; publication checks the current limit. Tool permissions remain a separate
+mandatory policy. Model selection and base instructions retain run pinning.
+
+`context_projection` builds a model-call projection without mutating history.
+Trusted producer contracts distinguish history/run/turn/call contributions;
+history contributions must already have been committed by their producer. No
+user/model JSON is implicitly accepted as trusted instructions, and no optional
+context producers or new injection API are enabled yet. Existing ability guidance
+is regenerated per call. Existing safe compaction boundaries are preserved; this
+phase does not introduce token-aware budgets or intra-task compaction.
+
+`publication` validates and commits accepted final output through the existing
+transaction and unique terminal-run constraint. The caller's completed status and
+publication receipt are replaced only after the durable commit succeeds; a storage
+failure leaves the in-memory run unchanged. Oversized candidates pause for
+review; empty responses retain the explicit failure behavior. Rich closing flags,
+working-message promotion, classifiers and repair loops are later modules.
+Attachments are explicitly unsupported. This is not full v2 parity or the Phase 2
+MVP acceptance release. Image builds now run locked Rust tests in the pinned
+compiler stage before the release build. Building does not deploy.
+
+## Agent-bound model selection (source implementation; live acceptance pending)
+
+`model_selection` keeps connections, model entries, explicitly ordered backup groups, and per-agent assignments in one encrypted, revision-checked catalog. Credentials are separate encrypted documents. Runs pin the resolved plan and base instructions at admission; assignment edits never reroute accepted runs. Every dispatch rechecks live grants, revocation and credential-reference replacement. Typed sanitized failures allow one bounded transient retry and then eligible ordered failover; cancellation, policy/protocol rejection, response activity and uncertain effects stop failover.
+
+Administrator-only `/api/v3/models/catalog`, `/agents`, and `/connections/{id}` plus `/connections/{id}/authorization` provide configuration, retry-safe agent creation, and connection-specific subscription authorization. These browser writes use the existing CSRF boundary. Reauthorization creates a new credential reference; no primary-account tokens are copied to a backup. Non-default agents require an explicit assignment. Legacy default-agent settings remain available until that agent receives an assignment.
+
+`v3/ui/main-panel/agents/pages/model-table.js` adapts the actual v2 compact configurator, expanded rows and shared-form backup lifecycle with explicit order controls. V3 does not import v2 auth-aware JavaScript or call v2 APIs. Full role routing, API-key transports, user sharing workflows, and non-default-agent ability editing remain unsupported; catalog rows are not evidence of those capabilities. See `docs/ui-journeys.md` for the required live acceptance.

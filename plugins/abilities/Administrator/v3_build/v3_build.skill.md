@@ -36,7 +36,19 @@ The documented baseline includes setup/account, Agents model/ability controls, c
 
 The README records v3 development at `https://dev.webagent.live/app` on host port 8081, separate from v2 on 8080; confirm the active target before acting. Mounted UI edits generally need a browser refresh. Rust/worker/dependency edits require an image rebuild and container recreation; mount or environment changes require recreation. Skill/manifest changes require a v3 restart to reload. Do not restart v2 to validate v3.
 
-Within v3, use `workspace_seed`, edit the isolated snapshot, verify with bounded `cargo check` / `cargo test --locked`, inspect a complete `source_review`, and use `promotion_propose`. Workspace edits are not live deployment. Follow the broker's allowed paths; UI promotion is currently excluded. Use authenticated APIs for live state, never shell/Python to open v3's encrypted application databases or keys.
+### Repository development (external WebAgent / Codebase Admin)
+
+The `v3/` directory is part of the development checkout. An authorized repository-development agent may edit it directly using the normal checked-out source tools; browser login, an isolated v3 runtime session, and promotion tools are not prerequisites for source development. Preserve unrelated changes and follow Codebase Admin checkout coordination.
+
+Before overlapping edits or compilation, inspect the current diff and other ongoing v3 tasks/sessions and active build jobs. Identify shared files and coordinate ownership rather than overwriting another task's work. Do not start competing builds or deploy a snapshot while another task is midway through shared-file edits. Serialize shared build/deploy jobs or use an explicitly isolated build snapshot/target directory; record which source revision/diff was verified. If another task changes a dependency of the result, revalidate before claiming completion. Do not block unrelated source edits merely because another task exists.
+
+Direct source edits are not deployment. Run bounded verification, review the complete diff, and keep image rebuild/container recreation separate under the existing deployment authorization rules.
+
+### Tools executed by the v3 runtime agent
+
+Inside v3's own restricted runtime, use `workspace_seed`, edit the isolated snapshot, verify with bounded `cargo check` / `cargo test --locked`, inspect a complete `source_review`, and use `promotion_propose`. Workspace edits are not live deployment. Follow the broker's allowed paths; UI promotion is currently excluded. These runtime restrictions do not redefine the external repository-development workflow above.
+
+For either workflow, use authenticated APIs for live state; never use shell/Python to open v3's encrypted application databases or keys.
 
 ## Investigation lesson — historical, not a live diagnosis
 

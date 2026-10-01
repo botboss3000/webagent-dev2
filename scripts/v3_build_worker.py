@@ -111,6 +111,7 @@ class Worker:
                 with tempfile.TemporaryFile() as context:
                     self.build._context_archive(context)
                     digest = hashlib.file_digest(context, "sha256").hexdigest(); context.seek(0)
+                    job["context_sha256"] = digest; self.save(job)
                     # Explicit directory context works with legacy Docker and BuildKit.
                     # The archive is generated locally from the validated file allowlist.
                     with tempfile.TemporaryDirectory(prefix="v3-build-context-") as directory:
@@ -120,6 +121,8 @@ class Worker:
                         result = asyncio.run(self.build._run(["docker", "--host", "unix:///var/run/docker.sock", "build", "-f", dockerfile, "-t", tag, directory], timeout=1800))
                 # Build output only, never container logs or inspect environment.
                 job["output_tail"] = result.get("output_tail", "").replace(self.token, "[redacted]")
+                job.update(exit_code=result.get("exit_code"), timed_out=result.get("timed_out", False),
+                           output_truncated=result.get("output_truncated", False))
                 if result.get("exit_code") != 0: raise RuntimeError("Image build failed or timed out; see build output")
                 image = engine("GET", "/images/" + tag + "/json")
                 job.update(image_id=image["Id"], image_tag=tag, context_sha256=digest)

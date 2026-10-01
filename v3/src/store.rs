@@ -257,12 +257,15 @@ impl Store {
         Ok(())
     }
     pub async fn agent_abilities(&self) -> Result<Value> {
-        let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id='shared_default'")
-            .fetch_one(&self.agent_pool).await?;
+        self.agent_abilities_for("shared_default").await
+    }
+    pub async fn agent_abilities_for(&self, agent_id: &str) -> Result<Value> {
+        let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id=?")
+            .bind(agent_id).fetch_one(&self.agent_pool).await?;
         let metadata = self.unseal(&row.get::<Vec<u8>,_>("metadata"))?;
         let mut visibility = metadata["ability_modes"].as_object().cloned().unwrap_or_default();
-        let rows = sqlx::query("SELECT connection_type,enabled FROM agent_connections WHERE agent_id='shared_default' AND section='ability'")
-            .fetch_all(&self.agent_pool).await?;
+        let rows = sqlx::query("SELECT connection_type,enabled FROM agent_connections WHERE agent_id=? AND section='ability'")
+            .bind(agent_id).fetch_all(&self.agent_pool).await?;
         for conn in rows {
             if conn.get::<i64,_>("enabled")==0 {
                 visibility.insert(conn.get::<String,_>("connection_type"),json!("off"));
@@ -346,10 +349,14 @@ impl Store {
         }))
     }
     pub async fn list_prompt_slots(&self) -> Result<Vec<Value>> {
+        self.list_agent_prompt_slots("shared_default").await
+    }
+    pub async fn list_agent_prompt_slots(&self, agent_id: &str) -> Result<Vec<Value>> {
         let rows = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
-             FROM agent_prompts ORDER BY order_index,slot_name",
+             FROM agent_prompts WHERE agent_id=? ORDER BY order_index,slot_name",
         )
+        .bind(agent_id)
         .fetch_all(&self.agent_pool)
         .await?;
         if rows.len() > PROMPT_SLOT_COUNT_MAX {
@@ -377,7 +384,7 @@ impl Store {
         Self::validate_prompt_slot_name(name)?;
         let row = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
-             FROM agent_prompts WHERE slot_name=?",
+             FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=?",
         )
         .bind(name)
         .fetch_optional(&self.agent_pool)
@@ -416,7 +423,7 @@ impl Store {
             .await?;
         let rows = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
-             FROM agent_prompts",
+             FROM agent_prompts WHERE agent_id='shared_default'",
         )
         .fetch_all(&mut *tx)
         .await?;
@@ -482,7 +489,7 @@ impl Store {
         if existing.is_some() {
             let changed = sqlx::query(
                 "UPDATE agent_prompts SET order_index=?,lock=?,merge_mode=?,content=?,revision=?,updated_at=?
-                 WHERE slot_name=? AND revision=?",
+                 WHERE agent_id='shared_default' AND slot_name=? AND revision=?",
             )
             .bind(order).bind(locked as i64).bind(&mode).bind(sealed)
             .bind(revision).bind(now).bind(name).bind(expected_revision)
@@ -509,7 +516,7 @@ impl Store {
         }
         let mut tx = self.agent_pool.begin().await?;
         let actual: Option<i64> =
-            sqlx::query_scalar("SELECT revision FROM agent_prompts WHERE slot_name=?")
+            sqlx::query_scalar("SELECT revision FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=?")
                 .bind(name)
                 .fetch_optional(&mut *tx)
                 .await?;
@@ -520,7 +527,7 @@ impl Store {
             }
             Some(_) => {}
         }
-        let changed = sqlx::query("DELETE FROM agent_prompts WHERE slot_name=? AND revision=?")
+        let changed = sqlx::query("DELETE FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=? AND revision=?")
             .bind(name)
             .bind(expected_revision)
             .execute(&mut *tx)

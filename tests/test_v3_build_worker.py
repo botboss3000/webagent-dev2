@@ -160,3 +160,27 @@ def test_build_uses_directory_context(worker, monkeypatch):
     assert job["status"] == "succeeded"
     assert job["image_id"] == "sha256:test"
     assert len(job["context_sha256"]) == 64
+
+
+def test_failed_build_preserves_snapshot_and_exit_metadata(worker, monkeypatch):
+    import io
+    import tarfile
+    def archive(file):
+        with tarfile.open(fileobj=file, mode="w") as tar:
+            info = tarfile.TarInfo("v3/Dockerfile")
+            data = b"FROM scratch\n"
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        file.seek(0)
+    async def run(*args, **kwargs):
+        return {"exit_code":137,"timed_out":False,"output_truncated":True,
+                "output_tail":"failure " + worker.token}
+    monkeypatch.setattr(worker.build,"_context_archive",archive)
+    monkeypatch.setattr(worker.build,"_run",run)
+    job = {"id":"failed-build","operation":"build"}
+    worker.execute(job)
+    saved = json.loads((worker.state / "failed-build.json").read_text())
+    assert saved["status"] == "failed"
+    assert saved["exit_code"] == 137 and not saved["timed_out"]
+    assert saved["output_truncated"] and len(saved["context_sha256"]) == 64
+    assert worker.token not in saved["output_tail"]

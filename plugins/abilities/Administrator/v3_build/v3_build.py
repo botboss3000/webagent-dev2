@@ -328,7 +328,12 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
         if operation not in ("build", "deploy") or not isinstance(request_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", request_id):
             return json.dumps({"status": "error", "error": "Invalid operation or request_id"})
         body = {"operation": operation, "request_id": request_id}
-        if build_job_id is not None: body["build_job_id"] = build_job_id
+        if operation == "deploy":
+            if not isinstance(build_job_id, str) or not build_job_id:
+                return json.dumps({"status": "error", "error": "Deployment requires build_job_id"})
+            body["build_job_id"] = build_job_id
+        elif build_job_id not in (None, ""):
+            return json.dumps({"status": "error", "error": "build_job_id is only valid for deployment"})
         return json.dumps(await _worker_request("POST", "/v1/jobs", body))
 
     async def v3_worker_job(job_id):

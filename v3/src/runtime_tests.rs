@@ -1281,7 +1281,15 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     )
     .await
     .unwrap();
-    assert_eq!(app.run(&id).await.unwrap()["status"], "completed");
+    let completed = app.run(&id).await.unwrap();
+    assert_eq!(completed["status"], "completed");
+    let pre_tool = &completed["workflow"]["receipts"]["pre_tool"];
+    let tool_result = &completed["workflow"]["receipts"]["tool_result"];
+    assert_eq!(pre_tool["result"]["decision"], "reject");
+    assert_eq!(tool_result["result"]["decision"], "reject");
+    assert_eq!(pre_tool["generation"], "second");
+    assert_eq!(tool_result["generation"], pre_tool["generation"]);
+    assert_eq!(tool_result["policy_revision"], pre_tool["policy_revision"]);
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
     assert!(requests
@@ -3549,4 +3557,263 @@ async fn messaging_api_is_scoped_idempotent_and_preserves_shutoff() {
     // The machine credential cannot authorize the general admin API.
     assert_eq!(router(app).oneshot(request("GET", "/api/v3/status", json!(null), &bearer))
         .await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+
+#[tokio::test]
+async fn workflow_policy_is_authenticated_validated_and_live() {
+    let (_root, app) = fixture().await;
+    let response=router(app.clone()).oneshot(Request::builder()
+        .uri("/api/v3/workflow/policy").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
+    assert!(workflow_policy_set(State(app.clone()),Json(json!({"max_turns":51}))).await.is_err());
+    assert!(app.store.get("workflow_policy").await.unwrap().is_none());
+    let first=current_workflow_policy(&app).await.unwrap().revision().unwrap();
+    workflow_policy_set(State(app.clone()),Json(json!({"max_turns":2}))).await.unwrap();
+    let current=current_workflow_policy(&app).await.unwrap();
+    assert_eq!(current.max_turns,2);
+    assert_ne!(first,current.revision().unwrap());
+    assert!(workflow_policy_set(State(app.clone()),Json(json!({"modules":{"publication":["uninstalled"]}}))).await.is_err());
+    assert_eq!(current_workflow_policy(&app).await.unwrap().max_turns,2);
+}
+
+#[tokio::test]
+async fn publication_commits_one_terminal_message_and_private_receipt() {
+    let (_root,app)=fixture().await;
+    let sid=uuid(); let id=uuid();
+    app.store.put(&key("session",&sid),&json!({"id":sid,"title":"Publication test"})).await.unwrap();
+    let mut run=json!({"id":id,"session_id":sid,"status":"running","phase":"tools",
+        "generation":"g1","input":[],"turns":1,"call_index":0,"updated_at":now()});
+    let policy=workflow::Policy::resolve(None).unwrap();
+    assert!(publication::terminal(&app.store,&mut run,&[],"",&policy).await.is_err());
+    assert_eq!(run["status"],"running");
+    let output=vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]})];
+    publication::terminal(&app.store,&mut run,&output,"done",&policy).await.unwrap();
+    publication::terminal(&app.store,&mut run,&output,"done",&policy).await.unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM chat WHERE terminal_run_id=?")
+        .bind(&id).fetch_one(&app.store.pool).await.unwrap();
+    assert_eq!(count,1);
+    assert_eq!(app.run(&id).await.unwrap()["workflow"]["receipts"]["publication"]["result"]["decision"],"pass");
+}
+
+
+#[tokio::test]
+async fn failed_publication_preserves_the_callers_run() {
+    let (_root, app) = fixture().await;
+    let mut run = json!({"id":uuid(),"session_id":uuid(),"status":"running",
+        "phase":"tools","generation":"publication-failure","input":[],
+        "turns":1,"call_index":0,"updated_at":now()});
+    let before = run.clone();
+    let policy = workflow::Policy::resolve(None).unwrap();
+    // Close only this test fixture's pool; no live database is touched.
+    app.store.pool.close().await;
+    let output = vec![json!({"type":"message","role":"assistant",
+        "content":[{"type":"output_text","text":"done"}]})];
+    assert!(publication::terminal(&app.store, &mut run, &output, "done", &policy)
+        .await.is_err());
+    assert_eq!(run, before);
+}
+
+#[tokio::test]
+async fn admission_records_policy_and_explicitly_rejects_attachments() {
+    let (_root,app)=fixture().await;
+    let Json(session)=create_session(State(app.clone()),Json(json!({"client_request_id":"workflow-admit","title":"Workflow"}))).await.unwrap();
+    let sid=session["id"].as_str().unwrap().to_owned();
+    let result=send(State(app.clone()),Path(sid.clone()),Json(json!({"client_message_id":"attachment","text":"hello","attachments":[{"id":"unsupported"}]}))).await;
+    assert!(matches!(result,Err(ApiError(StatusCode::BAD_REQUEST,_))));
+    let (_,Json(accepted))=send(State(app.clone()),Path(sid),Json(json!({"client_message_id":"text","text":"hello"}))).await.unwrap();
+    let run=app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(run["workflow"]["receipts"]["admission"]["result"]["decision"],"pass");
+    assert_eq!(run["workflow"]["receipts"]["attachment_preparation"]["result"]["decision"],"pass");
+    assert_eq!(run["workflow"]["receipts"]["admission"]["policy_revision"],current_workflow_policy(&app).await.unwrap().revision().unwrap());
+}
+
+#[test]
+fn tool_result_checkpoint_stays_private_and_binds_dispatch() {
+    let policy=workflow::Policy::resolve(None).unwrap();
+    let mut run=json!({"generation":"g1","turns":1,"call_index":0,"input":[],
+        "pending":{"call_id":"c1"}});
+    workflow::record(&mut run,workflow::Checkpoint::PreTool,&policy,&json!({"name":"read"}),workflow::Decision::Pass).unwrap();
+    // Results must retain dispatch identity even if the caller's generation changes.
+    run["generation"] = json!("g2");
+    let result=json!({"status":"denied","output":"test"});
+    append_tool(&mut run,&result);
+    assert_eq!(run["workflow"]["receipts"]["tool_result"]["generation"],"g1");
+    assert_eq!(run["workflow"]["receipts"]["tool_result"]["input_digest"],digest(&result));
+    assert_eq!(run["workflow"]["receipts"]["tool_result"]["policy_revision"],policy.revision().unwrap());
+    assert_eq!(run["workflow"]["receipts"]["tool_result"]["result"]["decision"],"reject");
+    assert_eq!(run["workflow"]["receipts"]["pre_tool"]["result"]["decision"],"pass");
+    assert!(run["input"][0].get("workflow").is_none());
+    assert_eq!(run["input"][0]["type"],"function_call_output");
+}
+
+#[test]
+fn successful_tool_result_records_pass_without_changing_dispatch_identity() {
+    let policy = workflow::Policy::resolve(None).unwrap();
+    let mut run = json!({"generation":"dispatch","turns":2,"call_index":3,
+        "input":[],"pending":{"call_id":"success-call"}});
+    workflow::record(&mut run, workflow::Checkpoint::PreTool, &policy,
+        &json!({"name":"read"}), workflow::Decision::Pass).unwrap();
+    let dispatch = run["workflow"]["receipts"]["pre_tool"].clone();
+    run["generation"] = json!("later-generation");
+    let result = json!({"status":"success","output":"fixture result"});
+    append_tool(&mut run, &result);
+    let receipt = &run["workflow"]["receipts"]["tool_result"];
+    assert_eq!(receipt["result"]["decision"], "pass");
+    for field in ["generation", "policy_revision", "turn", "call_index"] {
+        assert_eq!(receipt[field], dispatch[field]);
+    }
+    assert_eq!(receipt["input_digest"], digest(&result));
+    assert_eq!(run["workflow"]["receipts"]["pre_tool"], dispatch);
+    assert_eq!(run["call_index"], 4);
+    assert!(run["pending"].is_null());
+    assert_eq!(run["input"][0]["call_id"], "success-call");
+    assert_eq!(run["input"][0]["output"], result.to_string());
+    assert!(run["input"][0].get("workflow").is_none());
+}
+
+// MODEL-SELECTION: agent-bound admission and dispatch safety, isolated fixtures only.
+async fn selection_fixture(app: &App) -> model_selection::Catalog {
+    use model_selection::*;
+    use std::collections::{BTreeMap, BTreeSet};
+    sqlx::query("INSERT INTO agents SELECT 'agent-a','Agent A',description,provider,model,status,metadata,revision,created_at,updated_at FROM agents WHERE id='shared_default'")
+        .execute(&app.store.agent_pool).await.unwrap();
+    let mut catalog = Catalog::default();
+    for (id, model) in [("one", "model-one"), ("two", "model-two")] {
+        let credential_ref = format!("credential:{id}");
+        app.store.put(&credential_ref, &json!({"access_token":format!("token-{id}"),"expires_at":now()+3600})).await.unwrap();
+        catalog.connections.insert(id.into(), Connection { id:id.into(), owner_id:"admin".into(), transport:Transport::OpenaiSubscription,
+            credential_ref, allowed_agents:BTreeSet::new(), revision:1, revoked:false });
+        catalog.entries.insert(id.into(), ModelEntry { id:id.into(), owner_id:"admin".into(), connection_id:id.into(),
+            upstream_model:model.into(), display_name:model.into(), capabilities:BTreeSet::from(["text".into()]), allowed_agents:BTreeSet::new(), revision:1 });
+    }
+    catalog.groups.insert("backups".into(), BackupGroup { id:"backups".into(), owner_id:"admin".into(), entry_ids:vec!["one".into()], revision:1 });
+    catalog.assignments = BTreeMap::from([
+        ("shared_default".into(), Assignment { agent_id:"shared_default".into(), owner_id:"admin".into(), primary_entry_id:"one".into(), backup_group_id:None, revision:1 }),
+        ("agent-a".into(), Assignment { agent_id:"agent-a".into(), owner_id:"admin".into(), primary_entry_id:"two".into(), backup_group_id:Some("backups".into()), revision:1 }),
+    ]);
+    app.store.save_model_catalog(&catalog,0).await.unwrap()
+}
+
+#[tokio::test]
+async fn model_selection_admission_pins_agent_model_prompt_and_credentials() {
+    let (_root, app) = fixture().await;
+    let mut catalog = selection_fixture(&app).await;
+    app.store.upsert_prompt_slot("selection-isolation", "DEFAULT PRIVATE PROMPT", Some(5), None, None, 0).await.unwrap();
+    sqlx::query("INSERT INTO agent_prompts(id,agent_id,slot_name,order_index,lock,merge_mode,content,revision,updated_at) VALUES('agent-a:selection-isolation','agent-a','selection-isolation',5,0,'replace',?,1,0)")
+        .bind(app.store.seal(&json!("AGENT A PRIVATE PROMPT")).unwrap()).execute(&app.store.agent_pool).await.unwrap();
+    for (agent_id, expected_model, expected_token, expected_prompt, excluded) in [
+        ("shared_default","model-one","token-one","DEFAULT PRIVATE PROMPT","AGENT A PRIVATE PROMPT"),
+        ("agent-a","model-two","token-two","AGENT A PRIVATE PROMPT","DEFAULT PRIVATE PROMPT"),
+    ] {
+        let Json(session) = create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":agent_id}))).await.unwrap();
+        let sid = session["id"].as_str().unwrap().to_owned();
+        assert_eq!(session_agent_id(&app,&sid).await.unwrap(),agent_id);
+        let (_,Json(accepted))=send(State(app.clone()),Path(sid.clone()),Json(json!({"client_message_id":uuid(),"text":"hello"}))).await.unwrap();
+        let run=app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+        assert_eq!(run["agent_id"],agent_id);
+        assert_eq!(run["provider_selection"]["model"],expected_model);
+        assert!(run["instructions"].as_str().unwrap().contains(expected_prompt));
+        assert!(!run["instructions"].as_str().unwrap().contains(excluded));
+        let selection=provider::ProviderSelection::parse(&run["provider_selection"],"unused").unwrap();
+        assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["access_token"],expected_token);
+        if agent_id=="agent-a" {
+            catalog.assignments.get_mut(agent_id).unwrap().primary_entry_id="one".into();
+            catalog=app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+            assert_eq!(app.run_candidate(&run).await.unwrap().unwrap().upstream_model,"model-two");
+            assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["access_token"],"token-two");
+            let (policy,_)=effective_policy(&app,&sid).await.unwrap();
+            assert_eq!(policy_decision(&policy,"prompt_slot_read"),"deny");
+        }
+    }
+    assert_eq!(app.store.list_prompt_slots().await.unwrap().iter().filter(|p|p["slot_name"]=="selection-isolation").count(),1);
+    assert_eq!(app.store.get_prompt_slot("selection-isolation").await.unwrap().unwrap()["content"],"DEFAULT PRIVATE PROMPT");
+}
+
+#[tokio::test]
+async fn model_selection_failover_is_ordered_durable_and_revocation_is_live() {
+    let (_root,app)=fixture().await;
+    let mut catalog=selection_fixture(&app).await;
+    let Json(session)=create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":"agent-a"}))).await.unwrap();
+    let (_,Json(accepted))=send(State(app.clone()),Path(session["id"].as_str().unwrap().into()),Json(json!({"client_message_id":uuid(),"text":"hello"}))).await.unwrap();
+    let mut run=app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+    let failure=provider::typed_failure(model_selection::FailureKind::ModelUnavailable,false,"Model unavailable");
+    model_failure(&mut run,&failure).unwrap();
+    assert_eq!(run["status"],"queued");
+    assert_eq!(run["provider_selection"]["model"],"model-one");
+    assert_eq!(run["failover_state"]["history"][0]["to_entry_id"],"one");
+    app.save(&mut run).await.unwrap();
+    let mut restored=app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(restored["failover_state"],run["failover_state"]);
+    let selection=provider::ProviderSelection::parse(&restored["provider_selection"],"unused").unwrap();
+    assert_eq!(app.tokens_for(&selection,&restored).await.unwrap()["access_token"],"token-one");
+    catalog.connections.get_mut("one").unwrap().revoked=true;
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    assert!(app.run_candidate(&restored).await.is_err());
+    model_failure(&mut restored,&failure).unwrap();
+    assert_eq!(restored["status"],"failed");
+    assert!(restored["error"].as_str().unwrap().contains("no safe retry or eligible backup"));
+}
+
+#[tokio::test]
+async fn model_selection_unsafe_failures_do_not_change_candidate() {
+    let (_root,app)=fixture().await;
+    let catalog=selection_fixture(&app).await;
+    let plan=catalog.resolve("agent-a").unwrap();
+    for (kind, started, uncertain) in [
+        (model_selection::FailureKind::MalformedRequest,false,false),
+        (model_selection::FailureKind::Cancelled,false,false),
+        (model_selection::FailureKind::PolicyRejected,false,false),
+        (model_selection::FailureKind::Transient,true,false),
+        (model_selection::FailureKind::Transient,false,true),
+    ] {
+        let mut run=json!({"agent_id":"agent-a","selection_plan":plan,"failover_state":model_selection::FailoverState::default(),
+            "provider_selection":{"provider":"openai_subscription","model":"model-two"},"uncertain":uncertain});
+        model_failure(&mut run,&provider::typed_failure(kind,started,"Sanitized failure")).unwrap();
+        assert_eq!(run["status"],"failed");
+        assert_eq!(run["failover_state"]["candidate_index"],0);
+        assert_eq!(run["provider_selection"]["model"],"model-two");
+    }
+}
+
+#[tokio::test]
+async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries() {
+    let (_root,app)=fixture().await;
+    app.store.create_admin_account("catalog-admin","fixture-only","catalog-generation").await.unwrap();
+    let token=uuid();
+    app.store.put(&format!("auth:{}",digest(&json!(token))),&json!({"csrf":"catalog-csrf","expires":now()+3600,
+        "generation":"catalog-generation","user_id":"admin"})).await.unwrap();
+    let request=|method: &str,path: &str,cookie: bool,csrf: bool,body: Value| {
+        let mut r=Request::builder().method(method).uri(path).header("content-type","application/json");
+        if cookie { r=r.header("cookie",format!("v3_session={token}")); }
+        if csrf { r=r.header("x-csrf-token","catalog-csrf"); }
+        r.body(Body::from(body.to_string())).unwrap()
+    };
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",false,false,Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",true,false,Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let new_agent=json!({"client_request_id":"catalog-agent","name":"Second Agent"});
+    let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,false,new_agent.clone())).await.unwrap();
+    assert_eq!(response.status(),StatusCode::FORBIDDEN);
+    let mut created=Value::Null;
+    for _ in 0..2 {
+        let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,true,new_agent.clone())).await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);
+        let body: Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+        if created.is_null() { created=body.clone(); }
+        assert_eq!(body,created);
+    }
+    let count: i64=sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id=?").bind(created["id"].as_str().unwrap())
+        .fetch_one(&app.store.agent_pool).await.unwrap();
+    assert_eq!(count,1);
+    let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,true,
+        json!({"client_request_id":"catalog-agent","name":"Different Agent"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::CONFLICT);
+    let mut profile=app.store.user_profile("admin").await.unwrap().unwrap();
+    profile["is_admin"]=json!(false);
+    sqlx::query("UPDATE user_profiles SET value=? WHERE user_id='admin'")
+        .bind(app.store.seal(&profile).unwrap()).execute(&app.store.app_pool).await.unwrap();
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",true,false,Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::FORBIDDEN);
 }

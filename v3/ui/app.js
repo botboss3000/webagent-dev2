@@ -3,8 +3,14 @@ import { initChatConfig, applyChatConfig } from './chat/chat-config.js';
 
 // v2 dom-utils imports v1 auth and uploads; v3 uses text nodes and its own transport.
 import { renderAbilities } from './main-panel/agents/pages/abilities/page.js';
+import { loadAgentPages, renderAgentDirectory } from './main-panel/agents/pages/catalog.js';
+import { mountSelectionTable } from './main-panel/agents/pages/model-table.js';
+let selectionTable;
+let agentPages=[];
 const $=id=>document.getElementById(id);
-const agentId='shared_default';
+let agentId=new URL(location.href).searchParams.get('agent')||'shared_default';
+let sessionAgentId='shared_default';
+let explicitAssignment=false;
 const initialTab=new URL(location.href).searchParams.get('tab');
 let agentModel='';
 async function mountAgents(){
@@ -26,14 +32,28 @@ async function mountAgents(){
   squares.append(row);
   const detail=document.createElement('div');
   detail.className='agent-card active agent-card-tabs-only';
-  detail.innerHTML=`<div class="agent-card-tabs-wrap"><div class="agent-card-tabs" role="tablist"><button id="agent-tab-model" type="button" role="tab" aria-selected="true">Model</button><button id="agent-tab-abilities" type="button" role="tab" aria-selected="false">Abilities</button></div></div>
+  detail.innerHTML=`<div class="agent-card-tabs-wrap"><div class="agent-card-tabs" role="tablist" aria-label="Agent configuration pages"></div></div>
     <div class="agent-detail-panel"><div class="agent-detail-content"><div class="agent-detail-body" id="model-page">
     <h2>Model</h2><div class="ac-model-table">
       <div class="ac-ability-row ac-model-cfg-row ac-row-static"><span class="ac-ability-label"><span class="ac-ability-name">Provider</span><span class="ac-ability-desc">Use a ChatGPT subscription for this agent.</span></span><span class="ac-model-cfg-control">ChatGPT Subscription</span></div>
       <div class="ac-ability-row ac-model-cfg-row ac-row-static"><span class="ac-ability-label"><span class="ac-ability-name">Connection</span></span><span class="ac-model-cfg-control"><span id="connection" class="ac-hint"></span><button id="connect" type="button" class="ac-btn ac-btn-primary ac-btn-sm">Click to Issue verification code</button><button id="disconnect" type="button" class="ac-btn ac-btn-sm">Disconnect</button><span id="device" class="ac-subscription-auth"></span></span></div>
       <form id="model-form" class="ac-ability-row ac-model-cfg-row"><label for="model" class="ac-ability-label"><span class="ac-ability-name">Model</span><span class="ac-ability-desc">Model ID used for new chat turns.</span></label><span class="ac-model-cfg-control"><input id="model" class="ac-input ac-input-sm" placeholder="gpt-6-luna" required pattern="[A-Za-z0-9._-]+"><button class="ac-btn ac-btn-primary ac-btn-sm">Save model</button></span></form>
     </div><details id="settings"><summary>Tool policies</summary><form id="policy-form"><div id="rules"></div><button type="submit">Save policies</button></form></details>
-    </div><div id="abilities-page" hidden></div></div></div>`;
+    </div><div id="abilities-page" hidden></div><div id="config-page" class="agent-detail-body" hidden></div></div></div>`;
+  agentPages=await loadAgentPages();
+  const tabs=detail.querySelector('.agent-card-tabs');
+  for(const page of [{id:'config',title:'Config',panelId:'config-page'},...agentPages]){
+    const tab=document.createElement('button');
+    tab.id='agent-tab-'+page.id;tab.type='button';tab.textContent=page.title;
+    tab.setAttribute('role','tab');tab.setAttribute('aria-controls',page.panelId);
+    tab.setAttribute('aria-selected','false');
+    tabs.append(tab);
+    const body=detail.querySelector('#'+page.panelId);
+    if(!body)throw Error('Agent page panel unavailable: '+page.id);
+    body.setAttribute('role','tabpanel');body.setAttribute('aria-labelledby',tab.id);
+  }
+  const selectionHost=document.createElement('div');selectionHost.id='selection-model-table';detail.querySelector('#model-page h2').after(selectionHost);
+  detail.querySelector('#model-page h2').textContent=agentPages.find(page=>page.id==='model').title;
   const panel=detail.querySelector('.agent-detail-panel');
   panel.remove();
   const region=document.createElement('div');
@@ -135,35 +155,40 @@ let csrf='',session='',source,epoch=0,state={},poll;
 const ids=new Map();
 const keyId=key=>{if(!ids.has(key))ids.set(key,crypto.randomUUID());return ids.get(key);};
 const note=text=>{$('notice').textContent=text;};
-async function api(path,method='GET',body){const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':csrf})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401)out();throw Error(data.error||data.message||'Request failed ('+response.status+')');}return data;}
+async function api(path,method='GET',body){const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':csrf})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401)out();const error=Error(data.error||data.message||'Request failed ('+response.status+')');error.status=response.status;throw error;}return data;}
 const guard=fn=>async event=>{event?.preventDefault();try{await fn(event);note('');}catch(error){note(error.message);}};
 async function showAgentView(view){
-  const abilities=view==='abilities';
-  $('model-page').hidden=abilities;
-  $('abilities-page').hidden=!abilities;
-  $('agent-tab-model').setAttribute('aria-selected',String(!abilities));
-  $('agent-tab-abilities').setAttribute('aria-selected',String(abilities));
+  const pages=[{id:'config',panelId:'config-page'},...agentPages];
+  const selected=pages.some(page=>page.id===view)?view:'config';
+  for(const page of pages){
+    $(page.panelId).hidden=page.id!==selected;
+    const tab=$('agent-tab-'+page.id);
+    tab.setAttribute('aria-selected',String(page.id===selected));
+    tab.classList.toggle('active',page.id===selected);
+  }
   const route=new URL(location.href);
-  if(abilities)route.searchParams.set('agentView','abilities');else route.searchParams.delete('agentView');
+  route.searchParams.set('agentView',selected);
   history.replaceState({},'',route);
-  if(abilities)await renderAbilities($('abilities-page'),api);
+  if(selected==='abilities'){if(agentId==='shared_default')await renderAbilities($('abilities-page'),api);else $('abilities-page').textContent='Per-agent ability editing is pending. This agent does not inherit default-agent abilities.';}
 }
-$('agent-tab-model').onclick=guard(()=>showAgentView('model'));
-$('agent-tab-abilities').onclick=guard(()=>showAgentView('abilities'));
+for(const page of [{id:'config'},...agentPages]){
+  $('agent-tab-'+page.id).onclick=guard(()=>showAgentView(page.id));
+}
+renderAgentDirectory($('config-page'),agentPages,view=>guard(()=>showAgentView(view))());
 function button(text,fn){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=guard(fn);return node;}
 function out(){csrf='';source?.close();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;$('login').hidden=false;}
 function message(role,content){const row=document.createElement('article');row.className='v3-message '+role;const label=document.createElement('span');label.className='message-role';label.textContent=role==='user'?'You':role==='assistant'?'Agent':role;const body=document.createElement('div');body.className='message-content';body.textContent=typeof content==='string'?content:JSON.stringify(content);row.append(label,body);$('chat-messages-inner').append(row);return body;}
 function tail(){const box=$('chat-messages');box.scrollTop=box.scrollHeight;}
-async function sessions(){const data=await api('/sessions');$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=item.title||'Conversation';$('sessions').append(option);}$('sessions').value=session;return data.sessions;}
-async function open(id){const turn=++epoch;source?.close();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);const data=await api('/sessions/'+encodeURIComponent(id));if(turn!==epoch)return;$('sessions').value=id;$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content);tail();runs(data.runs||[]);let last=data.last_seq||0;source=new EventSource('/api/v3/sessions/'+encodeURIComponent(id)+'/events?after='+last);source.onmessage=event=>{if(turn!==epoch)return;try{const item=JSON.parse(event.data);if(item.seq<=last)return;last=item.seq;message(item.role,item.content);tail();}catch{note('Unable to read chat event. Reload to recover.');}};source.onerror=()=>note('Connection interrupted. Reconnecting…');source.onopen=()=>note('');}
+async function sessions(){const data=await api('/sessions');$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=(item.title||'Conversation')+' — '+(item.agent_id||'shared_default');$('sessions').append(option);}$('sessions').value=session;return data.sessions;}
+async function open(id){const turn=++epoch;source?.close();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);const data=await api('/sessions/'+encodeURIComponent(id));if(turn!==epoch)return;sessionAgentId=data.session.agent_id||'shared_default';$('run-status').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content);tail();runs(data.runs||[]);let last=data.last_seq||0;source=new EventSource('/api/v3/sessions/'+encodeURIComponent(id)+'/events?after='+last);source.onmessage=event=>{if(turn!==epoch)return;try{const item=JSON.parse(event.data);if(item.seq<=last)return;last=item.seq;message(item.role,item.content);tail();}catch{note('Unable to read chat event. Reload to recover.');}};source.onerror=()=>note('Connection interrupted. Reconnecting…');source.onopen=()=>note('');}
 async function cancel(id){await api('/runs/'+id+'/cancel','POST',{client_request_id:keyId('cancel:'+id)});await refresh();}
-function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('run-status').textContent=active?.status||relevant[0]?.status||'Ready';$('stop').hidden=!active||$('stop').dataset.configEnabled==='false';$('stop').dataset.run=active?.id||'';$('send').disabled=!!active||!!state.shutoff||!state.provider?.connected;
+function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('run-status').textContent=active?.status||relevant[0]?.status||'Ready';$('stop').hidden=!active||$('stop').dataset.configEnabled==='false';$('stop').dataset.run=active?.id||'';$('send').disabled=!!active||!!state.shutoff;
 for(const run of relevant){if(run.status==='completed')continue;const card=document.createElement('section');card.className='run-card';const title=document.createElement('strong');title.textContent=run.status+(run.error?' — '+run.error:'');card.append(title);
 if(run.pending && run.status==='waiting_approval'){const p=run.pending,pre=document.createElement('pre');pre.textContent=p.name+'\n'+JSON.stringify(p.arguments,null,2);card.append(pre);for(const decision of ['approve','deny'])card.append(button(decision==='approve'?'Approve action':'Deny action',async()=>{await api('/approvals/'+p.id+'/decision','POST',{decision,client_request_id:keyId('approval:'+p.id+':'+decision)});await refresh();}));}
 if(run.uncertain || run.status==='recovery'){const text=document.createElement('p');text.textContent='The previous action may have completed. Verify its outcome before retrying.';const output=document.createElement('textarea');output.placeholder='Known result to accept';output.setAttribute('aria-label','Known action result');card.append(text,output);for(const decision of ['accept','retry','abandon'])card.append(button({accept:'Accept known result',retry:'Authorize retry',abandon:'Abandon run'}[decision],async()=>{await api('/runs/'+run.id+'/recovery','POST',{decision,output:output.value,client_request_id:keyId('recovery:'+run.id+':'+decision+':'+output.value)});await refresh();}));}
 if(!run.uncertain && ['paused','stopped','failed'].includes(run.status))card.append(button('Resume run',async()=>{await api('/runs/'+run.id+'/resume','POST',{client_request_id:crypto.randomUUID()});await refresh();}));if(active?.id===run.id)card.append(button('Cancel run',()=>cancel(run.id)));$('runs').append(card);}}
 async function refresh(){state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}runs(state.runs||[]);}
-async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);$('login').hidden=true;$('app').hidden=false;await refresh();await showAgentView(new URL(location.href).searchParams.get('agentView')==='abilities'?'abilities':'model');const items=await sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await open(route||items[0].id);if(initialTab==='account')showAccountPanel();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
+async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);$('login').hidden=true;$('app').hidden=false;await refresh();selectionTable?.destroy();try{selectionTable=await mountSelectionTable($('selection-model-table'),{request:api,agentId,onAgent:async id=>{agentId=id;const route=new URL(location.href);route.searchParams.set('agent',id);history.replaceState({},'',route);await showAgentView(route.searchParams.get('agentView')||'model');},onAssignment:async(id,assignment)=>{explicitAssignment=!!assignment;$('model-page').querySelector('.ac-model-table').hidden=id!=='shared_default'||explicitAssignment;$('settings').hidden=id!=='shared_default';document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;}});}catch(error){if(error.status===401)throw error;selectionTable=null;const warning=document.createElement('p');warning.className='ac-hint';warning.setAttribute('role','status');warning.textContent=error.status===404?'Model assignment management requires a backend update. The existing default-agent connection remains available.':'Model assignment management unavailable: '+error.message;$('selection-model-table').replaceChildren(warning);if(agentId!=='shared_default')throw Error('This agent requires model-management support; update the backend before chatting.');}await showAgentView(new URL(location.href).searchParams.get('agentView')||'config');const items=await sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await open(route||items[0].id);if(initialTab==='account')showAccountPanel();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
 $('login-form').onsubmit=guard(async()=>{const data=new FormData($('login-form'));csrf=(await api('/auth/login','POST',{username:data.get('username'),password:data.get('password')})).csrf_token;$('login-form').reset();await boot();});
 const accountMenu=$('user-dropdown-menu');
 function closeAccountMenu(){accountMenu.hidden=true;$('top-user-id').setAttribute('aria-expanded','false');}
@@ -362,8 +387,8 @@ setupHeaderPullRefresh();
 $('logout').onclick=guard(async()=>{await api('/auth/logout','POST',{});out();});
 $('theme').onclick=()=>{document.body.classList.toggle('light-mode');localStorage.setItem('v3-theme',document.body.classList.contains('light-mode')?'light':'dark');};document.body.classList.toggle('light-mode',localStorage.getItem('v3-theme')==='light');
 $('sessions').onchange=guard(()=>open($('sessions').value));
-$('new').onclick=guard(async()=>{const item=await api('/sessions','POST',{title:'New conversation',client_request_id:crypto.randomUUID()});await sessions();await open(item.id);});
-$('composer').onsubmit=guard(async()=>{const text=$('chat-input').value.trim();if(!text)return;if(!session){const item=await api('/sessions','POST',{title:text.slice(0,60),client_request_id:keyId('session:'+text)});await sessions();await open(item.id);}await api('/sessions/'+session+'/messages','POST',{text,client_message_id:keyId('message:'+session+':'+text)});ids.delete('message:'+session+':'+text);$('chat-input').value='';applyChatConfig();await refresh();});
+$('new').onclick=guard(async()=>{const item=await api('/sessions','POST',{title:'New conversation',agent_id:agentId,client_request_id:crypto.randomUUID()});await sessions();await open(item.id);});
+$('composer').onsubmit=guard(async()=>{const text=$('chat-input').value.trim();if(!text)return;if(!session){const item=await api('/sessions','POST',{title:text.slice(0,60),agent_id:agentId,client_request_id:keyId('session:'+text)});await sessions();await open(item.id);}await api('/sessions/'+session+'/messages','POST',{text,client_message_id:keyId('message:'+session+':'+text)});ids.delete('message:'+session+':'+text);$('chat-input').value='';applyChatConfig();await refresh();});
 $('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('send').disabled)$('composer').requestSubmit();}};
 $('stop').onclick=guard(()=>cancel($('stop').dataset.run));
 $('shutoff').onclick=guard(async()=>{await api('/control','PUT',{shutoff:!state.shutoff,client_request_id:crypto.randomUUID()});await refresh();});
@@ -371,4 +396,4 @@ $('connect').onclick=guard(async()=>{await api('/provider/login','POST',{});awai
 $('disconnect').onclick=guard(async()=>{await api('/provider/logout','POST',{});await refresh();});
 $('model-form').onsubmit=guard(async()=>{agentModel=(await api('/agents/'+agentId+'/model','PUT',{model:$('model').value.trim()})).model;await refresh();});
 $('policy-form').onsubmit=guard(async()=>{const rules=Object.fromEntries([...$('rules').querySelectorAll('select')].map(node=>[node.name,node.value]));await api('/policy','PUT',{rules});await refresh();});
-api('/auth/setup-status').then(status=>{if(!status.initialized){location.replace('/setup.html');return;}return boot();}).catch(error=>{out();if(!error.message.includes('401'))note(error.message);});
+api('/auth/setup-status').then(status=>{if(!status.initialized){location.replace('/setup.html');return;}return boot();}).catch(error=>{if(error.status===401)out();note(error.message);});

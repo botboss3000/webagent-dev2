@@ -747,8 +747,7 @@ function addChatBubble(role, text, extraClass, imageUrl, turnId, msgId, createdA
     label.textContent = 'You';
     bubble.appendChild(label);
   }
-  // Normal agent responses retain their lane label. The production Closer is
-  // content-only: no development sender heading above the final output.
+  // Agent responses, including terminal closers, retain the same sender heading.
   if (role === 'agent' && !isToolOnly && !isNotice && extraClass !== 'session-placeholder'
       && extraClass !== 'summary-bubble') {
     const label = document.createElement('span');

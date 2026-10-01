@@ -3638,6 +3638,11 @@ body.light-mode .chat-bubble.agent.premium {
     display: block;
     margin-bottom: 5px;
   }
+/* Sender headings stay hidden for live, reloaded, and virtualized messages. */
+.chat-bubble.user > .label,
+.chat-bubble.agent > .label {
+  display: none;
+}
 /* Collapsed bubble — hides the message body but keeps the action footer visible. */
 .chat-bubble.collapsed {
   padding-bottom: 0;
@@ -3699,7 +3704,7 @@ body.light-mode .chat-bubble.agent.premium {
   margin-top: 8px;
 }
 
-/* Gutter — the always-visible strip between sections that shows time/model/actions.
+/* Gutter — the strip between sections that shows time/model/actions.
    position:relative + z-index lifts the strip (and its buttons) above any
    following sibling — e.g. a grouped bubble pulled up by margin-top:-8px — so
    footer clicks are never swallowed by the next bubble. */
@@ -3723,6 +3728,18 @@ body.light-mode .chat-bubble.agent.premium {
 }
 .turn-gutter:hover {
   opacity: 1;
+}
+
+/* Reserve gutter space to avoid transcript shifts. Reveal user and agent
+   controls with the same pointer engagement that drives the glimmer; focus
+   keeps keyboard navigation available even while the resting strip is clear. */
+.chat-bubble:is(.user, .agent) .turn-gutter {
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-bubble:is(.user, .agent):is(:hover, .spot-active, :focus-within) .turn-gutter {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .turn-gutter-time {
@@ -5898,6 +5915,11 @@ body.light-mode .chat-continue-btn:hover {
 
 /* One tool call (accordion row) */
 .ca-tool-row { border-radius: 8px; }
+/* Bring the activity line closer to the preceding bubble's gutter without
+   changing the transcript gap between unrelated messages. */
+.chat-bubble:is(.user, .agent):not(.activity-group) + .chat-bubble.agent.activity-group {
+  margin-top: -8px;
+}
 .chat-bubble.agent.activity-group {
   /* The run shell sits directly on the transcript backdrop. Its update,
      response, and tool rows retain their own nested surfaces below. */

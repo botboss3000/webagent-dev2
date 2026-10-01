@@ -1349,6 +1349,28 @@ export function mountSessionDropdown(root, opts = {}) {
         return;
       }
     });
+    // Middle-click opens the conversation independently, without selecting it
+    // or closing this menu. Row controls retain their own action semantics.
+    menu.addEventListener('auxclick', (e) => {
+      if (e.button !== 1) return;
+      const pointerSessionId = menu.dataset.pointerSessionId || '';
+      delete menu.dataset.pointerSessionId;
+      if (e.target.closest('button, input, select, textarea, [role="button"], [contenteditable="true"], .session-needs-input-chip')) return;
+      const row = e.target.closest('.session-row[data-id]');
+      if (!row || row.classList.contains('recycled')) return;
+      if (pointerSessionId && pointerSessionId !== row.dataset.id) return;
+      const sid = row.dataset.id;
+      if (!sid) return;
+      const session = _sessionsCache.find(s => s.id === sid);
+      const agentId = row.dataset.agent || session?.agent_id || app.currentAgentId;
+      const url = new URL(window.location.pathname, window.location.origin);
+      url.searchParams.set('tab', 'agents');
+      if (agentId) url.searchParams.set('agent', agentId);
+      url.searchParams.set('session', sid);
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(url.href, '_blank', 'noopener');
+    });
     menu.addEventListener('click', (e) => {
       e.stopPropagation();
       const needsInputChip = e.target.closest('.session-needs-input-chip');

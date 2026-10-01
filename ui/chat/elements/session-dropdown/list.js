@@ -1715,7 +1715,7 @@ function _childRowsHtml(sid) {
     const text = name ? `${label} · ${name}` : label;
     const childAgentIcon = _agentIconHtml(k.agent_id, '14px') || icon('bot', { size: '14px' });
     html += `
-      <div class="session-row session-child-row${isSel}" data-id="${kSid}" title="${(name || label).replace(/"/g, '&quot;')}">
+      <div class="session-row session-child-row${isSel}" data-id="${kSid}" data-agent="${_esc(k.agent_id || '')}" title="${(name || label).replace(/"/g, '&quot;')}">
         <span class="session-row-child-icon">${icon(roleIcon, { size: '11px' })}</span>
         <span class="session-row-agent-icon">${childAgentIcon}</span>
         <span class="session-row-title">${text.replace(/</g, '&lt;')}</span>

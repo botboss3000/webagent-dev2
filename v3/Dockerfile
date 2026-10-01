@@ -2,7 +2,11 @@ FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f
 WORKDIR /build
 COPY v3/Cargo.toml v3/Cargo.lock ./
 COPY v3/src ./src
+# Runtime tests load the installed ability catalog and chat configuration.
+COPY v3/plugins/abilities ./plugins/abilities
+COPY v3/ui ./ui
 ENV CARGO_BUILD_JOBS=2
+RUN cargo test --locked
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251

@@ -178,12 +178,22 @@ body.light-mode .chat-bubble.agent { --chat-bubble-bg: var(--agent-bubble-bg, co
 #chat-panel .chat-bubble[data-timestamp-order-anomaly="true"] {
     border-color: var(--warning) !important;
 }
-/* Activity groups are structural transcript shells, not message bubbles. Keep
-   their tool-count, progress text, and nested update/preview rows directly on
-   the chat backdrop. The nested .ca-* rows still paint their own surfaces;
-   normal agent output (including closer/auditor messages) keeps the generic
-   glass bubble above. This must live after that generic rule and mirror its
-   !important surface declarations so it also wins in the real chat panel. */
+/* Agent prose sits directly on the chat stage. Remove the resting glass layers,
+   not the .spot overlay: its pointer-driven glimmer still paints on engagement.
+   Transparency follows the actual (potentially animated) backdrop in both themes
+   instead of approximating it with a solid theme colour. User bubbles and the
+   technical schema-inspect panel retain their separate surfaces. */
+#chat-panel .chat-bubble.agent {
+  --chat-bubble-bg: transparent;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Activity groups are structural transcript shells. Their nested .ca-* rows
+   still paint their own surfaces; the shell also needs unclipped overflow and
+   square corners, unlike the rounded glimmer bounds on normal agent prose. */
 #chat-panel .chat-bubble.agent.activity-group {
   --chat-bubble-bg: transparent;
   background: transparent !important;

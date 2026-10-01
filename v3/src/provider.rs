@@ -60,6 +60,31 @@ impl ProviderSelection {
     }
 }
 
+/// Sanitized transport error; no provider payload, token or user input escapes.
+#[derive(Debug)]
+pub struct ProviderFailure {
+    pub kind: crate::model_selection::FailureKind,
+    pub response_started: bool,
+    detail: String,
+}
+impl std::fmt::Display for ProviderFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.detail) }
+}
+impl std::error::Error for ProviderFailure {}
+pub(crate) fn typed_failure(kind: crate::model_selection::FailureKind, started: bool, detail: impl Into<String>) -> anyhow::Error {
+    ProviderFailure { kind, response_started: started, detail: detail.into() }.into()
+}
+fn failure_kind(value: &Value) -> crate::model_selection::FailureKind {
+    use crate::model_selection::FailureKind::*;
+    match failure_detail(value) {
+        "Selected model is unavailable or unsupported for this account" => ModelUnavailable,
+        "Provider authorization is invalid or expired; reconnect ChatGPT" => InvalidCredentials,
+        "Provider rate limit exceeded" | "Provider internal error" => Transient,
+        "Provider usage limit exceeded" => QuotaExhausted,
+        "Provider context limit exceeded" | "Provider rejected the request format or parameters" => MalformedRequest,
+        _ => Protocol,
+    }
+}
 #[derive(Clone)]
 pub struct Provider {
     client: reqwest::Client,
@@ -115,7 +140,7 @@ fn failure_detail(value: &Value) -> &'static str {
     }
 }
 
-async fn response_failure(response: reqwest::Response, cancel: &CancellationToken) -> String {
+async fn response_failure(response: reqwest::Response, cancel: &CancellationToken) -> anyhow::Error {
     let status = response.status().as_u16();
     // Bound time and bytes even when an error endpoint sends an endless body.
     let mut stream = response.bytes_stream();
@@ -130,7 +155,7 @@ async fn response_failure(response: reqwest::Response, cancel: &CancellationToke
     };
     let value = tokio::select! {
         biased;
-        _ = cancel.cancelled() => return "Provider request cancelled".to_owned(),
+        _ = cancel.cancelled() => return typed_failure(crate::model_selection::FailureKind::Cancelled, false, "Provider request cancelled"),
         result = tokio::time::timeout(Duration::from_secs(5), read) => result.ok().flatten(),
     };
     let detail = match status {
@@ -139,7 +164,15 @@ async fn response_failure(response: reqwest::Response, cancel: &CancellationToke
         429 => "Provider rate or usage limit exceeded",
         _ => value.as_ref().map(failure_detail).unwrap_or("Provider rejected the request (details withheld)"),
     };
-    format!("Provider HTTP {status}: {detail}")
+    use crate::model_selection::FailureKind::*;
+    let kind = match status {
+        401 => InvalidCredentials,
+        403 => PolicyRejected,
+        429 if value.as_ref().is_some_and(|v| failure_kind(v) == QuotaExhausted) => QuotaExhausted,
+        408 | 429 | 500..=599 => Transient,
+        _ => value.as_ref().map(failure_kind).unwrap_or(MalformedRequest),
+    };
+    typed_failure(kind, false, format!("Provider HTTP {status}: {detail}"))
 }
 
 async fn checked_json(response: reqwest::Response) -> Result<Value> {
@@ -484,11 +517,12 @@ impl Provider {
         delta: mpsc::Sender<String>,
         cancel: CancellationToken,
     ) -> Result<Value> {
+        let mut response_started = false;
         if instructions.is_empty() || instructions.len() > MAX_INSTRUCTIONS {
-            bail!("Invalid provider instructions");
+            return Err(typed_failure(crate::model_selection::FailureKind::MalformedRequest, false, "Invalid provider instructions"));
         }
         if cancel.is_cancelled() {
-            bail!("Provider request cancelled");
+            return Err(typed_failure(crate::model_selection::FailureKind::Cancelled, response_started, "Provider request cancelled"));
         }
         let mut request = self
             .client
@@ -508,47 +542,51 @@ impl Provider {
         }
         let response = tokio::select! {
             biased;
-            _ = cancel.cancelled() => bail!("Provider request cancelled"),
+            _ = cancel.cancelled() => return Err(typed_failure(crate::model_selection::FailureKind::Cancelled, response_started, "Provider request cancelled")),
             response = tokio::time::timeout(Duration::from_secs(60), request.send()) =>
-                response.map_err(|_| anyhow!("Provider connection timed out"))?
-                    .map_err(|_| anyhow!("Provider connection failed"))?
+                response.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, false, "Provider connection timed out"))?
+                    .map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, false, "Provider connection failed"))?
         };
         if !response.status().is_success() {
-            bail!("{}", response_failure(response, &cancel).await);
+            return Err(response_failure(response, &cancel).await);
         }
         let mut stream = response.bytes_stream();
         let mut frames = Frames::default();
         loop {
             let chunk = tokio::select! {
             biased;
-                _ = cancel.cancelled() => bail!("Provider request cancelled"),
+                _ = cancel.cancelled() => return Err(typed_failure(crate::model_selection::FailureKind::Cancelled, response_started, "Provider request cancelled")),
                 chunk = tokio::time::timeout(Duration::from_secs(120), stream.next()) =>
-                    chunk.map_err(|_| anyhow!("Provider stream stalled"))?
+                    chunk.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream stalled"))?
             };
             let Some(chunk) = chunk else {
-                bail!("Provider stream ended before completion");
+                return Err(typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream ended before completion"));
             };
-            let chunk = chunk.map_err(|_| anyhow!("Provider stream interrupted"))?;
-            for event in frames.push(&chunk)? {
+            let chunk = chunk.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream interrupted"))?;
+            for event in frames.push(&chunk).map_err(|e| typed_failure(crate::model_selection::FailureKind::Protocol, response_started, e.to_string()))? {
+                if event["type"].as_str().is_some_and(|t| t.starts_with("response.")
+                    && !matches!(t, "response.failed" | "response.incomplete")) {
+                    response_started = true;
+                }
                 match event["type"].as_str().unwrap_or("") {
                     "response.output_text.delta" => {
                         if let Some(text) = event["delta"].as_str() {
                             tokio::select! {
                             biased;
-                                                _ = cancel.cancelled() => bail!("Provider request cancelled"),
-                                                sent = delta.send(text.to_owned()) => { sent.map_err(|_| anyhow!("Stream consumer disconnected"))?; }
+                                                _ = cancel.cancelled() => return Err(typed_failure(crate::model_selection::FailureKind::Cancelled, response_started, "Provider request cancelled")),
+                                                sent = delta.send(text.to_owned()) => { sent.map_err(|_| typed_failure(crate::model_selection::FailureKind::Protocol, response_started, "Stream consumer disconnected"))?; }
                                             }
                         }
                     }
                     "response.completed" => {
                         let response = event["response"].clone();
                         if !response["output"].is_array() || response["status"] != "completed" {
-                            bail!("Invalid provider completion");
+                            return Err(typed_failure(crate::model_selection::FailureKind::Protocol, response_started, "Invalid provider completion"));
                         }
                         return Ok(response);
                     }
                     "response.failed" | "response.incomplete" | "error" => {
-                        bail!("Provider did not complete response: {}", failure_detail(&event))
+                        return Err(typed_failure(failure_kind(&event), response_started, format!("Provider did not complete response: {}", failure_detail(&event))))
                     }
                     _ => {}
                 }

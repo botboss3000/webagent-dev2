@@ -1,9 +1,22 @@
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS rust-toolchain
+
 FROM webagent:dev-codex
 USER root
 WORKDIR /app
-COPY --chown=appuser:appgroup . /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_HOME=/home/appuser/.cargo \
+    RUSTUP_HOME=/home/appuser/.rustup \
+    CARGO_TARGET_DIR=/home/appuser/.cache/cargo-target \
+    PATH=/home/appuser/.cargo/bin:$PATH
+COPY --from=rust-toolchain /usr/local/cargo/ /home/appuser/.cargo/
+COPY --from=rust-toolchain /usr/local/rustup/ /home/appuser/.rustup/
+RUN mkdir -p "$CARGO_TARGET_DIR" && \
+    chown -R appuser:appgroup "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
 ENV WEBAGENT_V2_ISOLATED=1 WEBAGENT_ENCRYPTION_LEVEL=field WEBAGENT_SECRETS_PROVIDER=inline_db WEBAGENT_DB_MODE=local
 USER appuser:appgroup
+RUN rustc --version && cargo --version
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD curl --fail http://localhost:8080/health/ready || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python","-m","app.server_supervisor"]

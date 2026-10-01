@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "directory": { "title": "Config", "description": "Open a configuration page for the selected agent." },
+  "pages": [
+    { "id": "model", "title": "Primary Models", "description": "Choose the primary model and manage its provider connection.", "order": 10, "panelId": "model-page", "icon": "cpu" },
+    { "id": "abilities", "title": "Abilities", "description": "Configure the agent's abilities, skills, and tool visibility.", "order": 20, "panelId": "abilities-page", "icon": "layers" }
+  ]
+}

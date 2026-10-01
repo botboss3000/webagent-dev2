@@ -167,7 +167,7 @@ fn model_failure(run: &mut Value, error: &anyhow::Error) -> Result<()> {
         let action = state.failed(&plan, kind);
         if action == NextAction::Backup {
             run["provider_selection"] = provider::ProviderSelection {
-                provider: provider::ProviderId::OpenaiSubscription,
+                provider: plan.candidates[state.candidate_index].transport.provider_id(),
                 model: plan.candidates[state.candidate_index].upstream_model.clone(),
             }.value();
             run["attempt"] = json!(0);
@@ -335,12 +335,18 @@ impl App {
     async fn tokens_for(&self, selection: &provider::ProviderSelection, run: &Value) -> Result<Value> {
         let candidate = self.run_candidate(run).await?;
         if let Some(candidate) = &candidate {
-            if selection.model != candidate.upstream_model {
+            if selection.model != candidate.upstream_model || selection.provider != candidate.transport.provider_id() {
                 return Err(anyhow!("Pinned model selection mismatch"));
             }
         }
         let reference = candidate.as_ref().map(|c| c.credential_ref.as_str()).unwrap_or("provider_tokens");
         match selection.provider {
+            provider::ProviderId::Deepseek => {
+                if candidate.is_none() { return Err(anyhow!("DeepSeek requires an explicit connection")); }
+                let tokens = self.store.get(reference).await?.ok_or_else(|| provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "Save a DeepSeek API key for this connection"))?;
+                if tokens["api_key"].as_str().is_none_or(|s| s.is_empty()) { return Err(provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "DeepSeek API key unavailable")); }
+                Ok(tokens)
+            }
             provider::ProviderId::OpenaiSubscription => self.tokens_at(reference).await
                 .map_err(|_| provider::typed_failure(model_selection::FailureKind::InvalidCredentials,
                     false, "Assigned provider authorization unavailable; reconnect this connection")),
@@ -2149,7 +2155,7 @@ async fn send(
         None // Explicit legacy migration boundary; other agents never inherit it.
     } else { return Err(conflict("Agent has no explicit model assignment")); };
     let selection = match &plan {
-        Some(plan) => provider::ProviderSelection { provider: provider::ProviderId::OpenaiSubscription,
+        Some(plan) => provider::ProviderSelection { provider: plan.candidates[0].transport.provider_id(),
             model: plan.candidates[0].upstream_model.clone() },
         None => app.selection().await?,
     };
@@ -2160,10 +2166,10 @@ async fn send(
     let instructions = assembled_agent_instructions(&app.store, &agent_id).await?;
     let mut run = json!({"agent_id":agent_id,"selection_plan":plan,"failover_state":model_selection::FailoverState::default(),"instructions":instructions,"provider_selection":selection.value(),"id":run_id,"session_id":id,"status":"queued","phase":"model","input":input,"calls":[],"call_index":0,"loaded_abilities":[],"ability_catalog_version":app.abilities.version(),
         "turns":0,"attempt":0,"pending":null,"generation":"","uncertain":false,"error":null,"created_at":now(),"updated_at":now()});
-    workflow::record(&mut run, workflow::Checkpoint::Admission, &workflow_policy,
-        &json!({"request_digest":digest(&body)}), workflow::Decision::Pass)?;
-    workflow::record(&mut run, workflow::Checkpoint::AttachmentPreparation, &workflow_policy,
-        &json!({"attachments":[]}), workflow::Decision::Pass)?;
+    workflow::record(&mut run, &workflow_policy,
+        &workflow::Input::Admission { request_digest:digest(&body) }, workflow::Decision::Pass)?;
+    workflow::record(&mut run, &workflow_policy,
+        &workflow::Input::AttachmentPreparation { attachment_count:0 }, workflow::Decision::Pass)?;
     let result = json!({"run_id":run_id});
     app.store
         .atomic_docs_event(
@@ -2379,7 +2385,7 @@ async fn command(
                 }
                 Some("accept") => {
                     let output = required(&body, "output", 1048576)?;
-                    append_tool(&mut run, &json!({"status":"reconciled","output":output}));
+                    append_tool(&mut run, &json!({"status":"reconciled","output":output}))?;
                     run["status"] = json!(if app.shutoff().await? {
                         "stopped"
                     } else {
@@ -2472,22 +2478,8 @@ async fn approval(State(app): State<App>, Path(id): Path<String>, Json(body): Js
         .await?;
     Ok(Json(result))
 }
-fn append_tool(run: &mut Value, result: &Value) {
-    // This checkpoint records the authoritative result, including denials.
-    // Its revision is inherited from the dispatch receipt, not fresh configuration.
-    if let Some(previous) = run.pointer("/workflow/receipts/pre_tool").cloned() {
-        let mut receipt = previous;
-        receipt["checkpoint"] = json!("tool_result");
-        receipt["input_digest"] = json!(digest(result));
-        // A denied outcome is not a successful gate decision. Keep the original
-        // dispatch identity, but do not inherit its provisional pass result.
-        receipt["result"] = if result["status"] == "denied" {
-            json!(workflow::Decision::Reject { reason: "Tool invocation denied".into() })
-        } else {
-            json!(workflow::Decision::Pass)
-        };
-        run["workflow"]["receipts"]["tool_result"] = receipt;
-    }
+fn append_tool(run: &mut Value, result: &Value) -> Result<()> {
+    workflow::record_tool_result(run, result)?;
     let call_id = run["pending"]["call_id"].clone();
     run["input"]
         .as_array_mut()
@@ -2495,6 +2487,7 @@ fn append_tool(run: &mut Value, result: &Value) {
         .push(json!({"type":"function_call_output","call_id":call_id,"output":result.to_string()}));
     run["call_index"] = json!(run["call_index"].as_u64().unwrap() + 1);
     run["pending"] = Value::Null;
+    Ok(())
 }
 async fn recover(app: &App, startup: bool) -> Result<()> {
     let _guard = app.gate.lock().await;
@@ -2811,10 +2804,13 @@ async fn execute_run(
                 run["turns"].as_u64().unwrap_or(0), run["attempt"].as_u64().unwrap_or(0))?;
             let instructions = projection.instructions;
             let input = projection.input;
-            let snapshot = json!({"input_digest":digest(&json!(&input)),
-                "instructions_digest":digest(&json!(&instructions)),"schemas_digest":digest(&json!(&schemas))});
-            workflow::record(&mut run, workflow::Checkpoint::ContextAssembly,
-                &workflow_policy, &snapshot, workflow::Decision::Pass)?;
+            let snapshot = workflow::ModelSnapshot {
+                input_digest:digest(&json!(&input)),
+                instructions_digest:digest(&json!(&instructions)),
+                schemas_digest:digest(&json!(&schemas)),
+            };
+            workflow::record(&mut run, &workflow_policy,
+                &workflow::Input::ContextAssembly(snapshot.clone()), workflow::Decision::Pass)?;
             app.save(&mut run).await?;
             drop(_guard);
             let tokens = match app.tokens_for(&selection, &run).await {
@@ -2855,8 +2851,8 @@ async fn execute_run(
                 let _ = collector.await;
                 continue;
             }
-            workflow::record(&mut current, workflow::Checkpoint::ModelDispatch,
-                &workflow_policy, &snapshot, workflow::Decision::Pass)?;
+            workflow::record(&mut current, &workflow_policy,
+                &workflow::Input::ModelDispatch(snapshot), workflow::Decision::Pass)?;
             app.save(&mut current).await?;
             let mut completion = Box::pin(app.provider.complete_selected_with_instructions(
                 &selection,
@@ -2939,8 +2935,9 @@ async fn execute_run(
                         .collect::<Vec<_>>()
                         .join("");
                     let publication_policy = current_workflow_policy(&app).await?;
-                    workflow::record(&mut run, workflow::Checkpoint::ModelOutput,
-                        &publication_policy, &json!({"output":output}), workflow::Decision::Pass)?;
+                    workflow::record(&mut run, &publication_policy,
+                        &workflow::Input::ModelOutput { output_digest:digest(&json!(output)) },
+                        workflow::Decision::Pass)?;
                     run["turns"] = json!(run["turns"].as_u64().unwrap() + 1);
                     run["attempt"] = json!(0);
                     run["calls"] = json!(calls);
@@ -2948,16 +2945,29 @@ async fn execute_run(
                     run["phase"] = json!("tools");
                     if calls.is_empty() {
                         if text.trim().is_empty() {
+                            let reasoning_only = !output.is_empty()
+                                && output.iter().all(|item| item["type"] == "reasoning");
+                            let continuations = run["reasoning_only_completions"].as_u64().unwrap_or(0);
+                            if reasoning_only && continuations < 2 {
+                                run["reasoning_only_completions"] = json!(continuations + 1);
+                                run["phase"] = json!("model");
+                                app.store.save_run(&run, "model_output", &json!({"output":output})).await?;
+                                continue;
+                            }
+                            let kinds = output.iter().map(|item| item["type"].as_str().unwrap_or("unknown"))
+                                .collect::<Vec<_>>();
+                            tracing::warn!(run_id=%id, output_types=?kinds,
+                                "Provider completed without an assistant message or tool call");
                             run["status"] = json!("failed");
-                            run["error"] = json!("Agent completed without a final reply");
+                            run["error"] = json!("Provider completed without a final reply; verify the selected model");
                             app.store
                                 .save_run(&run, "model_output", &json!({"output":output}))
                                 .await?;
                             return Ok(());
                         }
                         if text.len() > publication_policy.max_publication_bytes {
-                            workflow::record(&mut run, workflow::Checkpoint::Publication,
-                                &publication_policy, &json!({"text_digest":digest(&json!(text))}),
+                            workflow::record(&mut run, &publication_policy,
+                                &workflow::Input::Publication { text_digest:digest(&json!(text)) },
                                 workflow::Decision::Reject { reason: "Publication exceeds configured limit".into() })?;
                             run["status"] = json!("paused");
                             run["error"] = json!("Publication exceeds configured limit; review required");
@@ -2992,10 +3002,13 @@ async fn execute_run(
             let (policy, mode_revision, visibility, mut ability_state) =
                 ability_controls(&app, &sid).await?;
             let decision = policy_decision(&policy, &name).to_owned();
-            workflow::record(&mut run, workflow::Checkpoint::PreTool, &workflow_policy,
-                &json!({"name":name,"arguments":args,"policy":policy["version"],
-                    "mode":mode_revision,"visibility":visibility["revision"],"abilities":ability_state["revision"]}),
-                workflow::Decision::Pass)?;
+            workflow::record(&mut run, &workflow_policy,
+                &workflow::Input::PreTool(workflow::PreToolInput {
+                    name:name.clone(), arguments_digest:digest(&args),
+                    policy_version:policy["version"].as_u64().unwrap_or(0),
+                    mode_revision, visibility_revision:visibility["revision"].as_u64().unwrap_or(0),
+                    ability_state_revision:ability_state["revision"].as_u64().unwrap_or(0),
+                }), workflow::Decision::Pass)?;
             if run["pending"].is_null() {
                 run["pending"] = json!({"id":uuid(),"name":name,"arguments":args,"call_id":call["call_id"],"digest":digest(&args),
                     "policy_version":policy["version"],"mode_revision":mode_revision,
@@ -3047,7 +3060,7 @@ async fn execute_run(
                             .await?;
                     }
                 }
-                append_tool(&mut run, &result);
+                append_tool(&mut run, &result)?;
                 app.store
                     .save_run(
                         &run,
@@ -3072,7 +3085,7 @@ async fn execute_run(
                         reason: "Tool invocation denied by policy or invalid arguments".into()
                     });
                 let result = json!({"status":"denied","output":"Tool invocation denied by policy or invalid arguments"});
-                append_tool(&mut run, &result);
+                append_tool(&mut run, &result)?;
                 app.store
                     .save_run(
                         &run,
@@ -3142,7 +3155,7 @@ async fn execute_run(
                             value["status"].as_str(),
                             Some("cancelled" | "timeout" | "uncertain")
                         ) {
-                            append_tool(&mut run, &value);
+                            append_tool(&mut run, &value)?;
                             run["uncertain"] = json!(false);
                             app.save(&mut run).await?;
                         }
@@ -3163,7 +3176,7 @@ async fn execute_run(
                         app.save(&mut run).await?;
                         return Ok(());
                     }
-                    append_tool(&mut run, &value);
+                    append_tool(&mut run, &value)?;
                     app.store
                         .save_run(
                             &run,
@@ -3466,7 +3479,7 @@ mod tests {
     #[test]
     fn consumed_tool_result_advances_once() {
         let mut r = json!({"input":[],"pending":{"call_id":"c"},"call_index":0});
-        append_tool(&mut r, &json!({"output":"done"}));
+        append_tool(&mut r, &json!({"output":"done"})).unwrap();
         assert_eq!(r["call_index"], 1);
         assert!(r["pending"].is_null());
         assert_eq!(r["input"][0]["call_id"], "c");

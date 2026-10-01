@@ -8,6 +8,39 @@ import {apiPath} from '../../shared/js/config.js';
 import {authHeaders} from '../../shared/js/left-login.js';
 import {renderPublishedArtifact, requestPublishedArtifactGrant} from '../../shared/js/published-artifact.js';
 
+// Session entry restores the reader's position, otherwise starts at the latest message.
+import {_sessionFocus, _captureSessionFocus} from '../js/chat-message-cache.js';
+let openingPosition=null;
+let stopOpeningSettle=null;
+function settleOpeningPosition(focus) {
+  stopOpeningSettle?.();
+  const id=session,generation=epoch;
+  const land=()=>{
+    if(!current(id,generation) || !scroller) return;
+    const anchor=focus.anchorMsgId && [...app.chatMessages.children].find(node=>
+      node.dataset.publicId===focus.anchorMsgId || node.dataset.msgId===focus.anchorMsgId);
+    const target=focus.atBottom===false && anchor
+      ? scroller.scrollTop+anchor.getBoundingClientRect().top-scroller.getBoundingClientRect().top-(app._USER_STEP_PAD || 62)
+      : Math.max(0,scroller.scrollHeight-scroller.clientHeight);
+    if(app.setTranscriptScrollTop) app.setTranscriptScrollTop(target);
+    else scroller.scrollTop=target;
+  };
+  // Activity and composer layout arrive after the first projection. Keep entry
+  // position stable during that bounded settle, but never override reader input.
+  const observer=new ResizeObserver(land);
+  observer.observe(app.chatMessages);
+  observer.observe(scroller);
+  const events=['wheel','touchstart','pointerdown','keydown'];
+  const stop=()=>{
+    observer.disconnect();clearTimeout(timer);
+    for(const event of events) scroller?.removeEventListener(event,stop);
+    if(stopOpeningSettle===stop) stopOpeningSettle=null;
+  };
+  for(const event of events) scroller.addEventListener(event,stop,{passive:true});
+  const timer=setTimeout(stop,1500);
+  stopOpeningSettle=stop;
+  land();
+}
 let session=null,unsubscribe=null,epoch=0,pending=[],lastState=null,scroller=null,loadingOlder=false;
 const retrying=new Set();
 function current(id,generation) {
@@ -125,7 +158,11 @@ function render(state) {
   }
   app.refreshRunControls?.();
   renderActivity(state,app.chatMessages);
-  app._reLandAnchor?.();
+  if(openingPosition && scroller && state.items.length) {
+    const focus=openingPosition;
+    openingPosition=null;
+    settleOpeningPosition(focus);
+  } else app._reLandAnchor?.();
   window.dispatchEvent(new CustomEvent('webagent-public-chat-state',{detail:{sessionId:session,runs:state.runs}}));
 }
 async function onHistoryScroll() {
@@ -150,6 +187,9 @@ async function onHistoryScroll() {
   }
 }
 export function disconnectPanel() {
+  stopOpeningSettle?.();
+  if(session && lastState) _captureSessionFocus(session);
+  openingPosition=null;
   epoch++;
   scroller?.removeEventListener('scroll',onHistoryScroll);scroller=null;loadingOlder=false;
   retrying.clear();
@@ -165,6 +205,7 @@ export async function loadPanel(id,{persisted=true,onReady=()=>{}}={}) {
   if(session===id && lastState) {onReady();return refreshPanel();}
   disconnectPanel();
   session=id;
+  openingPosition=_sessionFocus.get(id) || {atBottom:true};
   const generation=epoch;
   await chat.initialize(app.currentUserId);
   if(!current(id,generation)) return;

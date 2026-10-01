@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+mod deepseek;
+
 const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -17,6 +19,7 @@ pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. U
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
     OpenaiSubscription,
+    Deepseek,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -467,6 +470,7 @@ impl Provider {
         cancel: CancellationToken,
     ) -> Result<Value> {
         match selection.provider {
+            ProviderId::Deepseek => self.complete_deepseek(tokens, &selection.model, input, tools, instructions, delta, cancel).await,
             ProviderId::OpenaiSubscription => {
                 self.complete_with_instructions(
                     tokens,
@@ -552,6 +556,8 @@ impl Provider {
         }
         let mut stream = response.bytes_stream();
         let mut frames = Frames::default();
+        let mut completed_items = Vec::<Value>::new();
+        let mut event_kinds = std::collections::BTreeMap::<String, usize>::new();
         loop {
             let chunk = tokio::select! {
             biased;
@@ -564,6 +570,8 @@ impl Provider {
             };
             let chunk = chunk.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream interrupted"))?;
             for event in frames.push(&chunk).map_err(|e| typed_failure(crate::model_selection::FailureKind::Protocol, response_started, e.to_string()))? {
+                let event_type = event["type"].as_str().unwrap_or("unknown");
+                *event_kinds.entry(event_type.to_owned()).or_default() += 1;
                 if event["type"].as_str().is_some_and(|t| t.starts_with("response.")
                     && !matches!(t, "response.failed" | "response.incomplete")) {
                     response_started = true;
@@ -578,10 +586,21 @@ impl Provider {
                                             }
                         }
                     }
+                    "response.output_item.done" => {
+                        if let Some(item) = event.get("item").filter(|item| item.is_object()) {
+                            completed_items.push(item.clone());
+                        }
+                    }
                     "response.completed" => {
-                        let response = event["response"].clone();
+                        let mut response = event["response"].clone();
                         if !response["output"].is_array() || response["status"] != "completed" {
                             return Err(typed_failure(crate::model_selection::FailureKind::Protocol, response_started, "Invalid provider completion"));
+                        }
+                        if response["output"].as_array().is_some_and(Vec::is_empty) && !completed_items.is_empty() {
+                            response["output"] = json!(completed_items);
+                        }
+                        if response["output"].as_array().is_some_and(Vec::is_empty) {
+                            tracing::warn!(events=?event_kinds, "Provider completed with empty output");
                         }
                         return Ok(response);
                     }
@@ -723,6 +742,24 @@ mod tests {
         assert_eq!(body["prompt_cache_key"], "session");
         assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert!(body.get("max_output_tokens").is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn streamed_output_items_fill_empty_completion() {
+        use axum::{routing::post, Router};
+        let app = Router::new().route("/responses", post(|| async {
+            ([ ("content-type", "text/event-stream") ],
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let provider = Provider::for_test(format!("http://{address}/responses"));
+        let (sender, _receiver) = mpsc::channel(1);
+        let output = provider.complete(&json!({"access_token":"test-only"}), "fixture",
+            vec![], vec![], "session", sender, CancellationToken::new()).await.unwrap();
+        assert_eq!(output["output"][0]["content"][0]["text"], "hello");
         server.abort();
     }
 

@@ -21,8 +21,14 @@ On first start, open `/setup.html` to choose the v3 admin username and password.
 The retired test bootstrap credential is removed on the first launch of this setup flow.
 Open `/app?tab=agents&agent=shared_default` to use the v2 Agents layout and configure the default agent's Model page. Connect a fresh ChatGPT subscription there; v2 tokens are never imported.
 The default agent uses `gpt-6-luna` until you save another model. Choose a model supported by your account; a catalog name alone does not establish entitlement.
-Agent model settings store an explicit provider ID. The current supported ID is
-`openai_subscription`; unsupported IDs are rejected. Each accepted run pins its
+Agent model settings store an explicit provider ID. The supported IDs are
+`openai_subscription` and `deepseek`; unsupported IDs are rejected. DeepSeek requires
+an explicit model connection and its own encrypted API key, saved on Primary Models.
+Choose `deepseek-chat` or `deepseek-reasoner` (or enter a supported upstream model ID).
+The adapter calls the fixed `https://api.deepseek.com/chat/completions` endpoint,
+streams text, and translates tool calls/results. API usage is billed by DeepSeek;
+saving a key confirms storage, not account entitlement. Keys are never returned
+to the browser. Each accepted run pins its transport and credential reference. Each accepted run pins its
 provider and model so changing the agent setting affects only later runs.
 
 Development UI files in `v3/ui` and the selected shared CSS, Agents partial,
@@ -288,6 +294,8 @@ Build and run these commands on the development server, using the pinned Rust bu
 UI journey routes and visible checkpoints are in docs/ui-journeys.md.
 
 ## Phase 1 workflow foundation
+
+The Phase 0 architecture and storage contract is in [workflow-foundation.md](docs/workflow-foundation.md).
 
 The existing in-process runner now records fixed checkpoints: admission,
 attachment preparation, context assembly, model dispatch/output, pre-tool,

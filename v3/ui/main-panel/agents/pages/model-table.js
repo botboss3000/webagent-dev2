@@ -25,7 +25,7 @@ export async function mountSelectionTable(host,{request,agentId,onAgent,onAssign
     agentId=result.id;nameInput.value='';await load();await onAgent(agentId);await onAssignment(agentId,catalog.assignments[agentId]);render();
   }));
   const createRow=node('div','ac-ability-row');createRow.append(nameInput,create);
-  const explanation=node('p','ac-hint','Explicit primary assignment and ordered backups. Only ChatGPT subscription transport is executable; API-key providers and role routing are not ported. Each backup needs its own authorization.');
+  const explanation=node('p','ac-hint','Explicit primary assignment and ordered backups. ChatGPT Subscription and DeepSeek API-key connections are supported. Each backup needs its own authorization. Role routing is not ported.');
   host.replaceChildren(chooser,createRow,status,explanation,roster,table);
   async function load(){
     const [data,list]=await Promise.all([request('/models/catalog'),request('/models/agents')]);
@@ -66,7 +66,11 @@ export async function mountSelectionTable(host,{request,agentId,onAgent,onAssign
   const model=node('input','ac-input ac-input-sm');model.required=true;model.pattern='[A-Za-z0-9._-]+';model.maxLength=128;model.setAttribute('aria-label','Upstream model ID');
   const display=node('input','ac-input ac-input-sm');display.required=true;display.maxLength=200;display.setAttribute('aria-label','Model display name');
   function formRow(label,control){const row=node('div','ac-ability-row ac-model-cfg-row');row.append(node('label','ac-ability-label',label),control);form.append(row);}
-  formRow('Provider',node('span','ac-model-cfg-control','ChatGPT Subscription'));
+  const provider=node('select','ac-input ac-config-sel');provider.setAttribute('aria-label','Provider');
+  for(const [value,label]of [['openai_subscription','ChatGPT Subscription'],['deepseek','DeepSeek']]){const option=node('option','',label);option.value=value;provider.append(option);}
+  const suggestions=node('datalist','');suggestions.id=uid('model-options-');model.setAttribute('list',suggestions.id);form.append(suggestions);
+  provider.onchange=()=>{suggestions.replaceChildren();if(provider.value==='deepseek'){for(const id of ['deepseek-chat','deepseek-reasoner']){const option=node('option','',id);option.value=id;suggestions.append(option);}model.value='deepseek-chat';display.value='DeepSeek Chat';}else{model.value='';display.value='';}};
+  formRow('Provider',provider);
   formRow('Model ID',model);formRow('Display name',display);
   const add=node('button','ac-btn ac-btn-primary ac-btn-sm','Add connection');add.type='submit';
   const cancel=button('Cancel',()=>{form.reset();backupTarget=null;form.hidden=true;table.append(form);});
@@ -74,13 +78,13 @@ export async function mountSelectionTable(host,{request,agentId,onAgent,onAssign
   form.onsubmit=event=>{event.preventDefault();act(add,async()=>{
     if(!form.reportValidity())return;
     const next=clone(catalog),id=uid('model-'),connectionId=uid('connection-');
-    next.connections[connectionId]={id:connectionId,owner_id:owner,transport:'openai_subscription',credential_ref:uid('provider_credential:'),allowed_agents:[agentId],revision:1,revoked:false};
+    next.connections[connectionId]={id:connectionId,owner_id:owner,transport:provider.value,credential_ref:uid('provider_credential:'),allowed_agents:[agentId],revision:1,revoked:false};
     next.entries[id]={id,owner_id:owner,connection_id:connectionId,upstream_model:model.value.trim(),display_name:display.value.trim(),capabilities:['text'],allowed_agents:[agentId],revision:1};
     if(backupTarget)link(next,id);else if(!assignment())assign(next,id);
     openId=id;form.hidden=true;form.reset();backupTarget=null;await save(next);
   });};
   function openForm(destination,primary=null){
-    form.reset();backupTarget=primary;add.textContent=primary?'Add backup connection':'Add connection';
+    form.reset();suggestions.replaceChildren();backupTarget=primary;add.textContent=primary?'Add backup connection':'Add connection';
     destination.append(form);form.hidden=false;model.focus();
   }
   const plus=button('Add model connection',()=>openForm(table));
@@ -104,7 +108,7 @@ export async function mountSelectionTable(host,{request,agentId,onAgent,onAssign
       choice.onchange=()=>act(choice,async()=>{const next=clone(catalog);assign(next,entry.id);await save(next);});
       head.append(choice,expand,node('span','ac-ability-desc',entry.upstream_model));
       const body=node('div','ac-ability-body');const meta=node('div','ac-model-meta-list');
-      for(const [label,value]of [['Model name:',entry.upstream_model],['Provider:','ChatGPT Subscription'],['Connection:',entry.connection_id]]){
+      for(const [label,value]of [['Model name:',entry.upstream_model],['Provider:',catalog.connections[entry.connection_id].transport==='deepseek'?'DeepSeek':'ChatGPT Subscription'],['Connection:',entry.connection_id]]){
         const line=node('div','ac-model-meta-line');line.append(node('span','ac-model-meta-k',label),node('span','ac-model-meta-v',value));meta.append(line);
       }
       body.append(meta);
@@ -117,10 +121,15 @@ export async function mountSelectionTable(host,{request,agentId,onAgent,onAssign
       }));authorize.disabled=connection.revoked;
       async function updateConnection(){
         const data=await request('/models/connections/'+encodeURIComponent(connection.id));
-        if(destroyed)return;connectionState.textContent=data.revoked?'Revoked':data.connected?'Connected':'Authorization required';authorization.replaceChildren();
+        if(destroyed)return;connectionState.textContent=data.revoked?'Revoked':data.connected?(connection.transport==='deepseek'?'API key saved':'Connected'):(connection.transport==='deepseek'?'API key required':'Authorization required');authorization.replaceChildren();
         if(data.authorization?.verification_url){const link=node('a','','Open ChatGPT authorization');link.href=data.authorization.verification_url;link.target='_blank';link.rel='noopener noreferrer';authorization.append(link,node('p','','Code: '+data.authorization.user_code+' — '+data.authorization.status));}
       }
-      body.append(connectionState,authorize,authorization);
+      if(connection.transport==='deepseek'){
+        const key=node('input','ac-input ac-input-sm');key.type='password';key.autocomplete='new-password';key.placeholder='DeepSeek API key';key.maxLength=512;key.setAttribute('aria-label','DeepSeek API key');key.disabled=connection.revoked;
+        const saveKey=button('Save API key',()=>act(saveKey,async()=>{try{await request('/models/connections/'+encodeURIComponent(connection.id)+'/api-key','PUT',{api_key:key.value.trim()});await load();await updateConnection();}finally{key.value='';}}));saveKey.disabled=connection.revoked;
+        const keyRow=node('div','ac-ability-row');keyRow.append(key,saveKey);
+        body.append(connectionState,keyRow,node('p','ac-hint','Stored encrypted in v3. API usage is billed by DeepSeek; saving a key does not verify account access.'),authorization);
+      }else body.append(connectionState,authorize,authorization);
       const check=button('Refresh connection status',()=>act(check,updateConnection));body.append(check);
       updateConnection().catch(error=>{connectionState.textContent=error.message;});
       if(current?.primary_entry_id===entry.id){

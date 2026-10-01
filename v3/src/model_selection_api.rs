@@ -19,7 +19,7 @@ async fn require_admin(app: &App, identity: &Value) -> Result<(), ApiError> {
 async fn read(State(app): State<App>, Extension(identity): Extension<Value>) -> Api {
     require_admin(&app, &identity).await?;
     let catalog = app.store.model_catalog().await?;
-    Ok(Json(json!({"catalog":catalog,"caller_id":identity["_user_id"],"supported_transports":["openai_subscription"],
+    Ok(Json(json!({"catalog":catalog,"caller_id":identity["_user_id"],"supported_transports":["openai_subscription","deepseek"],
         "execution_status":"implemented_pending_live_validation"})))
 }
 
@@ -119,6 +119,7 @@ async fn connection_authorize(State(app): State<App>, Extension(identity): Exten
     let mut catalog=app.store.model_catalog().await?;
     let connection=catalog.connections.get_mut(&id).ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Connection not found".into()))?;
     if connection.revoked { return Err(crate::conflict("Connection is revoked")); }
+    if connection.transport != crate::model_selection::Transport::OpenaiSubscription { return Err(crate::bad("This provider uses an API key, not device authorization")); }
     if app.login.read().await.as_ref().is_some_and(|v|v["status"]=="pending") {
         return Err(crate::conflict("Authorization already pending"));
     }
@@ -129,10 +130,62 @@ async fn connection_authorize(State(app): State<App>, Extension(identity): Exten
     crate::provider_start_for(app.clone(),reference,Some(id)).await
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApiKey { api_key: String }
+async fn connection_key(State(app): State<App>, Extension(identity): Extension<Value>, Path(id): Path<String>, Json(body): Json<ApiKey>) -> Api {
+    require_admin(&app, &identity).await?;
+    if body.api_key.len() < 8 || body.api_key.len() > 512 || !body.api_key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(crate::bad("Invalid API key: use 8–512 printable non-space characters"));
+    }
+    let _guard = app.gate.lock().await;
+    let mut catalog = app.store.model_catalog().await?;
+    let connection = catalog.connections.get_mut(&id).ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Connection not found".into()))?;
+    if connection.revoked { return Err(crate::conflict("Connection is revoked")); }
+    if connection.transport != crate::model_selection::Transport::Deepseek { return Err(crate::bad("This connection does not use a DeepSeek API key")); }
+    let reference = format!("provider_credential:{}", crate::uuid());
+    // Store the secret only in the encrypted credential plane. No key in catalog/events.
+    app.store.put(&reference, &json!({"api_key":body.api_key})).await?;
+    connection.credential_ref = reference;
+    app.store.save_model_catalog(&catalog, catalog.revision).await?;
+    Ok(Json(json!({"saved":true})))
+}
+
 /// Nest only under the authenticated browser API (including its CSRF middleware).
 pub fn router() -> Router<App> {
     Router::new().route("/catalog", get(read).put(save))
         .route("/agents", get(agents).post(create_agent))
         .route("/connections/{id}", get(connection_status))
+        .route("/connections/{id}/api-key", axum::routing::put(connection_key))
         .route("/connections/{id}/authorization", axum::routing::post(connection_authorize))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_tests::{fixture, selection_fixture};
+    #[tokio::test]
+    async fn deepseek_keys_are_validated_encrypted_scoped_and_not_returned() {
+        let (_root, app) = fixture().await;
+        app.store.create_admin_account("deepseek-test-admin", "fixture-only", "deepseek-generation").await.unwrap();
+        let mut catalog = selection_fixture(&app).await;
+        catalog.connections.get_mut("one").unwrap().transport = crate::model_selection::Transport::Deepseek;
+        app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+        let identity=json!({"_user_id":"admin"});
+        let result=connection_key(State(app.clone()),Extension(identity.clone()),Path("one".into()),Json(ApiKey{api_key:"bad key".into()})).await;
+        assert!(result.is_err());
+        assert!(connection_key(State(app.clone()),Extension(identity.clone()),Path("two".into()),Json(ApiKey{api_key:"test-key-no-network".into()})).await.is_err());
+        assert!(connection_authorize(State(app.clone()),Extension(identity.clone()),Path("one".into())).await.is_err());
+        let Json(result)=connection_key(State(app.clone()),Extension(identity.clone()),Path("one".into()),Json(ApiKey{api_key:"test-key-no-network".into()})).await.unwrap();
+        assert_eq!(result,json!({"saved":true}));
+        let catalog=app.store.model_catalog().await.unwrap();
+        let reference=&catalog.connections["one"].credential_ref;
+        assert_eq!(app.store.get(reference).await.unwrap().unwrap()["api_key"],"test-key-no-network");
+        let Json(status)=connection_status(State(app.clone()),Extension(identity.clone()),Path("one".into())).await.unwrap();
+        assert_eq!(status["connected"],true);assert!(!status.to_string().contains("test-key"));
+        assert!(!serde_json::to_string(&catalog).unwrap().contains("test-key"));
+        let mut catalog=catalog;catalog.connections.get_mut("one").unwrap().revoked=true;
+        app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+        assert!(connection_key(State(app.clone()),Extension(identity),Path("one".into()),Json(ApiKey{api_key:"test-key-no-network".into()})).await.is_err());
+    }
 }

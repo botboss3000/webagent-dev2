@@ -145,7 +145,14 @@ impl crate::store::Store {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Transport { OpenaiSubscription }
+pub enum Transport { OpenaiSubscription, Deepseek }
+
+impl Transport {
+    pub fn provider_id(&self) -> crate::provider::ProviderId {
+        match self { Self::OpenaiSubscription => crate::provider::ProviderId::OpenaiSubscription,
+            Self::Deepseek => crate::provider::ProviderId::Deepseek }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-async fn fixture() -> (TempDir, App) {
+pub(crate) async fn fixture() -> (TempDir, App) {
     let root = tempfile::tempdir().unwrap();
     let control_dir = root.path().join("control");
     std::fs::create_dir(&control_dir).unwrap();
@@ -59,6 +59,13 @@ async fn fixture() -> (TempDir, App) {
         secure: false,
     };
     (root, app)
+}
+
+fn checkpoint_pre_tool(name: &str) -> workflow::Input {
+    workflow::Input::PreTool(workflow::PreToolInput {
+        name:name.into(), arguments_digest:"fixture-digest".into(),
+        policy_version:1, mode_revision:0, visibility_revision:0, ability_state_revision:0,
+    })
 }
 
 #[tokio::test]
@@ -1008,19 +1015,23 @@ async fn changed_policy_invalidates_pending_action_approval() {
 
 #[tokio::test]
 async fn recovery_holds_uncertain_writes_and_requeues_safe_reads() {
-    let (_root, app) = fixture().await;
+    let (root, app) = fixture().await;
     let sid = conversation(&app).await;
     let id = queued(&app, &sid).await;
     running(&app, &id, "first").await;
     let mut run = app.run(&id).await.unwrap();
     run["phase"] = json!("tools");
     run["pending"] = json!({"name":"shell","state":"executing"});
+    workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
+        &checkpoint_pre_tool("shell"), workflow::Decision::Pass).unwrap();
+    let receipt = run["workflow"]["receipts"]["pre_tool"].clone();
     app.save(&mut run).await.unwrap();
     recover(&app, true).await.unwrap();
     let run = app.run(&id).await.unwrap();
     assert_eq!(run["status"], "recovery");
     assert_eq!(run["uncertain"], true);
     assert_eq!(run["pending"]["state"], "executing");
+    assert_eq!(run["workflow"]["receipts"]["pre_tool"], receipt);
     let sid2 = conversation(&app).await;
     let id2 = queued(&app, &sid2).await;
     running(&app, &id2, "second").await;
@@ -1032,6 +1043,9 @@ async fn recovery_holds_uncertain_writes_and_requeues_safe_reads() {
     assert_eq!(read["status"], "queued");
     assert_eq!(read["pending"]["state"], "requested");
     assert_eq!(app.run(&id).await.unwrap()["status"], "recovery");
+    let reopened = Store::open(root.path()).await.unwrap();
+    let durable = reopened.get(&key("run", &id)).await.unwrap().unwrap();
+    assert_eq!(durable["workflow"]["receipts"]["pre_tool"], receipt);
 }
 
 #[tokio::test]
@@ -1198,6 +1212,49 @@ async fn agent_loop_creates_reviewable_proposal_without_dispatching_broker() {
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "promotion_propose"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn reasoning_only_completion_continues_to_one_final_publication() {
+    use axum::routing::post;
+    let (_root, mut app) = fixture().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let mock = Router::new().route("/responses", post(
+        |State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+            let mut requests = requests.lock().await;
+            requests.push(body);
+            let output = if requests.len() == 1 {
+                json!([{"type":"reasoning","encrypted_content":"opaque"}])
+            } else {
+                json!([{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Continued reply."}]}])
+            };
+            let event = json!({"type":"response.completed",
+                "response":{"status":"completed","output":output}});
+            ([("content-type","text/event-stream")], format!("data: {event}\n\n"))
+        }
+    )).with_state(captured);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap(); });
+    app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid = conversation(&app).await;
+    let id = queued(&app, &sid).await;
+    running(&app, &id, "reasoning").await;
+    execute_run(app.clone(), id.clone(), "reasoning".into(), CancellationToken::new())
+        .await.unwrap();
+    let run = app.run(&id).await.unwrap();
+    assert_eq!(run["status"], "completed");
+    assert_eq!(run["reasoning_only_completions"], 1);
+    assert_eq!(run["workflow"]["receipts"]["publication"]["result"]["decision"], "pass");
+    let (messages, _) = app.store.chat_snapshot(&sid).await.unwrap();
+    assert_eq!(messages.iter().filter(|item| item["role"] == "assistant").count(), 1);
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1]["input"].as_array().unwrap().iter()
+        .any(|item| item["type"] == "reasoning" && item["encrypted_content"] == "opaque"));
     server.abort();
 }
 
@@ -3633,13 +3690,16 @@ fn tool_result_checkpoint_stays_private_and_binds_dispatch() {
     let policy=workflow::Policy::resolve(None).unwrap();
     let mut run=json!({"generation":"g1","turns":1,"call_index":0,"input":[],
         "pending":{"call_id":"c1"}});
-    workflow::record(&mut run,workflow::Checkpoint::PreTool,&policy,&json!({"name":"read"}),workflow::Decision::Pass).unwrap();
+    workflow::record(&mut run,&policy,&checkpoint_pre_tool("read"),workflow::Decision::Pass).unwrap();
     // Results must retain dispatch identity even if the caller's generation changes.
     run["generation"] = json!("g2");
     let result=json!({"status":"denied","output":"test"});
-    append_tool(&mut run,&result);
+    append_tool(&mut run,&result).unwrap();
     assert_eq!(run["workflow"]["receipts"]["tool_result"]["generation"],"g1");
-    assert_eq!(run["workflow"]["receipts"]["tool_result"]["input_digest"],digest(&result));
+    assert_eq!(run["workflow"]["receipts"]["tool_result"]["input_digest"],
+        workflow::digest_input(&workflow::Input::ToolResult(workflow::ToolResultInput {
+            status:"denied".into(), result_digest:digest(&result),
+        })).unwrap());
     assert_eq!(run["workflow"]["receipts"]["tool_result"]["policy_revision"],policy.revision().unwrap());
     assert_eq!(run["workflow"]["receipts"]["tool_result"]["result"]["decision"],"reject");
     assert_eq!(run["workflow"]["receipts"]["pre_tool"]["result"]["decision"],"pass");
@@ -3652,18 +3712,21 @@ fn successful_tool_result_records_pass_without_changing_dispatch_identity() {
     let policy = workflow::Policy::resolve(None).unwrap();
     let mut run = json!({"generation":"dispatch","turns":2,"call_index":3,
         "input":[],"pending":{"call_id":"success-call"}});
-    workflow::record(&mut run, workflow::Checkpoint::PreTool, &policy,
-        &json!({"name":"read"}), workflow::Decision::Pass).unwrap();
+    workflow::record(&mut run, &policy,
+        &checkpoint_pre_tool("read"), workflow::Decision::Pass).unwrap();
     let dispatch = run["workflow"]["receipts"]["pre_tool"].clone();
     run["generation"] = json!("later-generation");
     let result = json!({"status":"success","output":"fixture result"});
-    append_tool(&mut run, &result);
+    append_tool(&mut run, &result).unwrap();
     let receipt = &run["workflow"]["receipts"]["tool_result"];
     assert_eq!(receipt["result"]["decision"], "pass");
     for field in ["generation", "policy_revision", "turn", "call_index"] {
         assert_eq!(receipt[field], dispatch[field]);
     }
-    assert_eq!(receipt["input_digest"], digest(&result));
+    assert_eq!(receipt["input_digest"],
+        workflow::digest_input(&workflow::Input::ToolResult(workflow::ToolResultInput {
+            status:"success".into(), result_digest:digest(&result),
+        })).unwrap());
     assert_eq!(run["workflow"]["receipts"]["pre_tool"], dispatch);
     assert_eq!(run["call_index"], 4);
     assert!(run["pending"].is_null());
@@ -3673,7 +3736,7 @@ fn successful_tool_result_records_pass_without_changing_dispatch_identity() {
 }
 
 // MODEL-SELECTION: agent-bound admission and dispatch safety, isolated fixtures only.
-async fn selection_fixture(app: &App) -> model_selection::Catalog {
+pub(crate) async fn selection_fixture(app: &App) -> model_selection::Catalog {
     use model_selection::*;
     use std::collections::{BTreeMap, BTreeSet};
     sqlx::query("INSERT INTO agents SELECT 'agent-a','Agent A',description,provider,model,status,metadata,revision,created_at,updated_at FROM agents WHERE id='shared_default'")
@@ -3816,4 +3879,25 @@ async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries
         .bind(app.store.seal(&profile).unwrap()).execute(&app.store.app_pool).await.unwrap();
     let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",true,false,Value::Null)).await.unwrap();
     assert_eq!(response.status(),StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn deepseek_pins_transport_and_mixed_provider_backup() {
+    let (_root,app)=fixture().await;
+    let mut catalog=selection_fixture(&app).await;
+    catalog.connections.get_mut("two").unwrap().transport=model_selection::Transport::Deepseek;
+    catalog.entries.get_mut("two").unwrap().upstream_model="deepseek-chat".into();
+    app.store.put("credential:two",&json!({"api_key":"test-key-no-network"})).await.unwrap();
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    let Json(session)=create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":"agent-a"}))).await.unwrap();
+    let (_,Json(accepted))=send(State(app.clone()),Path(session["id"].as_str().unwrap().into()),Json(json!({"client_message_id":uuid(),"text":"hello"}))).await.unwrap();
+    let mut run=app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(run["provider_selection"]["provider"],"deepseek");
+    let selection=provider::ProviderSelection::parse(&run["provider_selection"],"unused").unwrap();
+    assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["api_key"],"test-key-no-network");
+    let wrong=provider::ProviderSelection{provider:provider::ProviderId::OpenaiSubscription,model:"deepseek-chat".into()};
+    assert!(app.tokens_for(&wrong,&run).await.is_err());
+    model_failure(&mut run,&provider::typed_failure(model_selection::FailureKind::ModelUnavailable,false,"unavailable")).unwrap();
+    assert_eq!(run["provider_selection"]["provider"],"openai_subscription");
+    assert_eq!(run["provider_selection"]["model"],"model-one");
 }

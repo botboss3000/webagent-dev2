@@ -1,0 +1,19 @@
+{
+  "display_name": "Terminal Control",
+  "kind": "ability",
+  "icon": "terminal",
+  "color": "#f7768e",
+  "description": "Lets the agent open and drive interactive terminal programs (REPLs, CLIs) — effectively shell access, so grant per agent with care.",
+  "skill_summary": "How to drive interactive, keystroke-driven terminal programs (coding agents, REPLs, SSH, TUI installers) with the open→read→send→wait→read loop. Load when you must operate a program that takes over the terminal; for one-shot non-interactive commands use run_command instead.",
+  "migration_note": "Catalog and skill imported from v2. Its host tools are not available in the isolated v3 worker yet.",
+  "order": 4,
+  "placeholder": false,
+  "tools": [
+    "terminal_open",
+    "terminal_read",
+    "terminal_send",
+    "terminal_wait",
+    "terminal_list",
+    "terminal_close"
+  ]
+}

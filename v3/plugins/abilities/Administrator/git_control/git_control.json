@@ -1,0 +1,16 @@
+{
+  "display_name": "Git Control",
+  "kind": "ability",
+  "icon": "git-branch",
+  "color": "#9ece6a",
+  "description": "Version control only — status, diff, commit, push, branch, pull — without shell access. On by default.",
+  "skill_summary": null,
+  "migration_note": "Catalog and skill imported from v2. Its host tools are not available in the isolated v3 worker yet.",
+  "order": 3,
+  "placeholder": false,
+  "tools": [
+    "git_tool",
+    "resolve_conflict",
+    "commit_and_push"
+  ]
+}

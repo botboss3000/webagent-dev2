@@ -1,0 +1,29 @@
+      <section aria-labelledby="account-title">
+        <div class="account-tab-wrap">
+          <header class="account-header"><div class="account-header-id"><h1 id="account-title" class="account-header-name">Manage account</h1><span id="account-identity" class="account-header-email"></span></div></header>
+          <form id="account-profile-form" class="account-section">
+            <h2 class="account-section-title">Profile</h2>
+            <div class="account-field"><label for="account-login-name">Username</label><input id="account-login-name" autocomplete="username" maxlength="128" required></div>
+            <div class="account-field"><label for="account-display-name">Display name</label><input id="account-display-name" autocomplete="name" maxlength="128" required></div>
+            <div class="account-row"><button class="account-btn account-btn-primary">Save changes</button><span id="account-profile-status" class="account-status" role="status"></span></div>
+          </form>
+          <form id="account-password-form" class="account-section">
+            <h2 class="account-section-title">Password</h2>
+            <div class="account-field"><label for="account-current-password">Current password</label><input id="account-current-password" type="password" autocomplete="current-password" required></div>
+            <div class="account-field"><label for="account-new-password">New password</label><input id="account-new-password" type="password" autocomplete="new-password" minlength="6" required></div>
+            <div class="account-field"><label for="account-confirm-password">Confirm new password</label><input id="account-confirm-password" type="password" autocomplete="new-password" minlength="6" required></div>
+            <div class="account-row"><button class="account-btn account-btn-primary">Change password</button><span id="account-password-status" class="account-status" role="status">Changing your password signs out all sessions.</span></div>
+          </form>
+          <form id="account-session-policy-form" class="account-section">
+            <h2 class="account-section-title">Sign-in duration</h2>
+            <div class="account-field"><label for="account-session-days">Keep new sign-ins active for</label><select id="account-session-days"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></div>
+            <div class="account-row"><button class="account-btn account-btn-primary">Save duration</button><span id="account-session-policy-status" class="account-status" role="status">Applies to new sign-ins.</span></div>
+          </form>
+          <section class="account-section">
+            <h2 class="account-section-title">Signed-in browsers</h2>
+            <p class="account-session-help">Revoke a sign-in to stop its access. Browser details come from the sign-in request.</p>
+            <div id="account-sessions" aria-live="polite"></div>
+            <div class="account-row"><button id="account-sessions-refresh" type="button" class="account-btn">Refresh</button><span id="account-sessions-status" class="account-status" role="status"></span></div>
+          </section>
+        </div>
+      </section>

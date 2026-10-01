@@ -1,0 +1,1 @@
+Replace one exact `old_text` span in an existing workspace file. Use `expected_sha256` when available to reject stale edits. If the span does not match exactly once, reread the file instead of guessing.

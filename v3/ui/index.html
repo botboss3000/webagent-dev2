@@ -11,11 +11,20 @@
 <link rel="stylesheet" href="/ui/shared/css/app3.css">
 <link rel="stylesheet" href="/ui/shared/css/design-system.css">
 <link rel="stylesheet" href="/ui/shared/css/index.css">
-<link rel="stylesheet" href="/ui/main-panel/agents/agents.css">
-<link rel="stylesheet" href="/v3-ui/app.css">
-<script type="module" src="/v3-ui/app.js"></script>
+<link rel="stylesheet" href="/v3-ui/app.css?v=chat-partial-20260930">
+<link rel="stylesheet" href="/v3-ui/chat/chat.css?v=chat-overlay-20260930">
+<script src="/ui/vendor/lucide/lucide.min.js"></script>
+<script type="module" src="/v3-ui/app.js?v=chat-overlay-20260930"></script>
 </head>
 <body>
+<div id="ptr-indicator" hidden aria-live="polite" aria-label="Pull to refresh">
+  <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
+    <path d="M24,7 A17,17 0 1,1 10.3,15.3 L15.5,10.5" fill="none" stroke="var(--fg-faint, #4a516e)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.06"/>
+    <path id="ptr-blue" d="M24,7 A17,17 0 1,1 10.3,15.3 L15.5,10.5" fill="none" stroke="#46d4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="98" stroke-dashoffset="98"/>
+    <path id="ptr-red" d="M24,7 A17,17 0 1,1 10.3,15.3 L15.5,10.5" fill="none" stroke="#ff5f56" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="98" stroke-dashoffset="98" style="display:none"/>
+  </svg>
+  <span class="ptr-label-hint" id="ptr-hint"></span>
+</div>
 <div id="notice" role="status" aria-live="polite"></div>
 <section id="login" hidden><div class="setup-box">
   <div class="lock-icon">🔐</div><h1>Sign in</h1><p class="sub">Sign in to WebAgent.</p>
@@ -27,40 +36,39 @@
 </div></section>
 <div id="app" hidden>
   <div id="main-header">
-    <select id="main-tab-select" hidden aria-hidden="true"><option value="agents">Agents</option></select>
+    <select id="main-tab-select" hidden aria-hidden="true"></select>
+    <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="Open navigation" aria-controls="mobile-nav-menu" aria-expanded="false" hidden><span aria-hidden="true">☰</span></button>
+    <button id="mobile-back-main-btn" class="mobile-back-main-btn" type="button" hidden>Agents</button>
     <div id="main-tabs-wrap"><div id="main-tabs" role="tablist">
-      <button class="main-tab active" id="tab-button-agents" type="button" role="tab" aria-selected="true">Agents</button>
+      <div class="user-dropdown">
+        <button id="top-user-id" class="user-dropdown-trigger" type="button" title="Manage account" aria-label="Manage account" aria-expanded="false" aria-controls="user-dropdown-menu">
+          <span id="top-user-avatar-slot"><svg class="user-avatar-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 4-7 8-7s8 3 8 7"></path></svg></span>
+        </button>
+      </div>
     </div></div>
-    <div class="v3-header-actions">
+    <span id="status-right" class="chat-header-controls">
+      <button id="chat-toggle-btn" class="chat-toggle-btn active" type="button" title="Toggle chat panel" aria-label="Toggle chat panel" aria-controls="chat-panel" aria-expanded="true"><span>Chat</span></button>
+    </span>
+    <aside id="mobile-nav-menu" class="mobile-nav-menu" aria-label="App navigation" hidden>
+      <nav id="mobile-nav-items" class="mobile-nav-items">
+      </nav>
+      <footer id="mobile-nav-footer" class="mobile-nav-footer">
+        <button id="mobile-nav-signout" class="mobile-nav-item" type="button">Sign out</button>
+      </footer>
+    </aside>
+    <div id="user-dropdown-menu" class="user-dropdown-menu" hidden>
+      <div class="user-dropdown-current-row"><div class="user-dropdown-current-info"><strong id="account-name" class="user-dropdown-current-name"></strong><span id="account-username" class="user-dropdown-current-email"></span></div></div>
+      <div class="user-dropdown-divider"></div>
+      <button id="manage-account" type="button">Manage account</button>
       <button id="theme" type="button" title="Switch theme">Light / dark</button>
       <button id="shutoff" type="button">Shut off execution</button>
       <button id="logout" type="button">Sign out</button>
     </div>
   </div>
   <div id="stage">
-    <div id="main-panel">
-      <div id="tab-agents" class="tab-content active">
-        <div id="agents-grid" class="agents-phantom"></div>
-      </div>
-    </div>
+    <div id="main-panel"></div>
     <div id="chat-resize-handle" aria-hidden="true"></div>
-    <div id="chat-panel" class="chat-surface">
-      <div id="chat-header">
-        <span class="chat-header-name-row"><span id="chat-header-agent-name" class="chat-header-agent-name">WebAgent</span></span>
-        <div class="session-dropdown"><label for="sessions" class="sr-only">Conversation</label><select id="sessions" class="session-dropdown-trigger"></select></div>
-        <button id="new" class="session-new-header-btn" type="button" title="New session" aria-label="New session">+</button>
-      </div>
-      <div id="chat-messages"><div id="chat-messages-inner"></div></div>
-      <div id="runs" aria-live="polite"></div>
-      <form id="composer"><div id="chat-input-area">
-        <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
-          <div class="chat-pill-layout-rows">
-            <div class="chat-pill-layout-row" data-pill-row="0"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" spellcheck="true"></textarea></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div></div>
-            <div class="chat-pill-layout-row" data-pill-row="1"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><span id="run-status">Ready</span></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"><div class="chat-pill-buttons"><button id="stop" class="chat-pill-stop" type="button" hidden title="Stop generation" aria-label="Stop generation">■</button><button id="send" class="chat-pill-send" title="Send message" aria-label="Send message">↑</button></div></div></div>
-          </div>
-        </div>
-      </div></form>
-    </div>
+    <div id="chat-panel" class="chat-surface"></div>
   </div>
 </div>
 </body></html>

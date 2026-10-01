@@ -1,0 +1,18 @@
+{
+  "display_name": "Code Index",
+  "kind": "ability",
+  "icon": "scan-search",
+  "color": "#7aa2f7",
+  "description": "Build a source-derived, line-complete index of all maintainable UI source. It records line ownership, AST symbols, UI edges, and source hashes in data/db/code_index.db.",
+  "skill_summary": "Use for a complete, source-derived map of current UI source. Check coverage and staleness, then trace functions, lines, selectors, events, endpoints, imports, or assets through the indexed graph. Every approved UI source line is recorded; parser uncertainty is explicit rather than silently omitted.",
+  "migration_note": "Catalog and skill imported from v2. Its host tools are not available in the isolated v3 worker yet.",
+  "order": 4,
+  "placeholder": false,
+  "tools": [
+    "code_index_scan",
+    "code_index_lookup",
+    "code_index_coverage",
+    "code_index_trace",
+    "code_index_progress"
+  ]
+}

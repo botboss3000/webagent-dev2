@@ -10,6 +10,55 @@ const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
+const MAX_INSTRUCTIONS: usize = 96 * 1024;
+pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When a task needs workspace access, use list_abilities to find a suitable ability and load_ability to make its tools available.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderId {
+    OpenaiSubscription,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderSelection {
+    pub provider: ProviderId,
+    pub model: String,
+}
+
+impl ProviderSelection {
+    /// Model-only legacy settings select the original subscription adapter.
+    /// Explicit invalid provider values must never silently select a transport.
+    pub fn parse(value: &Value, default_model: &str) -> Result<Self> {
+        if !value.is_object() {
+            bail!("Invalid provider selection");
+        }
+        let provider = match value.get("provider") {
+            None => ProviderId::OpenaiSubscription,
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| anyhow!("Unsupported provider identifier"))?,
+        };
+        let model = match value.get("model") {
+            None => default_model,
+            Some(value) => value.as_str().ok_or_else(|| anyhow!("Invalid model"))?,
+        };
+        if model.is_empty()
+            || model.len() > 128
+            || !model
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-._".contains(c))
+        {
+            bail!("Invalid model");
+        }
+        Ok(Self {
+            provider,
+            model: model.to_owned(),
+        })
+    }
+
+    pub fn value(&self) -> Value {
+        serde_json::to_value(self).expect("Provider selection serialization")
+    }
+}
 
 #[derive(Clone)]
 pub struct Provider {
@@ -31,6 +80,66 @@ fn required<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("Provider authorization missing required field"))
+}
+
+// Only fixed diagnostic labels leave the transport: provider bodies can echo
+// credentials, account identifiers, or user input. Never persist their text.
+fn failure_detail(value: &Value) -> &'static str {
+    let error = value.get("error")
+        .or_else(|| value.get("response").and_then(|r| r.get("error")))
+        .unwrap_or(value);
+    let code = error["code"].as_str().unwrap_or("");
+    let message = error["message"].as_str().unwrap_or("").to_ascii_lowercase();
+    if code == "model_not_found"
+        || (message.contains("model") && (message.contains("not supported")
+            || message.contains("unsupported") || message.contains("does not exist")
+            || message.contains("not available"))) {
+        "Selected model is unavailable or unsupported for this account"
+    } else if matches!(code, "invalid_api_key" | "token_expired" | "invalid_token")
+        || message.contains("token expired") || message.contains("token has expired") {
+        "Provider authorization is invalid or expired; reconnect ChatGPT"
+    } else if code == "rate_limit_exceeded" || message.contains("rate limit") {
+        "Provider rate limit exceeded"
+    } else if code == "insufficient_quota" || message.contains("usage limit") {
+        "Provider usage limit exceeded"
+    } else if code == "context_length_exceeded" || message.contains("context length") {
+        "Provider context limit exceeded"
+    } else if code == "invalid_request_error" || message.contains("unsupported parameter") {
+        "Provider rejected the request format or parameters"
+    } else if code == "server_error" {
+        "Provider internal error"
+    } else if value["response"]["incomplete_details"]["reason"] == "max_output_tokens" {
+        "Provider output limit reached"
+    } else {
+        "Provider rejected or did not complete the request (details withheld)"
+    }
+}
+
+async fn response_failure(response: reqwest::Response, cancel: &CancellationToken) -> String {
+    let status = response.status().as_u16();
+    // Bound time and bytes even when an error endpoint sends an endless body.
+    let mut stream = response.bytes_stream();
+    let read = async {
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.ok()?;
+            if body.len() + chunk.len() > 16 * 1024 { return None; }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice::<Value>(&body).ok()
+    };
+    let value = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return "Provider request cancelled".to_owned(),
+        result = tokio::time::timeout(Duration::from_secs(5), read) => result.ok().flatten(),
+    };
+    let detail = match status {
+        401 => "Provider authorization is invalid or expired; reconnect ChatGPT",
+        403 => "Provider denied access to this account or model",
+        429 => "Provider rate or usage limit exceeded",
+        _ => value.as_ref().map(failure_detail).unwrap_or("Provider rejected the request (details withheld)"),
+    };
+    format!("Provider HTTP {status}: {detail}")
 }
 
 async fn checked_json(response: reqwest::Response) -> Result<Value> {
@@ -109,9 +218,15 @@ fn decorate(mut tokens: Value) -> Result<Value> {
     Ok(tokens)
 }
 
-fn request_body(model: &str, input: Vec<Value>, tools: Vec<Value>, session: &str) -> Value {
+fn request_body(
+    model: &str,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+    session: &str,
+    instructions: &str,
+) -> Value {
     let mut body = json!({
-        "model": model, "input": input, "instructions": "You are WebAgent, a helpful assistant. Use only the tools made available to you.",
+        "model": model, "input": input, "instructions": instructions,
         "stream": true, "store": false, "include": ["reasoning.encrypted_content"],
         "prompt_cache_key": session, "parallel_tool_calls": false
     });
@@ -283,6 +398,58 @@ impl Provider {
         decorate(merged)
     }
 
+    /// Typed dispatch boundary; every supported transport must be explicit here.
+    pub async fn complete_selected(
+        &self,
+        selection: &ProviderSelection,
+        tokens: &Value,
+        input: Vec<Value>,
+        tools: Vec<Value>,
+        session: &str,
+        delta: mpsc::Sender<String>,
+        cancel: CancellationToken,
+    ) -> Result<Value> {
+        self.complete_selected_with_instructions(
+            selection,
+            tokens,
+            input,
+            tools,
+            session,
+            DEFAULT_INSTRUCTIONS,
+            delta,
+            cancel,
+        )
+        .await
+    }
+
+    pub async fn complete_selected_with_instructions(
+        &self,
+        selection: &ProviderSelection,
+        tokens: &Value,
+        input: Vec<Value>,
+        tools: Vec<Value>,
+        session: &str,
+        instructions: &str,
+        delta: mpsc::Sender<String>,
+        cancel: CancellationToken,
+    ) -> Result<Value> {
+        match selection.provider {
+            ProviderId::OpenaiSubscription => {
+                self.complete_with_instructions(
+                    tokens,
+                    &selection.model,
+                    input,
+                    tools,
+                    session,
+                    instructions,
+                    delta,
+                    cancel,
+                )
+                .await
+            }
+        }
+    }
+
     pub async fn complete(
         &self,
         tokens: &Value,
@@ -293,6 +460,33 @@ impl Provider {
         delta: mpsc::Sender<String>,
         cancel: CancellationToken,
     ) -> Result<Value> {
+        self.complete_with_instructions(
+            tokens,
+            model,
+            input,
+            tools,
+            session,
+            DEFAULT_INSTRUCTIONS,
+            delta,
+            cancel,
+        )
+        .await
+    }
+
+    async fn complete_with_instructions(
+        &self,
+        tokens: &Value,
+        model: &str,
+        input: Vec<Value>,
+        tools: Vec<Value>,
+        session: &str,
+        instructions: &str,
+        delta: mpsc::Sender<String>,
+        cancel: CancellationToken,
+    ) -> Result<Value> {
+        if instructions.is_empty() || instructions.len() > MAX_INSTRUCTIONS {
+            bail!("Invalid provider instructions");
+        }
         if cancel.is_cancelled() {
             bail!("Provider request cancelled");
         }
@@ -303,7 +497,7 @@ impl Provider {
             .header("originator", "webagent")
             .header("session-id", session)
             .header("Accept", "text/event-stream")
-            .json(&request_body(model, input, tools, session));
+            .json(&request_body(model, input, tools, session, instructions));
         for (key, header) in [
             ("account_id", "ChatGPT-Account-Id"),
             ("residency", "x-openai-internal-codex-residency"),
@@ -320,7 +514,7 @@ impl Provider {
                     .map_err(|_| anyhow!("Provider connection failed"))?
         };
         if !response.status().is_success() {
-            bail!("Provider HTTP {}", response.status().as_u16());
+            bail!("{}", response_failure(response, &cancel).await);
         }
         let mut stream = response.bytes_stream();
         let mut frames = Frames::default();
@@ -354,7 +548,7 @@ impl Provider {
                         return Ok(response);
                     }
                     "response.failed" | "response.incomplete" | "error" => {
-                        bail!("Provider did not complete response")
+                        bail!("Provider did not complete response: {}", failure_detail(&event))
                     }
                     _ => {}
                 }
@@ -366,6 +560,39 @@ impl Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provider_failures_use_fixed_labels_without_echoing_secrets() {
+        assert_eq!(failure_detail(&json!({"error":{"code":"model_not_found","message":"secret account model"}})),
+            "Selected model is unavailable or unsupported for this account");
+        assert_eq!(failure_detail(&json!({"response":{"error":{"code":"rate_limit_exceeded"}}})),
+            "Provider rate limit exceeded");
+        let label = failure_detail(&json!({"error":{"message":"Bearer secret-token user@example.com"}}));
+        assert!(!label.contains("secret-token"));
+        assert!(!label.contains("user@example.com"));
+        assert_eq!(failure_detail(&json!({"response":{"incomplete_details":{"reason":"max_output_tokens"}}})),
+            "Provider output limit reached");
+    }
+
+    #[tokio::test]
+    async fn http_failure_reports_status_and_safe_category() {
+        use axum::{http::StatusCode, routing::post, Json, Router};
+        let app = Router::new().route("/responses", post(|| async {
+            (StatusCode::BAD_REQUEST, Json(json!({"error":{"code":"model_not_found","message":"private-token"}})))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let provider = Provider::for_test(format!("http://{address}/responses"));
+        let (sender, _receiver) = mpsc::channel(1);
+        let error = provider.complete(&json!({"access_token":"test-only"}), "fixture", vec![], vec![],
+            "session", sender, CancellationToken::new()).await.unwrap_err().to_string();
+        assert!(error.contains("HTTP 400"));
+        assert!(error.contains("model is unavailable"));
+        assert!(!error.contains("private-token"));
+        server.abort();
+    }
+
+
     #[test]
     fn split_unicode_and_crlf_preserve_events() {
         let bytes =
@@ -386,8 +613,11 @@ mod tests {
             vec![reasoning.clone()],
             vec![json!({"type":"function","name":"read"})],
             "session",
+            DEFAULT_INSTRUCTIONS,
         );
         assert_eq!(body["input"][0], reasoning);
+        assert_eq!(body["instructions"], DEFAULT_INSTRUCTIONS);
+        assert_eq!(body["prompt_cache_key"], "session");
         assert_eq!(body["store"], false);
         assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert!(body.get("previous_response_id").is_none());
@@ -427,13 +657,15 @@ mod tests {
         });
         let provider = Provider::for_test(format!("http://{address}/responses"));
         let (sender, _receiver) = mpsc::channel(1);
+        let selection = ProviderSelection::parse(&json!({"model":"fixture"}), "unused").unwrap();
         let output = provider
-            .complete(
+            .complete_selected_with_instructions(
+                &selection,
                 &json!({"access_token":"test-only","account_id":"account","residency":"eu"}),
-                "fixture",
                 vec![json!({"role":"user","content":"hello"})],
                 vec![],
                 "session",
+                "Pinned instructions for this run.",
                 sender,
                 CancellationToken::new(),
             )
@@ -449,6 +681,8 @@ mod tests {
         assert_eq!(headers["chatgpt-account-id"], "account");
         assert_eq!(headers["x-openai-internal-codex-residency"], "eu");
         assert_eq!(body["store"], false);
+        assert_eq!(body["instructions"], "Pinned instructions for this run.");
+        assert_eq!(body["prompt_cache_key"], "session");
         assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert!(body.get("max_output_tokens").is_none());
         server.abort();
@@ -481,5 +715,29 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn legacy_selection_defaults_only_missing_provider() {
+        let selection =
+            ProviderSelection::parse(&json!({"model":"legacy-model"}), "default").unwrap();
+        assert_eq!(selection.provider, ProviderId::OpenaiSubscription);
+        assert_eq!(
+            selection.value(),
+            json!({"provider":"openai_subscription","model":"legacy-model"})
+        );
+        assert_eq!(
+            ProviderSelection::parse(&json!({}), "default")
+                .unwrap()
+                .model,
+            "default"
+        );
+        for provider in [json!("other"), json!(null), json!(7), json!("")] {
+            assert!(ProviderSelection::parse(
+                &json!({"provider":provider,"model":"valid"}),
+                "default"
+            )
+            .is_err());
+        }
     }
 }

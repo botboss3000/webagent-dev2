@@ -1,0 +1,1 @@
+Run Python with the session workspace as the working directory. Approval is required. Use it for bounded tasks and verification; the current worker does not isolate Python processes from sibling v3 workspaces.

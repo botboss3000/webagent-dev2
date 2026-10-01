@@ -1,0 +1,6 @@
+{
+  "id": "account",
+  "label": "Manage Account",
+  "order": 2,
+  "html": "account.html"
+}

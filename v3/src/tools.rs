@@ -8,18 +8,34 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 pub fn is_read(name: &str) -> bool {
-    matches!(name, "file_list" | "file_read" | "file_search")
+    matches!(
+        name,
+        "file_list"
+            | "file_read"
+            | "file_search"
+            | "source_review"
+            | "state_inspect"
+            | "prompt_slot_read"
+    )
 }
 
 pub fn schemas() -> Vec<Value> {
     static SCHEMAS: OnceLock<Vec<Value>> = OnceLock::new();
     SCHEMAS.get_or_init(|| [
         ("file_list", "List files in the session workspace", json!({"path":{"type":"string"}}), vec![]),
-        ("file_read", "Read a workspace file", json!({"path":{"type":"string"}}), vec!["path"]),
-        ("file_search", "Search workspace file content", json!({"path":{"type":"string"},"query":{"type":"string"}}), vec!["query"]),
+        ("file_read", "Read a bounded page of workspace file lines", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1,"maximum":10000000},"limit":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
+        ("file_search", "Search workspace files by literal or regex query; outline comments in one file", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"file_glob":{"type":"string"},"comments_only":{"type":"boolean"}}), vec![]),
         ("file_write", "Write a workspace file; requires approval", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path","content"]),
-        ("shell", "Execute a shell command in the workspace; requires approval", json!({"command":{"type":"string"}}), vec!["command"]),
-        ("python", "Execute Python in the workspace; requires approval", json!({"code":{"type":"string"}}), vec!["code"]),
+        ("file_edit", "Replace exactly one matching span in an existing workspace file; requires approval", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string"}}), vec!["path","old_text","new_text"]),
+        ("workspace_seed", "Copy the audited WebAgent v3 source snapshot into this session workspace and create a Git baseline; requires approval", json!({}), vec![]),
+        ("source_review", "Review tracked and new changes in the seeded v3 source without modifying its Git index", json!({}), vec![]),
+        ("prompt_slot_read", "List or read the current agent's ordered instruction slots", json!({"action":{"type":"string","enum":["list","get"]},"slot_name":{"type":"string"}}), vec!["action"]),
+        ("prompt_slot_write", "Create, update or delete a current-agent instruction slot; requires approval", json!({"action":{"type":"string","enum":["put","delete"]},"slot_name":{"type":"string"},"content":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"order_index":{"type":"integer"},"lock":{"type":"boolean"},"merge_mode":{"type":"string","enum":["replace","append"]}}), vec!["action","slot_name","expected_revision"]),
+        ("state_inspect", "Read bounded public metadata for the current session; catalog, session, chat, or runs", json!({"resource":{"type":"string","enum":["catalog","session","chat","runs"]},"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}), vec!["resource"]),
+        ("source_patch", "Apply a checked text patch to the seeded v3 source; requires approval", json!({"patch":{"type":"string"},"expected_review_sha256":{"type":"string"}}), vec!["patch","expected_review_sha256"]),
+        ("promotion_propose", "Submit the current reviewed v3 source patch for administrator approval; does not change live source", json!({"expected_review_sha256":{"type":"string"},"summary":{"type":"string"}}), vec!["expected_review_sha256","summary"]),
+        ("shell", "Execute a shell command in the workspace; requires approval", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["command"]),
+        ("python", "Execute Python in the workspace; requires approval", json!({"code":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["code"]),
     ].into_iter().map(|(name, description, properties, required)| json!({
         "type":"function", "name":name, "description":description,
         "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}
@@ -30,11 +46,21 @@ pub async fn execute(
     name: &str,
     args: &Value,
     session: &str,
+    socket: &std::path::Path,
     cancel: CancellationToken,
 ) -> Result<Value> {
     if !matches!(
         name,
-        "file_list" | "file_read" | "file_search" | "file_write" | "shell" | "python"
+        "file_list"
+            | "file_read"
+            | "file_search"
+            | "file_write"
+            | "file_edit"
+            | "workspace_seed"
+            | "source_review"
+            | "source_patch"
+            | "shell"
+            | "python"
     ) {
         bail!("unknown tool");
     }
@@ -42,13 +68,16 @@ pub async fn execute(
     if cancel.is_cancelled() {
         bail!("tool execution cancelled");
     }
-    let socket =
-        std::env::var("V3_TOOL_SOCKET").unwrap_or_else(|_| "/run/v3/worker/tools.sock".into());
     let mut stream = UnixStream::connect(socket)
         .await
         .context("tool worker unavailable")?;
-    let request = json!({"id":uuid::Uuid::new_v4().to_string(),"name":name,
-        "arguments":args,"workspace":session,"timeout_seconds":120});
+    let timeout = args["timeout_seconds"]
+        .as_u64()
+        .unwrap_or(120)
+        .clamp(1, 600);
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let request = json!({"id":request_id,"name":name,
+        "arguments":args,"workspace":session,"timeout_seconds":timeout});
     let mut encoded = serde_json::to_vec(&request)?;
     if encoded.len() > 1024 * 1024 {
         bail!("tool input exceeds limit");
@@ -62,7 +91,11 @@ pub async fn execute(
             let mut response = String::new();
             reader.read_line(&mut response).await?;
             if response.is_empty() { bail!("tool worker disconnected"); }
-            Ok(serde_json::from_str::<Value>(&response)?)
+            let value = serde_json::from_str::<Value>(&response)?;
+            if value["id"].as_str() != Some(request_id.as_str()) {
+                bail!("tool response identifier mismatch");
+            }
+            Ok(value)
         } => result
     }
 }

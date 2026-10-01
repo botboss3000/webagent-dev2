@@ -1,0 +1,7 @@
+{
+  "id": "agents",
+  "label": "Agents",
+  "order": 1,
+  "html": "agents.html",
+  "css": ["agents.css"]
+}

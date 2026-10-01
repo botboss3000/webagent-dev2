@@ -1,0 +1,23 @@
+<!-- V3 baseline chat shell adapted from v2 ui/chat/chat-side-panel.html. -->
+<div id="chat-header">
+  <div class="chat-header-row v3-chat-agent-row">
+    <span class="chat-header-zone chat-header-zone-left"></span>
+    <span class="chat-header-zone chat-header-zone-center"><span class="chat-header-name-row"><span id="chat-header-agent-name" class="chat-header-agent-name">WebAgent</span></span></span>
+    <span class="chat-header-zone chat-header-zone-right"></span>
+  </div>
+  <div class="chat-header-row v3-chat-session-row">
+    <span class="chat-header-zone chat-header-zone-left"></span>
+    <span class="chat-header-zone chat-header-zone-center"><span class="session-dropdown"><label for="sessions" class="sr-only">Conversation</label><select id="sessions" class="session-dropdown-trigger"></select></span></span>
+    <span class="chat-header-zone chat-header-zone-right"><button id="new" class="session-new-header-btn" type="button" title="New session" aria-label="New session">+</button></span>
+  </div>
+</div>
+<div id="chat-messages"><div id="chat-messages-inner"></div></div>
+<form id="composer"><div id="chat-input-area">
+  <div id="chat-above-pill" class="chat-above-pill"><div id="runs" aria-live="polite"></div></div>
+  <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
+    <div class="chat-pill-layout-rows">
+      <div class="chat-pill-layout-row" data-pill-row="0"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" spellcheck="true"></textarea></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div></div>
+      <div class="chat-pill-layout-row" data-pill-row="1"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><span id="run-status">Ready</span></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"><div class="chat-pill-buttons"><button id="stop" class="chat-pill-stop" type="button" hidden title="Stop generation" aria-label="Stop generation">■</button><button id="send" class="chat-pill-send" title="Send message" aria-label="Send message">↑</button></div></div></div>
+    </div>
+  </div>
+</div></form>

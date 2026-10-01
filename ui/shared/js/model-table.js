@@ -2975,7 +2975,9 @@ export function mountModelTable(host, opts = {}) {
     // this roster links that connection rather than submitting a duplicate ID.
     const dupe = platformCatalog ? S.providers.find(row => String(row.entry_id) === String(S.selectedModel)) : null;
     if (dupe && !aliasTarget) return setModelStatus('This model is already in your roster');
-    if (dupe === aliasTarget) return setModelStatus('Choose a different connection for the backup');
+    // Backup self-link validation applies only while adding to an alias group;
+    // normal Add has neither a duplicate nor a target (both can be null).
+    if (aliasTarget && dupe === aliasTarget) return setModelStatus('Choose a different connection for the backup');
     if (!dupe) {
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
       // Persisted IDs are owned by the server. `_uid` is the only client-side row

@@ -1,0 +1,27 @@
+{
+  "display_name": "V3 Build",
+  "kind": "ability",
+  "icon": "hammer",
+  "color": "#7aa2f7",
+  "description": "Check v3 build prerequisites, run fixed Rust checks/tests/builds, and build its development image. Does not deploy or grant host access.",
+  "skill_summary": "Use to compile or test v3, inspect Rust/Docker prerequisites, or build the allowlisted development image.",
+  "simple": true,
+  "placeholder": false,
+  "order": 9,
+  "tools": [
+    "v3_build_status",
+    "v3_cargo_task",
+    "v3_build_image"
+  ],
+  "tool_metadata": {
+    "v3_build_status": {
+      "destructive": false
+    },
+    "v3_cargo_task": {
+      "destructive": true
+    },
+    "v3_build_image": {
+      "destructive": true
+    }
+  }
+}

@@ -1,0 +1,1 @@
+Run a command with the session workspace as the working directory. Approval is required. The image includes Rust 1.90 and build tools; commands may request `timeout_seconds` up to 600 for tests. Inspect the command's effects before running it; the current worker does not isolate shell processes from sibling v3 workspaces.

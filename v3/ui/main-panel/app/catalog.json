@@ -1,1 +1,35 @@
-{"pages":[{"id":"files","title":"File Manager","description":"Browse and edit application files. Independent V3 filesystem support is pending.","panelId":"app-files-page","order":10}]}
+{
+  "pages": [
+    {
+      "id": "files",
+      "title": "File Manager",
+      "description": "Browse and edit application files. Independent V3 filesystem support is pending.",
+      "panelId": "app-files-page",
+      "order": 10
+    },
+    {
+      "id": "users",
+      "title": "Users",
+      "description": "Manage registered and anonymous accounts.",
+      "panelId": "app-users-page",
+      "order": 20,
+      "admin": true
+    },
+    {
+      "id": "user-policies",
+      "title": "User Policies",
+      "description": "Global registration and entitlement policies.",
+      "panelId": "app-user-policies-page",
+      "order": 30,
+      "admin": true
+    },
+    {
+      "id": "page-access",
+      "title": "Page Access",
+      "description": "Choose which audiences may access app destinations.",
+      "panelId": "app-page-access-page",
+      "order": 40,
+      "admin": true
+    }
+  ]
+}

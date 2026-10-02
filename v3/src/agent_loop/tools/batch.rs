@@ -23,26 +23,6 @@ pub(super) fn mark_uncertain_writes(run:&mut Value) {
     }
 }
 
-async fn call(
-    app:App,sid:String,run_id:String,name:String,args:Value,pending_id:String,
-    policy_version:u64,cancel:CancellationToken,
-)->Result<Value> {
-    if name=="promotion_propose" {
-        propose_promotion(&app,&sid,&pending_id,&run_id,&args,policy_version,cancel).await
-    } else if matches!(name.as_str(),"prompt_slot_read"|"prompt_slot_write") {
-        execute_prompt_slot(&app,&name,&args).await
-    } else if name=="state_inspect" {
-        match serde_json::from_value::<InspectArgs>(args) {
-            Ok(query) if validate_inspect_args(&query).is_ok() =>
-                inspect_state(&app,&sid,&query).await
-                    .map(|output|json!({"status":"success","output":output})),
-            _=>Ok(denied("Invalid state inspection arguments")),
-        }
-    } else {
-        tools::execute(&name,&args,&sid,&app.tool_socket,cancel).await
-    }
-}
-
 // BATCH-DISPATCH: never serialize overflow calls. The config explicitly marks
 // each name concurrent or reject; omitted names reject only in a multi-call turn.
 pub(super) async fn execute_parallel_batch(
@@ -189,7 +169,7 @@ pub(super) async fn execute_parallel_batch(
             let task_app=app.clone();let task_sid=sid.clone();let task_run=id.to_owned();
             let task_cancel=cancel.clone();
             futures.push(async move {
-                let result=call(task_app,task_sid,task_run,name.clone(),args,
+                let result=tools::call(task_app,task_sid,task_run,name.clone(),args,
                     pending_id.clone(),policy_version,task_cancel).await;
                 (idx,name,pending_id,result)
             });

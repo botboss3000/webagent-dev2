@@ -1,20 +1,55 @@
 //! V2 registration policy adapted to independent encrypted v3 accounts.
 //! Approval is not an entitlement: neither public signup nor approval grants tools.
 use super::*;
+use sqlx::Row;
 
 // The app-owned file is authoritative; unknown fields survive registration edits.
 impl Store {
     pub(crate) fn access_policy_path(&self) -> std::path::PathBuf {
         self.root.join("config/access-policy.json")
     }
+    pub(crate) fn policy_lock(&self) -> Result<std::fs::File> {
+        use fs2::FileExt;
+        let directory=self.root.join("config");
+        std::fs::create_dir_all(&directory)?;
+        let lock=std::fs::OpenOptions::new().create(true).read(true).write(true).open(directory.join("access-policy.lock"))?;
+        lock.lock_exclusive()?;
+        Ok(lock)
+    }
     pub(crate) fn read_access_policy(&self) -> Result<Value> {
         let value: Value = serde_json::from_slice(&std::fs::read(self.access_policy_path())?)?;
         if !value.is_object() || !matches!(value["registration"].as_str(), Some("open"|"restricted")) {
             return Err(anyhow!("Invalid access-policy.json registration policy"));
         }
+        if value.get("revision").is_some_and(|v|v.as_u64().is_none_or(|n|n==0)) {return Err(anyhow!("Invalid policy revision"));}
+        if let Some(tiers)=value.get("tiers") {
+            let map=tiers.as_object().ok_or_else(||anyhow!("Invalid policy tiers"))?;
+            for (id,definition) in map {let tier:access::Tier=serde_json::from_value(definition.clone())?;tier.validate()?;if tier.id!=*id {return Err(anyhow!("Tier identity mismatch"));}}
+        }
+        if let Some(pages)=value.get("pages") {validate_pages(pages)?;}
         Ok(value)
     }
-    fn write_access_policy(&self, value: &Value) -> Result<()> {
+    pub(crate) fn save_page_policy(&self, pages:Value, expected:u64) -> Result<Value> {
+        validate_pages(&pages)?;
+        let _lock=self.policy_lock()?;
+        let mut policy=self.read_access_policy()?;
+        if policy["revision"].as_u64().unwrap_or(0)!=expected {return Err(anyhow!("Policy revision changed"));}
+        policy["pages"]=pages;
+        policy["revision"]=json!(expected.checked_add(1).ok_or_else(||anyhow!("Policy revision overflow"))?);
+        self.write_access_policy(&policy)?;
+        Ok(json!({"pages":policy["pages"],"revision":policy["revision"]}))
+    }
+    pub(crate) async fn init_policy_tiers(&self) -> Result<()> {
+        if self.read_access_policy()?.get("tiers").is_some() {return Ok(());}
+        let rows=sqlx::query("SELECT value FROM entitlement_tiers ORDER BY tier_id").fetch_all(&self.app_pool).await?;
+        let mut tiers=serde_json::Map::new();
+        for row in rows {let value=self.unseal(&row.get::<Vec<u8>,_>("value"))?;tiers.insert(value["id"].as_str().ok_or_else(||anyhow!("Invalid legacy tier"))?.to_owned(),value);}
+        let _lock=self.policy_lock()?;
+        let mut policy=self.read_access_policy()?;
+        if policy.get("tiers").is_none() {policy["tiers"]=Value::Object(tiers);policy["revision"]=json!(policy["revision"].as_u64().unwrap_or(0)+1);self.write_access_policy(&policy)?;}
+        Ok(())
+    }
+    pub(crate) fn write_access_policy(&self, value: &Value) -> Result<()> {
         use std::io::Write;
         let path=self.access_policy_path();
         let directory=path.parent().ok_or_else(||anyhow!("Invalid policy path"))?;
@@ -42,11 +77,19 @@ impl Store {
         }
         let legacy=self.get("auth:registration_policy").await?;
         let registration=if legacy.as_ref().and_then(|v|v["access_mode"].as_str())==Some("public_registered") {"open"} else {"restricted"};
-        self.write_access_policy(&json!({"registration":registration}))
+        let _lock=self.policy_lock()?;
+        if self.access_policy_path().exists() {self.read_access_policy()?;return Ok(());}
+        self.write_access_policy(&json!({"schema_version":1,"revision":1,"registration":registration}))
     }
     pub(crate) fn set_registration_policy(&self, registration: &str) -> Result<()> {
+        self.set_registration_policy_revision(registration,None)
+    }
+    pub(crate) fn set_registration_policy_revision(&self, registration: &str, expected:Option<u64>) -> Result<()> {
         if !matches!(registration,"open"|"restricted") {return Err(anyhow!("Invalid registration policy"));}
+        let _lock=self.policy_lock()?;
         let mut value=self.read_access_policy()?;
+        if expected.is_some_and(|revision|revision!=value["revision"].as_u64().unwrap_or(0)) {return Err(anyhow!("Policy revision changed"));}
+        value["revision"]=json!(value["revision"].as_u64().unwrap_or(0).checked_add(1).ok_or_else(||anyhow!("Policy revision overflow"))?);
         value["registration"]=json!(registration);
         self.write_access_policy(&value)
     }
@@ -58,7 +101,9 @@ pub(crate) async fn mode(app: &App) -> Result<String> {
     } else {"admin_approval"}.into())
 }
 pub(crate) async fn access_mode(State(app): State<App>) -> Api {
-    Ok(Json(json!({"access_mode":mode(&app).await?, "guest_access":mode(&app).await?=="public_registered"})))
+    let policy=app.store.read_access_policy()?;
+    let open=policy["registration"]=="open";
+    Ok(Json(json!({"access_mode":if open {"public_registered"} else {"admin_approval"}, "guest_access":open,"revision":policy["revision"].as_u64().unwrap_or(0)})))
 }
 pub(crate) async fn set_mode(State(app): State<App>,
     axum::Extension(identity): axum::Extension<Value>, Json(body): Json<Value>) -> Api {
@@ -68,7 +113,9 @@ pub(crate) async fn set_mode(State(app): State<App>,
         return Err(bad("Invalid access mode"));
     }
     let _guard=app.gate.lock().await;
-    app.store.set_registration_policy(if value=="public_registered" {"open"} else {"restricted"})?;
+    let expected=body["expected_revision"].as_u64().ok_or_else(||bad("Expected policy revision required"))?;
+    app.store.set_registration_policy_revision(if value=="public_registered" {"open"} else {"restricted"},Some(expected))
+        .map_err(|_|conflict("Policy save rejected; reload the current policy"))?;
     Ok(Json(json!({"access_mode":value,"guest_access":value=="public_registered"})))
 }
 pub(crate) async fn register(State(app): State<App>, headers: HeaderMap,
@@ -180,10 +227,11 @@ mod tests {
         let (_root,app)=crate::runtime_tests::fixture().await;
         assert_eq!(app.store.read_access_policy().unwrap()["registration"],"restricted");
         let path=app.store.access_policy_path();
-        std::fs::write(&path,br#"{"registration":"open","pages":{"future":"restricted"}}"#).unwrap();
+        // Extension preservation is separate from the now-validated page-policy schema.
+        std::fs::write(&path,br#"{"registration":"open","extension":{"future":"restricted"}}"#).unwrap();
         assert_eq!(mode(&app).await.unwrap(),"public_registered");
         app.store.set_registration_policy("restricted").unwrap();
-        assert_eq!(app.store.read_access_policy().unwrap()["pages"]["future"],"restricted");
+        assert_eq!(app.store.read_access_policy().unwrap()["extension"]["future"],"restricted");
         assert!(app.store.set_registration_policy("invalid").is_err());
         std::fs::write(&path,br#"{"registration":"invalid"}"#).unwrap();
         assert!(mode(&app).await.is_err());
@@ -248,5 +296,58 @@ mod tests {
         let account=app.store.account_by_username("second").await.unwrap().unwrap();
         assert_eq!(account["status"],"active");
         assert!(!app.store.live_access(account["user_id"].as_str().unwrap(),"shared_default").await.unwrap().admitted());
+    }
+}
+
+// Page audiences are a global ceiling; administrative APIs retain their role gate.
+pub(crate) fn validate_pages(pages:&Value)->Result<()> {
+    let scopes=pages.as_object().ok_or_else(||anyhow!("Invalid page policy"))?;
+    for (scope,entries) in scopes {
+        if !matches!(scope.as_str(),"main"|"app") {return Err(anyhow!("Invalid page scope"));}
+        let entries=entries.as_object().ok_or_else(||anyhow!("Invalid page entries"))?;
+        if entries.len()>128 {return Err(anyhow!("Too many page policies"));}
+        for (id,audience) in entries {
+            if !access::valid_agent_id(id) || !matches!(audience.as_str(),Some("everyone"|"registered"|"admin")) {return Err(anyhow!("Invalid page audience"));}
+        }
+    }
+    Ok(())
+}
+pub(crate) fn page_allowed(policy:&Value, scope:&str, id:&str, principal:&access::Principal)->bool {
+    if !principal.active() {return false;}
+    if principal.administrator() {return true;} // protected administration recovery
+    if scope=="app" && matches!(id,"users"|"user-policies"|"page-access") {return false;}
+    match policy["pages"][scope][id].as_str().unwrap_or("everyone") {
+        "everyone"=>true,"registered"=>principal.role!=access::Role::Guest,_=>false,
+    }
+}
+
+#[cfg(test)]
+mod advanced_policy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn policy_cas_and_file_tiers_preserve_extensions() {
+        let (_root,app)=crate::runtime_tests::fixture().await;
+        let before=app.store.read_access_policy().unwrap();
+        let revision=before["revision"].as_u64().unwrap();
+        app.store.set_registration_policy_revision("open",Some(revision)).unwrap();
+        assert!(app.store.set_registration_policy_revision("restricted",Some(revision)).is_err());
+        assert_eq!(app.store.entitlement_tier("basic").await.unwrap().unwrap().id,"basic");
+        let mut policy=app.store.read_access_policy().unwrap();policy["extension"]=json!({"future":true});app.store.write_access_policy(&policy).unwrap();
+        app.store.save_page_policy(json!({"main":{"chat":"admin"}}),policy["revision"].as_u64().unwrap()).unwrap();
+        let current=app.store.read_access_policy().unwrap();assert_eq!(current["extension"]["future"],true);
+        let user=app.store.create_user_account("fixture-user","long-hash-placeholder").await.unwrap();
+        app.store.update_account_access(user["user_id"].as_str().unwrap(),1,access::AccountStatus::Active,access::Role::User,"basic").await.unwrap();
+        let account=app.store.account_by_id(user["user_id"].as_str().unwrap()).await.unwrap().unwrap();
+        assert!(!page_allowed(&current,"main","chat",&access::Principal::from_account(&account).unwrap()));
+        assert!(validate_pages(&json!({"main":{"chat":"invalid"}})).is_err());
+    }
+    #[tokio::test]
+    async fn file_edits_change_live_access_fingerprint() {
+        let (_root,app)=crate::runtime_tests::fixture().await;
+        let before=app.store.live_access("admin","shared_default").await.unwrap();
+        let mut policy=app.store.read_access_policy().unwrap();policy["extension"]=json!("changed");
+        app.store.write_access_policy(&policy).unwrap();
+        let after=app.store.live_access("admin","shared_default").await.unwrap();
+        assert_ne!(before.revision.policy,after.revision.policy);
     }
 }

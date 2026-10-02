@@ -52,6 +52,8 @@ pub struct AccessRevision {
     pub tier: u64,
     pub membership: u64,
     pub agent: u64,
+    #[serde(default)]
+    pub policy: String,
 }
 
 #[derive(Clone, Debug)]
@@ -177,14 +179,15 @@ impl Store {
         let principal = Principal::from_account(&account)?;
         if principal.user_id != user_id {return Err(anyhow!("Account identity conflict"));}
         // Guest policy is rechecked by the loop as well as HTTP authentication.
+        let policy=self.read_access_policy()?;
         if principal.role == access::Role::Guest {
-            let policy=self.read_access_policy()?;
             if policy["registration"] != "open" {
                 return Err(anyhow!("Guest access is not enabled"));
             }
         }
-        let tier = self.entitlement_tier(&principal.tier_id).await?
-            .ok_or_else(|| anyhow!("Entitlement tier not found"))?;
+        let tier:Tier=serde_json::from_value(policy["tiers"].get(&principal.tier_id)
+            .ok_or_else(||anyhow!("Entitlement tier not found"))?.clone())?;
+        tier.validate()?;
         if tier.id != principal.tier_id {return Err(anyhow!("Tier identity conflict"));}
         let membership = self.agent_membership(user_id, agent_id).await?;
         if let Some(value)=&membership {
@@ -227,7 +230,9 @@ impl Store {
             (false, 0, Value::Null, Value::Null, Value::Null)
         };
         let revision = AccessRevision { account:principal.access_revision,
-            tier:tier.revision, membership:membership_revision, agent:agent_revision };
+            tier:tier.revision, membership:membership_revision, agent:agent_revision,
+            policy:crate::digest(&policy) };
+        let agent_enabled=agent_enabled && crate::registration::page_allowed(&policy,"main","chat",&principal);
         Ok(LiveAccess { principal,tier,agent_id:agent_id.to_owned(),
             relationship,agent_enabled,revision,tool_permissions,ability_permissions,tool_callers })
     }

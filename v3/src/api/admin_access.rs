@@ -26,7 +26,7 @@ pub(crate) async fn administrator(app: &App, identity: &Value) -> Result<(), Api
     Ok(())
 }
 /// Called while holding App.gate after an access mutation.
-async fn quiesce_user(app: &App, user_id: &str, agent_filter: Option<&str>) -> Result<(), ApiError> {
+pub(crate) async fn quiesce_user(app: &App, user_id: &str, agent_filter: Option<&str>) -> Result<(), ApiError> {
     let mut caller = app.clone();
     caller.store = app.store.for_user(user_id).await?;
     for view in caller.store.active_runs().await? {
@@ -110,6 +110,9 @@ async fn change_account(
     Path(id): Path<String>, Json(body): Json<AccountChange>,
 ) -> Api {
     administrator(&app, &identity).await?;
+    if identity["_user_id"]==id && (body.status!=AccountStatus::Active || body.role!=Role::Administrator) {
+        return Err(invalid("You cannot restrict or demote your own administrator account"));
+    }
     let _guard = app.gate.lock().await;
     let account = app.store.update_account_access(&id, body.expected_revision,
         body.status, body.role, &body.tier_id).await
@@ -149,7 +152,8 @@ async fn membership(
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MembershipChange { expected_revision: u64, relationship: Relationship }
+struct MembershipChange { expected_revision: u64, relationship: Relationship,
+    #[serde(default)] agent_administrator: bool }
 async fn change_membership(
     State(app): State<App>, Extension(identity): Extension<Value>,
     Path((user_id, agent_id)): Path<(String, String)>,
@@ -157,8 +161,9 @@ async fn change_membership(
 ) -> Api {
     administrator(&app, &identity).await?;
     let _guard = app.gate.lock().await;
-    let value = app.store.set_agent_membership(&user_id, &agent_id,
-        body.relationship, body.expected_revision).await
+    // LEGACY-MEMBERSHIP: installation oversight uses the same owner and revision checks as tenant APIs.
+    let value = app.store.assign_agent_membership(identity["_user_id"].as_str().unwrap_or(""),
+        &user_id, &agent_id, body.relationship, body.agent_administrator, body.expected_revision).await
         .map_err(|_| stale("Membership update rejected; reload the account and agent"))?;
     quiesce_user(&app, &user_id, Some(&agent_id)).await?;
     Ok(Json(json!({"membership":value})))
@@ -278,10 +283,56 @@ async fn change_agent_status(
     quiesce_agent(&app, &id).await?;
     Ok(Json(status))
 }
+async fn page_policy(State(app):State<App>,Extension(identity):Extension<Value>)->Api {
+    administrator(&app,&identity).await?;
+    let policy=app.store.read_access_policy()?;
+    Ok(Json(json!({"pages":policy.get("pages").cloned().unwrap_or_else(||json!({})),"revision":policy["revision"].as_u64().unwrap_or(0)})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PagePolicyChange {expected_revision:u64,pages:Value}
+async fn change_page_policy(State(app):State<App>,Extension(identity):Extension<Value>,Json(body):Json<PagePolicyChange>)->Api {
+    administrator(&app,&identity).await?;
+    crate::registration::validate_pages(&body.pages).map_err(|_|invalid("Invalid page audience policy"))?;
+    let _guard=app.gate.lock().await;
+    let policy=app.store.save_page_policy(body.pages,body.expected_revision).map_err(|_|stale("Policy changed; reload before saving"))?;
+    for id in app.store.all_user_ids().await? {quiesce_user(&app,&id,None).await?;}
+    app.store.event("","page_policy_changed",&json!({"revision":policy["revision"]})).await?;
+    Ok(Json(policy))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileChange { username:String, display_name:String }
+async fn change_profile(State(app):State<App>,Extension(identity):Extension<Value>,Path(id):Path<String>,Json(body):Json<ProfileChange>)->Api {
+    administrator(&app,&identity).await?;
+    let _guard=app.gate.lock().await;
+    let profile=app.store.update_user_profile(&id,&body.username,&body.display_name).await.map_err(|_|invalid("Profile update rejected"))?;
+    Ok(Json(profile))
+}
+async fn account_sessions(State(app):State<App>,Extension(identity):Extension<Value>,Path(id):Path<String>)->Api {
+    administrator(&app,&identity).await?;
+    let account=app.store.account_by_id(&id).await?.ok_or_else(||invalid("Account not found"))?;
+    let sessions=app.store.auth_sessions(&id,account["generation"].as_str().unwrap_or(""),crate::now()).await?;
+    let public:Vec<Value>=sessions.into_iter().map(|mut session|{session.as_object_mut().unwrap().remove("key");session}).collect();
+    Ok(Json(json!({"sessions":public})))
+}
+async fn revoke_account_session(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,session_id)):Path<(String,String)>)->Api {
+    administrator(&app,&identity).await?;
+    let _guard=app.gate.lock().await;
+    let account=app.store.account_by_id(&id).await?.ok_or_else(||invalid("Account not found"))?;
+    let sessions=app.store.auth_sessions(&id,account["generation"].as_str().unwrap_or(""),crate::now()).await?;
+    let session=sessions.iter().find(|s|s["id"]==session_id).ok_or_else(||invalid("Sign-in session not found"))?;
+    app.store.delete(session["key"].as_str().unwrap()).await?;
+    Ok(Json(json!({"revoked":true})))
+}
 pub fn router() -> Router<App> {
     Router::new()
+        .route("/page-policy",get(page_policy).put(change_page_policy))
         .route("/accounts", get(accounts).post(create_account))
         .route("/accounts/{id}", axum::routing::put(change_account))
+        .route("/accounts/{id}/profile",axum::routing::put(change_profile))
+        .route("/accounts/{id}/sessions",get(account_sessions))
+        .route("/accounts/{id}/sessions/{session_id}",axum::routing::delete(revoke_account_session))
         .route("/tiers", get(tiers))
         .route("/tiers/{id}", axum::routing::put(change_tier))
         .route("/agents/{id}/tool-callers",

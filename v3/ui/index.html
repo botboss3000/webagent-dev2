@@ -16,6 +16,7 @@
 <script src="/ui/vendor/lucide/lucide.min.js"></script>
 <script type="module" src="/v3-ui/app.js?v=chat-overlay-20260930"></script>
 <link rel="stylesheet" href="/v3-ui/boot/boot.css">
+<link rel="stylesheet" href="/v3-ui/private-access/private-access-page/private-access-page.css">
 </head>
 <body class="is-booting">
 <div id="boot-curtain" role="status" aria-label="Loading"><div class="boot-grid" aria-hidden="true"></div></div>
@@ -31,18 +32,7 @@
   <span class="ptr-label-hint" id="ptr-hint"></span>
 </div>
 <div id="notice" role="status" aria-live="polite"></div>
-<section id="login" hidden><div class="setup-box">
-  <div class="lock-icon">🔐</div><h1 id="login-title">Sign in</h1><p class="sub" id="login-description">Sign in to WebAgent.</p>
-  <form id="login-form" autocomplete="off">
-    <div class="form-group" id="register-name-row" hidden><label for="register-name">Display name</label><input id="register-name" name="display_name" maxlength="128" autocomplete="name" disabled></div>
-    <div class="form-group"><label for="login-username">Login Username</label><input id="login-username" name="username" autocomplete="username" required></div>
-    <div class="form-group"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn-setup" id="login-submit">Sign in</button>
-  </form>
-  <button type="button" id="register-toggle">Create an account</button>
-  <button type="button" id="guest-login" hidden>Continue as guest</button>
-  <p id="registration-status" role="status" aria-live="polite"></p>
-</div></section>
+<div id="app-restricted-overlay" aria-hidden="true"></div>
 <div id="app" hidden>
   <div id="main-header">
     <select id="main-tab-select" hidden aria-hidden="true"></select>

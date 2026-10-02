@@ -2,6 +2,8 @@
   "id": "app",
   "label": "App",
   "order": 0,
-  "css": ["app-page.css"],
+  "css": [
+    "app-page.css"
+  ],
   "entry": "app-page.js"
 }

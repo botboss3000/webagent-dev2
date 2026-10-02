@@ -395,65 +395,45 @@ This is not full v2 parity or the Phase 2 MVP acceptance release. Image builds
 run locked Rust tests in the pinned compiler stage before the release build.
 Building does not deploy.
 
-## Agent-bound model selection (source implementation; live acceptance pending)
+## Tenant agents and explicit model roles
 
-`model_selection` keeps connections, model entries, explicitly ordered backup groups, and per-agent assignments in one encrypted, revision-checked catalog. Credentials are separate encrypted documents. Runs pin the resolved plan and base instructions at admission; assignment edits never reroute accepted runs. Every dispatch rechecks live grants, revocation and credential-reference replacement. Typed sanitized failures allow one bounded transient retry and then eligible ordered failover; cancellation, policy/protocol rejection, response activity and uncertain effects stop failover.
+<!-- TENANT-MODEL-CONTRACT: follow scoped authority, explicit appointments and pinned dispatch. -->
+An agent owns its model roster and role assignments. Its owner can appoint agent
+administrators, who manage model configuration and assign existing accounts as
+members or visitors. Installation administrators retain oversight without becoming
+owners. Credentials and connection sharing remain under each connection owner's
+control. Membership changes invalidate access and quiesce affected runs.
 
-Administrator-only `/api/v3/models/catalog`, `/agents`, and `/connections/{id}` plus `/connections/{id}/authorization` provide configuration, retry-safe agent creation, and connection-specific subscription authorization. These browser writes use the existing CSRF boundary. Reauthorization creates a new credential reference; no primary-account tokens are copied to a backup. Non-default agents require an explicit assignment. Legacy default-agent settings remain available until that agent receives an assignment.
+`GET/PUT /api/v3/models/catalog?agent_id=<id>` returns and atomically updates a
+caller-scoped catalog using optimistic revisions. `/models/agents` lists permitted
+agents and supports retry-safe creation. `/models/agents/{id}/members` lists or
+assigns existing accounts. Browser writes require CSRF. Connection authorization
+and API-key writes require connection ownership; credential references are minted
+by the server and secrets are never returned.
 
-`v3/ui/main-panel/agents/pages/model-table.js` adapts the actual v2 compact configurator, expanded rows and shared-form backup lifecycle with explicit order controls. V3 does not import v2 auth-aware JavaScript or call v2 APIs. Full role routing, API-key transports, user sharing workflows, and non-default-agent ability editing remain unsupported; catalog rows are not evidence of those capabilities. See `docs/ui-journeys.md` for the required live acceptance.
+Six roles are explicit entry-ID appointments: Standard, Premium, Image In,
+Image Out, System and Voice. Standard serves chat; System serves compaction.
+The other four workflows are not implemented. Capabilities validate appointments
+but never choose a role. Each role has an ordered backup chain. Chat can supply
+`model_entry_id` for a permitted roster entry without editing Standard.
 
+Admission pins the chat and optional System plans, candidate IDs, connection
+references and revisions. Dispatch and recovery recheck membership, account tier,
+roster, grants, revocation and credential rotation. Role edits affect new runs.
+Failover stays within its role and stops after response activity or uncertain
+effects. Missing Standard is a configuration error; missing System pauses a run
+when compaction is needed.
 
-### Loop runtime configuration and incremental accounting
+Legacy primary assignments migrate to Standard with their backups. A connected
+legacy default subscription is imported once; cleared roles never resurrect.
+System requires an explicit appointment. Old unpinned runs cannot inherit a new
+selection. Preserve a compatible whole-state backup before deployment; old
+binaries cannot enforce this new contract.
 
-`<V3_STATE_ROOT>/config/loop-runtime.json` is the non-secret authority for scheduler,
-context, cache and workflow settings (container `/state/config/loop-runtime.json`).
-On first startup the application creates the file using bootstrap defaults and imports
-an existing encrypted `workflow_policy` override, without deleting that rollback material.
-A present configuration wins; malformed/unknown/version-invalid configuration fails startup.
-Do not bake live data into the image. This phase does not migrate credentials or other
-application/agent state into plain JSON. The old `src/workflow.defaults.json` is no longer
-read by runtime policy resolution.
+The Models page shows the selected agent's roster, roles, backups, effective
+availability, connection sharing, and members. Nonmanagers get a read-only view.
+Ability catalogs, ability tiers and the Abilities page are unchanged.
 
-Default JSON (created by the application, not by the development tools):
-
-```json
-{"schema_version":2,"scheduler":{"max_active_runs":1,"max_unresolved_runs":200,"poll_interval_ms":300,"recovery_interval_ms":10000},"context":{"max_context_bytes":262144},"cache":{"document_budget_bytes":67108864,"context_budget_bytes":16777216},"workflow":{"max_turns":50,"max_attempts":3,"max_publication_bytes":262144,"modules":{}}}
-```
-
-Resource settings are startup-applied. The existing authorized workflow-policy API keeps
-its public shape, validates changes, atomically writes this file, then publishes an
-in-memory snapshot; context limits map to the context section, not duplicate settings.
-The loop rereads validated workflow limits and modules at run boundaries, so API
-policy changes take effect without replacing a container. Scheduler and cache
-settings remain startup-applied. After a manual file edit, restart both API and
-loop to reload all settings consistently. Back up this file before operator changes; roll back by restoring
-the previous validated file. Durable interactions and legacy workflow overrides are retained.
-No migration deletes transcript rows or changes encrypted history format.
-
-One global semaphore slot is held for an executing run, including provider waits; HTTP,
-streaming and recovery tasks stay concurrent. Queued runs persist their pinned prompt/model
-and message receipt but defer history hydration until acquiring a slot. Legacy runs retain
-their existing input. `run_index.enqueue_seq` preserves admission order across status updates
-and requeues; legacy indices initialize from their existing row order.
-
-`context_accounting.rs` belongs to an executing task. It measures committed append-only run
-snapshots once per new item, uses a counting serializer, and resets on compaction or restart.
-Logical request reports remain byte-based, not provider-token or RSS limits. Assembly borrows
-history/schemas; the existing provider interface still takes one owned dispatch snapshot.
-There is no second full-history cache. Cache budgets are estimates shared across the user
-handles of one Store family in each process; pool/handle budgeting is still needed before claiming
-a process-wide memory ceiling.
-
-Verification: run `cargo test --locked` from `v3/`; the
-`context_accounting::measurements::repeated_accounting_measurement` test prints repeated-accounting
-CPU time and avoided temporary JSON bytes. This is an accounting microbenchmark, not a
-provider-throughput or peak-server-memory benchmark.
-
-Remaining optimization phases: incremental recovery comparison and hydration, versioned
-guidance/schema caching, aggregate database-pool/active-copy limits,
-provider-aware token budgets and loaded-skill lifecycle, then measured operational tuning.
-Deployment/restart is separate; source tests do not apply settings to the running service.
 
 ## Phase 4 loop and publication gate
 
@@ -527,8 +507,8 @@ the final reply; missing or invalid status becomes the configured
 `unverified` fallback without a repair turn. Its status does not itself
 publish a reply.
 
-The optional `publication_size_guard_v1` descriptor lives in
-`v3/plugins/gates/` and is packaged with the isolated Python gate. A
+The optional `publication_size_guard_v1` descriptor and handler live in
+`v3/plugins/gates/publication_size_guard_v1/` and are packaged with the isolated Python gate. A
 mandatory transport or protocol failure pauses publication; an optional
 failure records a private skip and native Rust checks still apply. An explicit
 rejection always blocks. No gate can grant tool permission or publish a
@@ -537,7 +517,7 @@ have no UI yet.
 
 ## Context compaction
 
-`src/context_compaction.rs` owns rolling checkpoint policy and validation.
+`src/context/compaction.rs` owns rolling checkpoint policy and validation.
 `<V3_STATE_ROOT>/config/context-compaction.json` is the single operational authority.
 On first startup only, a validated legacy/operator file (`V3_CONTEXT_COMPACTION_CONFIG_PATH`,
 or the package `config/context-compaction.json`) is copied into the data root. Existing data
@@ -552,8 +532,8 @@ Estimates count serialized history characters, including the previous checkpoint
 or tool schemas. The independent full-request byte ceiling remains in loop-runtime.json and
 can trigger compaction earlier. Safe complete boundaries may retain less than the tail target.
 Each fold replaces the previous checkpoint plus aged history with one summary; original
-interactions remain intact. Summary generation uses only the normal run-selected agent model,
-with no separate routing. The summary token target is a prompt allowance, not exact tokenizer
+interactions remain intact. Summary generation uses the run's separately pinned System role and its own
+backup chain. It never falls back to Standard. The summary token target is a prompt allowance, not exact tokenizer
 measurement; configured reserve and validation limits remain hard byte constraints.
 
 Loop-runtime schema 2 removes the duplicate summary reserve. Schema 1 data is migrated

@@ -270,6 +270,7 @@ impl Store {
         store.migrate_legacy(root).await?;
         store.init_accounts().await?;
         store.init_access_policy().await?;
+        store.init_policy_tiers().await?;
         store.init_agent_tables().await?;
         store.ensure_default_agent_directory().await?;
         Ok(store)

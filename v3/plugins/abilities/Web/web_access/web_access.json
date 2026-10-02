@@ -11,7 +11,8 @@
   "color": "#7aa2f7",
   "order": 2,
   "placeholder": false,
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {},
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+  "migration_note": "Compiled Rust public-provider adapter. No v2 runtime, credentials or arbitrary URL access. Provider availability is checked per call; deployment requires rebuilding both API and loop.",
+  "skill_summary": "Public web search, current weather, geocoding and great-circle distance with explicit provider errors."
 }

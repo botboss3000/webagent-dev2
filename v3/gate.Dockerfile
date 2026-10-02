@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-cert
     && groupadd -g 1100 v3 \
     && useradd -u 1102 -g 1100 -M -s /usr/sbin/nologin v3gate
 COPY v3/gate_worker.py /opt/v3/gate_worker.py
-COPY v3/plugins/gates/publication_size_guard_v1.json /opt/v3/plugins/gates/publication_size_guard_v1.json
+COPY v3/plugins/gates/publication_size_guard_v1 /opt/v3/plugins/gates/publication_size_guard_v1
 COPY v3/tests/test_gate_worker.py /opt/v3/tests/test_gate_worker.py
 RUN python3 -B -m unittest discover -s /opt/v3/tests -p test_gate_worker.py
 USER 1102:1100

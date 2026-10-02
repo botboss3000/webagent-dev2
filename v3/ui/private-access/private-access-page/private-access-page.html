@@ -1,0 +1,41 @@
+<section class="private-access-page" aria-label="Private account access">
+  <div class="private-access-glow private-access-glow-one" aria-hidden="true"></div>
+  <div class="private-access-glow private-access-glow-two" aria-hidden="true"></div>
+
+  <article class="private-access-card">
+    <div class="private-access-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect width="16" height="11" x="4" y="10" rx="2"></rect>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+        <path d="M12 14v3"></path>
+      </svg>
+    </div>
+
+    <button type="button" class="private-access-action" data-private-access-reveal aria-expanded="false" aria-controls="private-login-fields">Sign in</button>
+    <div id="private-login-fields" class="private-access-sign-in" data-private-access-form aria-label="Account sign in" hidden><form id="login-form" autocomplete="on" aria-label="Account sign in">
+<div id="login-title">Sign in</div>
+<div id="register-name-row" hidden><input id="register-name" name="display_name" placeholder="Display name" aria-label="Display name" maxlength="128" autocomplete="name" disabled></div>
+<input id="login-username" name="username" placeholder="Username" aria-label="Username" autocomplete="username" required>
+<input id="login-password" name="password" placeholder="Password" aria-label="Password" type="password" autocomplete="current-password" required>
+<button id="login-submit" type="submit">Sign in</button>
+<button id="register-toggle" type="button">Create an account</button>
+<button id="guest-login" type="button" hidden>Continue as guest</button>
+<p id="registration-status" role="status" aria-live="polite"></p>
+</form></div>
+
+    <div class="private-access-approval" role="note">
+      <span class="private-access-approval-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
+          <path d="m9 12 2 2 4-4"></path>
+        </svg>
+      </span>
+      <span>
+        <strong>Administrator approval is required</strong>
+        New registrations will remain pending administrator approval before access is granted.
+      </span>
+    </div>
+
+
+  </article>
+</section>

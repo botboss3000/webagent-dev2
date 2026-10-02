@@ -72,7 +72,23 @@ pub(crate) async fn fixture() -> (TempDir, App) {
     let (root, app) = fixture_uninitialized().await;
     app.store.create_admin_account("admin", "fixture-only-password-hash",
         "fixture-generation").await.unwrap();
+    // Test setup follows the production migration, then explicitly appoints System
+    // for compaction fixtures; capabilities alone never select a role.
+    crate::model_selection_api::migrate_legacy_default(&app.store).await.unwrap();
+    let mut catalog = app.store.model_catalog().await.unwrap();
+    let roster = catalog.agent_models.get_mut("shared_default").unwrap();
+    roster.roles.insert(model_selection::ModelRole::System, roster.roles[&model_selection::ModelRole::Standard].clone());
+    app.store.save_model_catalog(&catalog, catalog.revision).await.unwrap();
     (root, app)
+}
+
+// Runtime assertions change the authoritative roster entry; legacy settings remain
+// independently covered by their own API tests.
+async fn fixture_model(app: &App, model: &str) {
+    let mut catalog = app.store.model_catalog().await.unwrap();
+    let entry = catalog.agent_models["shared_default"].roles[&model_selection::ModelRole::Standard].entry_id.clone();
+    catalog.entries.get_mut(&entry).unwrap().upstream_model = model.into();
+    app.store.save_model_catalog(&catalog, catalog.revision).await.unwrap();
 }
 
 
@@ -1282,6 +1298,7 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
             .0["provider"],
         "openai_subscription"
     );
+    fixture_model(&app, "pinned-model").await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let captured = requests.clone();
     let mock = Router::new().route("/responses", post(|State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
@@ -1365,6 +1382,7 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
         .0["model"],
         "replacement-model"
     );
+    fixture_model(&app, "replacement-model").await;
     let next_sid = conversation(&app).await;
     let next_id = queued(&app, &next_sid).await;
     assert_eq!(
@@ -1449,6 +1467,7 @@ async fn long_run_compacts_before_model_and_keeps_full_message_history() {
     let _saved = settings(State(app.clone()), Json(json!({"model":"summary-pinned"})))
         .await
         .unwrap();
+    fixture_model(&app, "summary-pinned").await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let captured = requests.clone();
     let mock = Router::new()
@@ -4186,21 +4205,27 @@ pub(crate) async fn selection_fixture(app: &App) -> model_selection::Catalog {
     agent_pool.close().await;
     app.store.register_agent("agent-a","admin").await.unwrap();
     app.store.set_agent_membership("admin","agent-a",crate::access::Relationship::Owner,0).await.unwrap();
-    let mut catalog = Catalog::default();
+    let mut catalog = app.store.model_catalog().await.unwrap();
     for (id, model) in [("one", "model-one"), ("two", "model-two")] {
         let credential_ref = format!("credential:{id}");
         app.store.put(&credential_ref, &json!({"access_token":format!("token-{id}"),"expires_at":now()+3600})).await.unwrap();
         catalog.connections.insert(id.into(), Connection { id:id.into(), owner_id:"admin".into(), transport:Transport::OpenaiSubscription,
-            credential_ref, allowed_agents:BTreeSet::new(), revision:1, revoked:false });
+            credential_ref, allowed_agents:BTreeSet::from(["shared_default".into(), "agent-a".into()]), revision:1, revoked:false });
         catalog.entries.insert(id.into(), ModelEntry { id:id.into(), owner_id:"admin".into(), connection_id:id.into(),
-            upstream_model:model.into(), display_name:model.into(), capabilities:BTreeSet::from(["text".into()]), allowed_agents:BTreeSet::new(), revision:1 });
+            upstream_model:model.into(), display_name:model.into(), capabilities:BTreeSet::from(["text".into()]), allowed_agents:BTreeSet::from(["shared_default".into(), "agent-a".into()]), revision:1 });
     }
-    catalog.groups.insert("backups".into(), BackupGroup { id:"backups".into(), owner_id:"admin".into(), entry_ids:vec!["one".into()], revision:1 });
-    catalog.assignments = BTreeMap::from([
-        ("shared_default".into(), Assignment { agent_id:"shared_default".into(), owner_id:"admin".into(), primary_entry_id:"one".into(), backup_group_id:None, revision:1 }),
-        ("agent-a".into(), Assignment { agent_id:"agent-a".into(), owner_id:"admin".into(), primary_entry_id:"two".into(), backup_group_id:Some("backups".into()), revision:1 }),
-    ]);
-    app.store.save_model_catalog(&catalog,0).await.unwrap()
+    // Each tenant has an explicit roster and independent role appointment. Sharing
+    // authorizes both the entry and its connection without relying on common ownership.
+    for (agent, primary, backup) in [("shared_default", "one", vec![]), ("agent-a", "two", vec!["one".into()])] {
+        let revision = catalog.agent_models.get(agent).map(|a|a.revision).unwrap_or(1);
+        catalog.agent_models.insert(agent.into(), AgentModels { agent_id:agent.into(), owner_id:"admin".into(),
+            entry_ids:vec!["one".into(), "two".into()], revision,
+            roles:BTreeMap::from([
+                (ModelRole::Standard, RoleAssignment { entry_id:primary.into(), backup_entry_ids:backup }),
+                (ModelRole::System, RoleAssignment { entry_id:"one".into(), backup_entry_ids:vec!["two".into()] }),
+            ]) });
+    }
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap()
 }
 
 #[tokio::test]
@@ -4227,7 +4252,8 @@ async fn model_selection_admission_pins_agent_model_prompt_and_credentials() {
         let selection=provider::ProviderSelection::parse(&run["provider_selection"],"unused").unwrap();
         assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["access_token"],expected_token);
         if agent_id=="agent-a" {
-            catalog.assignments.get_mut(agent_id).unwrap().primary_entry_id="one".into();
+            catalog.agent_models.get_mut(agent_id).unwrap().roles.insert(model_selection::ModelRole::Standard,
+                model_selection::RoleAssignment { entry_id:"one".into(), backup_entry_ids:vec![] });
             catalog=app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
             assert_eq!(app.run_candidate(&run).await.unwrap().unwrap().upstream_model,"model-two");
             assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["access_token"],"token-two");
@@ -4262,6 +4288,76 @@ async fn model_selection_failover_is_ordered_durable_and_revocation_is_live() {
     model_failure(&mut restored,&failure).unwrap();
     assert_eq!(restored["status"],"failed");
     assert!(restored["error"].as_str().unwrap().contains("no safe retry or eligible backup"));
+}
+
+#[tokio::test]
+// A cleared role is authoritative even while legacy credentials still exist.
+async fn model_roles_standard_is_required_even_with_legacy_default_and_other_roles() {
+    let (_root, app) = fixture().await;
+    let mut catalog = selection_fixture(&app).await;
+    for agent in ["shared_default", "agent-a"] {
+        catalog.agent_models.get_mut(agent).unwrap().roles.remove(&model_selection::ModelRole::Standard);
+    }
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    for agent in ["shared_default", "agent-a"] {
+        let Json(session) = create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":agent}))).await.unwrap();
+        let error = send(State(app.clone()),Path(session["id"].as_str().unwrap().into()),
+            Json(json!({"client_message_id":uuid(),"text":"hello"}))).await.unwrap_err();
+        assert_eq!(error.0, StatusCode::CONFLICT);
+        assert!(error.1.contains("Standard"));
+        assert!(app.store.active_runs().await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+// Custom admission pins one permitted entry without mutating durable appointments.
+async fn model_roles_custom_uses_roster_without_reassigning_standard() {
+    let (_root, app) = fixture().await;
+    let catalog = selection_fixture(&app).await;
+    let Json(session) = create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":"agent-a"}))).await.unwrap();
+    let (_,Json(accepted)) = send(State(app.clone()),Path(session["id"].as_str().unwrap().into()),
+        Json(json!({"client_message_id":uuid(),"text":"hello","model_entry_id":"one"}))).await.unwrap();
+    let run = app.run(accepted["run_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(run["selection_plan"]["custom_entry_id"], "one");
+    assert_eq!(run["provider_selection"]["model"], "model-one");
+    assert_eq!(run["selection_plan"]["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(app.store.model_catalog().await.unwrap(), catalog);
+    assert_eq!(catalog.resolve("agent-a").unwrap().candidates[0].entry_id, "two");
+    let Json(other) = create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":"agent-a"}))).await.unwrap();
+    assert!(send(State(app.clone()),Path(other["id"].as_str().unwrap().into()),
+        Json(json!({"client_message_id":uuid(),"text":"hello","model_entry_id":"not-in-roster"}))).await.is_err());
+}
+
+#[tokio::test]
+// Compaction owns a separate pinned plan and retry state across storage recovery.
+async fn model_roles_system_is_pinned_and_failover_is_separate_after_recovery() {
+    let (root, app) = fixture().await;
+    let mut catalog = selection_fixture(&app).await;
+    let Json(session) = create_session(State(app.clone()),Json(json!({"client_request_id":uuid(),"agent_id":"agent-a"}))).await.unwrap();
+    let (_,Json(accepted)) = send(State(app.clone()),Path(session["id"].as_str().unwrap().into()),
+        Json(json!({"client_message_id":uuid(),"text":"hello"}))).await.unwrap();
+    let id = accepted["run_id"].as_str().unwrap();
+    let mut run = app.run(id).await.unwrap();
+    let standard = run["selection_plan"].clone(); let standard_state = run["failover_state"].clone();
+    assert_eq!(run["system_selection_plan"]["role"], "system");
+    assert_eq!(system_dispatch_run(&run).unwrap()["provider_selection"]["model"], "model-one");
+    catalog.agent_models.get_mut("agent-a").unwrap().roles.insert(model_selection::ModelRole::System,
+        model_selection::RoleAssignment { entry_id:"two".into(), backup_entry_ids:vec![] });
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    system_model_failure(&mut run,&provider::typed_failure(model_selection::FailureKind::ModelUnavailable,false,"unavailable")).unwrap();
+    assert_eq!(run["selection_plan"], standard); assert_eq!(run["failover_state"], standard_state);
+    assert_eq!(run["system_failover_state"]["candidate_index"], 1);
+    assert_eq!(system_dispatch_run(&run).unwrap()["provider_selection"]["model"], "model-two");
+    app.save(&mut run).await.unwrap();
+    let reopened = Store::open(root.path()).await.unwrap();
+    let restored = reopened.get(&key("run",id)).await.unwrap().unwrap();
+    assert_eq!(restored["system_selection_plan"], run["system_selection_plan"]);
+    assert_eq!(restored["system_failover_state"], run["system_failover_state"]);
+    assert_eq!(restored["selection_plan"], standard);
+    catalog = app.store.model_catalog().await.unwrap();
+    catalog.connections.get_mut("two").unwrap().credential_ref = "rotated-system-credential".into();
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    assert!(app.run_candidate(&system_dispatch_run(&restored).unwrap()).await.is_err());
 }
 
 #[tokio::test]
@@ -4301,6 +4397,13 @@ async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries
     assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
     let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",true,false,Value::Null)).await.unwrap();
     assert_eq!(response.status(),StatusCode::OK);
+    // Catalog compare-and-swap rejects a stale browser tab without replacing roles.
+    let body:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let stale=body["catalog"].clone();
+    let response=router(app.clone()).oneshot(request("PUT","/api/v3/models/catalog",true,true,stale.clone())).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let response=router(app.clone()).oneshot(request("PUT","/api/v3/models/catalog",true,true,stale)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::CONFLICT);
     let new_agent=json!({"client_request_id":"catalog-agent","name":"Second Agent"});
     let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,false,new_agent.clone())).await.unwrap();
     assert_eq!(response.status(),StatusCode::FORBIDDEN);
@@ -4581,9 +4684,20 @@ async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
 }
 
 #[tokio::test]
-async fn rolling_compaction_uses_normal_model_and_persists_checkpoint() {
+async fn rolling_compaction_uses_explicit_system_model_and_persists_checkpoint() {
     use axum::routing::post;
     let (root, mut app) = fixture().await;
+    let mut catalog = app.store.model_catalog().await.unwrap();
+    let standard_id = catalog.agent_models["shared_default"].roles[&model_selection::ModelRole::Standard].entry_id.clone();
+    // The HTTP fixture must observe System for summarization and Standard for chat.
+    let mut system = catalog.entries[&standard_id].clone();
+    system.id = "system-summary".into(); system.upstream_model = "system-summary-model".into(); system.revision = 1;
+    catalog.entries.insert(system.id.clone(), system);
+    let roster = catalog.agent_models.get_mut("shared_default").unwrap();
+    roster.entry_ids.push("system-summary".into());
+    roster.roles.insert(model_selection::ModelRole::System,
+        model_selection::RoleAssignment { entry_id:"system-summary".into(), backup_entry_ids:vec![] });
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
     let config_path = app.compaction_config_path.clone();
     let mut config = context_compaction::Config::read(&config_path).unwrap();
     config.trigger_tokens = 500; config.tail_tokens = 100; config.summary_tokens = 100;
@@ -4618,7 +4732,8 @@ async fn rolling_compaction_uses_normal_model_and_persists_checkpoint() {
     assert_eq!(done["compactions"], 1);
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0]["model"], requests[1]["model"]);
+    assert_eq!(requests[0]["model"], "system-summary-model");
+    assert_eq!(requests[1]["model"], catalog.entries[&standard_id].upstream_model);
     assert!(requests[0]["tools"].as_array().is_none_or(|tools| tools.is_empty()));
     assert!(requests[0]["input"].to_string().contains("Fold the previous checkpoint"));
     let events = app.store.events(&sid, 0).await.unwrap();
@@ -4799,4 +4914,64 @@ async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call
     assert!(done["workflow"]["batch_receipts"]["write-two"].is_object());
     assert_eq!(app.store.context(&sid).await.unwrap().iter()
         .filter(|item|item["type"]=="function_call_output").count(),2);
+}
+
+
+#[tokio::test]
+async fn web_access_api_support_auth_csrf_revision_and_persistence() {
+    let (root, app)=fixture().await;
+    let token=uuid();
+    app.store.put(&format!("auth:{}",digest(&json!(token))),
+        &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"})).await.unwrap();
+    let cookie=format!("v3_session={token}");
+    let uri="/api/v3/agents/shared_default/abilities";
+    let request=|method:&str,path:&str,auth:bool,csrf:bool,body:Value| {
+        let mut b=Request::builder().method(method).uri(path).header("content-type","application/json");
+        if auth {b=b.header("cookie",&cookie);}
+        if csrf {b=b.header("x-csrf-token","fixture");}
+        b.body(Body::from(body.to_string())).unwrap()
+    };
+    assert_eq!(router(app.clone()).oneshot(request("GET",uri,false,false,Value::Null)).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+    let response=router(app.clone()).oneshot(request("GET",uri,true,false,Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let catalog:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap()).unwrap();
+    let web=catalog["abilities"].as_array().unwrap().iter().find(|v|v["id"]=="web_access").unwrap();
+    assert_eq!(web["readiness"],"ready");assert_eq!(web["available"],true);
+    assert_eq!(web["tools"].as_array().unwrap().len(),3);
+    assert!(web["tools"].as_array().unwrap().iter().all(|v|v["supported"]==true));
+    let path=format!("{uri}/web_access/tools/maps_geocode/mode");
+    let body=json!({"visibility":"off","expected_revision":0});
+    assert_eq!(router(app.clone()).oneshot(request("PUT",&path,true,false,body.clone())).await.unwrap().status(),StatusCode::FORBIDDEN);
+    assert_eq!(router(app.clone()).oneshot(request("PUT",&path,true,true,body.clone())).await.unwrap().status(),StatusCode::OK);
+    let stale=json!({"visibility":"visible","expected_revision":0});
+    assert_eq!(router(app.clone()).oneshot(request("PUT",&path,true,true,stale)).await.unwrap().status(),StatusCode::CONFLICT);
+    assert_eq!(app.store.agent_abilities().await.unwrap()["tool_modes"]["maps_geocode"],"off");
+    app.store.app_pool.close().await;app.store.pool.close().await;app.store.agent_pool.close().await;
+    let reopened=Store::open(root.path()).await.unwrap();
+    assert_eq!(reopened.agent_abilities().await.unwrap()["tool_modes"]["maps_geocode"],"off");
+}
+
+#[tokio::test]
+async fn web_access_policy_migration_preserves_denial_and_approval() {
+    let (_root,app)=fixture().await;
+    let mut p=policy_default();p["rules"]["web_search"]=json!("deny");
+    p["rules"]["get_weather"]=json!("require_approval");p["rules"].as_object_mut().unwrap().remove("maps_geocode");
+    app.store.put("policy",&p).await.unwrap();
+    migrate_tool_policy_defaults(&app.store).await.unwrap();migrate_tool_policy_defaults(&app.store).await.unwrap();
+    let migrated=app.store.get("policy").await.unwrap().unwrap();
+    assert_eq!(migrated["rules"]["web_search"],"deny");
+    assert_eq!(migrated["rules"]["get_weather"],"require_approval");
+    assert_eq!(migrated["rules"]["maps_geocode"],"allow");assert_eq!(migrated["version"],2);
+}
+
+#[tokio::test]
+async fn web_access_native_dispatch_needs_no_worker_and_cancels() {
+    let (_root,app)=fixture().await;let sid=conversation(&app).await;
+    let args=json!({"action":"distance","lat":0,"lon":0,"lat2":0,"lon2":1});
+    assert!(!app.tool_socket.exists());
+    let result=tools::call(app.clone(),sid.clone(),uuid(),"maps_geocode".into(),args.clone(),uuid(),1,CancellationToken::new()).await.unwrap();
+    assert_eq!(result["status"],"success");assert_eq!(result["output"]["km"],111.195);
+    let cancel=CancellationToken::new();cancel.cancel();
+    assert!(tools::call(app,sid,uuid(),"maps_geocode".into(),args,uuid(),1,cancel).await.is_err());
+    for name in ["web_search","get_weather","maps_geocode"] {assert!(tools::is_read(name));}
 }

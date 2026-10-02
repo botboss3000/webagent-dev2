@@ -1,4 +1,9 @@
 use anyhow::{bail, Context, Result};
+// Single and parallel turns share the same Rust dispatch for native and worker tools.
+#[path = "../../../plugins/abilities/Web/web_access/adapter.rs"]
+pub(crate) mod web_access;
+mod dispatch;
+pub(crate) use dispatch::call;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 use tokio::{
@@ -10,7 +15,10 @@ use tokio_util::sync::CancellationToken;
 pub fn is_read(name: &str) -> bool {
     matches!(
         name,
-        "file_list"
+        "web_search"
+            | "get_weather"
+            | "maps_geocode"
+            | "file_list"
             | "file_read"
             | "file_search"
             | "source_review"
@@ -21,7 +29,7 @@ pub fn is_read(name: &str) -> bool {
 
 pub fn schemas() -> Vec<Value> {
     static SCHEMAS: OnceLock<Vec<Value>> = OnceLock::new();
-    SCHEMAS.get_or_init(|| [
+    SCHEMAS.get_or_init(|| { let mut schemas: Vec<Value> = [
         ("file_list", "List files in the session workspace", json!({"path":{"type":"string"}}), vec![]),
         ("file_read", "Read a bounded page of workspace file lines", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1,"maximum":10000000},"limit":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
         ("file_search", "Search workspace files by literal or regex query; outline comments in one file", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"file_glob":{"type":"string"},"comments_only":{"type":"boolean"}}), vec![]),
@@ -39,7 +47,10 @@ pub fn schemas() -> Vec<Value> {
     ].into_iter().map(|(name, description, properties, required)| json!({
         "type":"function", "name":name, "description":description,
         "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}
-    })).collect()).clone()
+    })).collect();
+        schemas.extend(web_access::schemas());
+        schemas
+    }).clone()
 }
 
 pub async fn execute(

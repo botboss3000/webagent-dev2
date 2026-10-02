@@ -46,7 +46,7 @@ fn source(id: &str) -> Result<String> {
             let path = root.join("config/gates").join(format!("{id}.json"));
             Ok(std::fs::read_to_string(path)?)
         }
-        PUBLICATION_SIZE => Ok(include_str!("../plugins/gates/publication_size_guard_v1.json").into()),
+        PUBLICATION_SIZE => Ok(include_str!("../../plugins/gates/publication_size_guard_v1/gate.json").into()),
         _ => bail!("Unknown gate module"),
     }
 }
@@ -106,20 +106,7 @@ fn validate_manifest(id: &str, item: &Manifest) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VisibilityConfig { pub tool_name: String, pub guidance: String }
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClosingConfig {
-    pub tool_name: String,
-    pub guidance: String,
-    pub flags: Vec<String>,
-    pub notification_max_chars: usize,
-    pub notification_max_words: usize,
-    pub fallback_status: String,
-    pub fallback_notification: String,
-}
+pub use crate::gate_controls::{ClosingConfig, VisibilityConfig};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SizeConfig { pub max_text_bytes: usize }

@@ -4,6 +4,33 @@ Status: accepted for the in-process v3 foundation. Scope: the current administra
 and agent, with ownership rules that remain valid when more users and agents arrive.
 This document defines contracts; it does not claim v2 feature parity.
 
+## Tenant model-role records
+
+<!-- TENANT-MODEL-OWNERSHIP: agent authority shares one atomic application catalog. -->
+The encrypted `model_selection:catalog:v1` document adds `agent_models`,
+keyed by agent ID. Each record binds the immutable directory owner, a model
+roster, six role appointments with ordered backups, and an optimistic revision.
+The application catalog is the atomic storage boundary; each agent owns its
+logical roster and role configuration. Connection and entry owners alone
+change sharing grants and credentials. API projections hide private tenant
+records and preserve hidden records during a save.
+
+Encrypted membership records add `agent_administrator`, limited to agent/model
+administration. Owner, member, caller (visitor), and revoked keep their existing
+tool-policy meaning. Membership writes check actor authority, target account,
+directory ownership, and expected revision in one application transaction,
+then rotate account access generation and quiesce affected work.
+
+Legacy primary records remain for rollback. Reads project absent role maps to
+Standard without appointing other roles; the next atomic save persists that
+projection. `migration:model_roles_default_v1` separately imports a connected
+default subscription once, retaining its credential in the secrets plane.
+An explicit empty role map prevents resurrection. User-owned run documents pin
+the chat plan and independent System plan and failover cursor. Role changes
+affect new runs, while live revocation and account ceilings still stop dispatch.
+No session database inspection or alternate state access path is introduced.
+
+
 ## Fixed execution boundary
 
 The Rust runtime owns admission, attachment handling, context assembly, model

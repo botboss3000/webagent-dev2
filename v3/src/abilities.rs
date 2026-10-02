@@ -1056,9 +1056,29 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities");
         let catalog = Catalog::load(&root).unwrap();
         assert_eq!(catalog.abilities.len(), 82);
-        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 1);
+        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 2);
         assert!(catalog.abilities.iter().any(|ability| ability.id == "codebase_admin"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "diagnostics"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "terminal_control"));
     }
+    #[test]
+    fn web_access_loading_policy_and_visibility_gates() {
+        let catalog=Catalog::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities")).unwrap();
+        let mut p=crate::policy_default();
+        let mut v=json!({"visibility":{"web_access":"discoverable"}});
+        let mut run=json!({"loaded_abilities":[]});
+        let state=json!({"active":[],"suppressed":[]});
+        assert!(!catalog.tool_available("maps_geocode",&v,&state,&json!([])));
+        let result=catalog.discover_with("load_ability",&json!({"ability_id":"web_access"}),&mut run,&p,&v,&state);
+        assert_eq!(result["status"],"ok");
+        assert!(result["tool_skills"]["maps_geocode"].as_str().unwrap().contains("great-circle"));
+        let active=json!({"active":["web_access"],"suppressed":[]});
+        assert!(catalog.tool_available("maps_geocode",&v,&active,&run["loaded_abilities"]));
+        assert_eq!(catalog.tool_abilities("maps_geocode",&v,&active,&run["loaded_abilities"]),vec!["web_access"]);
+        p["rules"]["web_search"]=json!("deny");
+        assert!(!catalog.schemas_with(&p,&run["loaded_abilities"],&v,&active).iter().any(|s|s["name"]=="web_search"));
+        v["visibility"]["web_access"]=json!("off");
+        assert!(!catalog.tool_available("maps_geocode",&v,&active,&run["loaded_abilities"]));
+    }
+
 }

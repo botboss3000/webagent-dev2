@@ -1,0 +1,201 @@
+/* Private Access is a shell-level surface, not a catalog page. The shared auth
+   layer only toggles body.app-restricted; this folder owns everything visible. */
+#app-restricted-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: clamp(24px, 6vw, 72px) 20px;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(var(--brand-rgb), 0.1), transparent 34%),
+    var(--bg-0);
+  z-index: 30;
+}
+
+.private-access-page {
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 660px);
+  min-height: min(620px, calc(100vh - 160px));
+  display: grid;
+  place-items: center;
+}
+
+.private-access-card {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 520px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(32px, 6vw, 52px);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: clamp(22px, 4vw, 32px);
+  background: color-mix(in srgb, var(--bg-1) 92%, transparent);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  text-align: center;
+  backdrop-filter: blur(18px);
+}
+
+.private-access-icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 22px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  box-shadow: 0 16px 42px rgba(var(--brand-rgb), 0.14);
+}
+
+.private-access-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.private-access-approval {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 13px;
+  align-items: start;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 16px;
+  color: var(--fg-3);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-2));
+  font: 400 13px/1.55 Inter, sans-serif;
+  text-align: left;
+}
+
+.private-access-approval strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--fg-1);
+  font-weight: 650;
+}
+
+.private-access-approval-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.private-access-approval-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.private-access-action {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 14px;
+  color: var(--bg-0);
+  background: var(--accent);
+  box-shadow: 0 12px 28px rgba(var(--brand-rgb), 0.2);
+  cursor: pointer;
+  font: 650 14px/1 Inter, sans-serif;
+  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
+}
+
+.private-access-action:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(var(--brand-rgb), 0.26);
+}
+
+.private-access-action:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 3px;
+}
+
+.private-access-glow {
+  position: absolute;
+  z-index: -1;
+  border-radius: 999px;
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+.private-access-glow-one {
+  top: 8%;
+  right: -8%;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(var(--brand-rgb), 0.13), transparent 68%);
+}
+
+.private-access-glow-two {
+  bottom: 2%;
+  left: -12%;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle, rgba(var(--brand-rgb), 0.08), transparent 68%);
+}
+
+body.app-restricted #stage > #main-panel,
+body.app-restricted #stage > #chat-panel,
+body.app-restricted #stage > #chat-resize-handle { display: none !important; }
+
+body.app-restricted #app-restricted-overlay { display: flex !important; }
+
+body.app-restricted #main-tabs > :not(#user-dropdown),
+body.app-restricted #main-tabs-chev-left,
+body.app-restricted #main-tabs-chev-right,
+body.app-restricted #chat-toggle-btn,
+body.app-restricted #session-new-header-btn { display: none !important; }
+
+@media (max-width: 600px) {
+  #app-restricted-overlay { padding: 22px 14px; }
+  .private-access-page { min-height: calc(100vh - 128px); }
+  .private-access-card { padding: 30px 22px; border-radius: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .private-access-action { transition: none; }
+}
+
+/* The account panel owns the fields and authentication behavior; this host only
+   supplies the card layout. */
+.private-access-sign-in {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 0;
+  text-align: left;
+}
+.private-access-sign-in input:focus-visible,
+.private-access-sign-in button:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+
+/* Hidden must override the flex layouts of the reveal button and form host. */
+.private-access-sign-in[hidden],
+.private-access-action[hidden] { display: none; }
+.private-access-sign-in, .private-access-action { margin-bottom: 24px; }
+
+/* V3 shell and account-form adaptation; reference card geometry is retained. */
+#app-restricted-overlay { position:fixed; }
+.private-access-sign-in form {display:flex;flex-direction:column;gap:10px;width:100%;margin:0;}
+.private-access-sign-in input {width:100%;padding:8px 10px;background:var(--bg-0);border:var(--border-width) solid var(--border);border-radius:6px;color:var(--fg-1);font:13px var(--font-sans);box-sizing:border-box;}
+.private-access-sign-in button {width:100%;padding:8px;border:0;border-radius:6px;background:var(--brand);color:var(--bg-0);font:650 14px var(--font-sans);cursor:pointer;}
+.private-access-sign-in #register-toggle {background:transparent;color:var(--accent);font-size:12px;}
+#login-title {color:var(--fg-2);font-weight:600;font-size:13px;}
+#registration-status {color:var(--fg-3);font-size:12px;margin:0;}
+body.app-restricted #app {display:none!important;}
+.private-access-glow {max-width:100%;}

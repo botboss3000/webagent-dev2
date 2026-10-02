@@ -1,3 +1,4 @@
+@import url("./users/users.css");
 /* App reuses the Agents directory and tab markup/design; only scope differs. */
 #tab-app{padding:12px;min-height:100%}
 #tab-app .agent-detail-panel{display:block}
@@ -10,3 +11,8 @@
 #tab-app .agent-card-tabs .dragging{cursor:grabbing;background:var(--accent-soft);outline:2px solid var(--accent)}
 #app-files-page{padding:18px;color:var(--fg-2)}
 @media(max-width:800px){#tab-app .agent-config-star{margin-right:14px}}
+
+/* Native tier disclosures use the same body but their own open state. */
+#tab-app details[open] > .ac-ability-body{display:block}
+#tab-app .v3-user-form,#tab-app .ac-ability-body form{display:flex;flex-direction:column;gap:10px}
+#tab-app .members-policy form label{display:flex;flex-direction:column;gap:4px;margin:8px 0}

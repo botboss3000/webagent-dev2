@@ -83,6 +83,20 @@ pub(crate) fn project(run: &Value) -> Value {
         "uncertain_effect": run["uncertain"] == true,
         "compaction_count": compaction_count(run),
         "checkpoint_decisions": checkpoint_decisions(run),
+        // The closer is durable notification intent, not a delivery receipt.
+        // Only a completed run exposes the bounded intent to its owning session.
+        "closing": if status == Some("completed") {
+            match (run.pointer("/closing/flag").and_then(Value::as_str),
+                run.pointer("/closing/notification").and_then(Value::as_str)) {
+                (Some(flag),Some(notification))
+                    if matches!(flag,"needs_input"|"complete"|"error"|"partial"|"unverified")
+                    && !notification.is_empty() && notification.chars().count()<=240
+                    && notification.split_whitespace().count()<=50 =>
+                    json!({"flag":flag,"notification":notification,
+                        "fallback":run["closing"]["fallback"]==true}),
+                _ => Value::Null,
+            }
+        } else { Value::Null },
     })
 }
 

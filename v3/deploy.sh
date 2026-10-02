@@ -4,16 +4,20 @@ set -eu
 cd /home/ar/webagent-dev2
 case "${1:-build}" in
   build)
-    # Explicit allowlist works with both legacy Docker and BuildKit. No runtime data enters context.
+    # The explicit allowlist works with legacy Docker and BuildKit. Only the
+    # two named gate JSON files enter from runtime data; no session state does.
     python3 -B -c 'import hashlib,json,pathlib; baseline=json.loads(pathlib.Path("v3/ui-baseline.json").read_text()); assert all(hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected for path,expected in baseline["assets"].items()), "Shared UI baseline changed; review and explicitly update v3/ui-baseline.json"'
-    tar -cf - v3/Dockerfile v3/Cargo.toml v3/Cargo.lock v3/.gitignore v3/src v3/ui v3/plugins/abilities v3/worker.py v3/launch.py v3/promote.py \
+    # Gate config is protected state: tar may read only the two named JSON files.
+    sudo -n tar -cf - v3/Dockerfile v3/Cargo.toml v3/Cargo.lock v3/.gitignore v3/src v3/ui v3/plugins/abilities v3/plugins/gates v3/worker.py v3/launch.py v3/promote.py \
       v3/ui-baseline.json v3/tests v3/README.md v3/deploy.sh v3/config \
+      v3/data/config/gates/message_visibility_v1.json v3/data/config/gates/closing_status_v1.json \
       ui/shared/css/app1.css ui/shared/css/app2.css ui/shared/css/app3.css ui/shared/css/design-system.css ui/shared/css/index.css \
       ui/main-panel/agents/agents.html ui/main-panel/agents/agents.css ui/vendor/fonts ui/vendor/lucide ui/favicon.svg \
       | docker build -f v3/Dockerfile -t webagent-dev-v3:local -
     ;;
   build-loop)
-    tar -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/config v3/ui v3/plugins/abilities \
+    sudo -n tar -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/config v3/ui v3/plugins/abilities v3/plugins/gates \
+      v3/data/config/gates/message_visibility_v1.json v3/data/config/gates/closing_status_v1.json \
       | docker build -f v3/Dockerfile.loop -t webagent-dev-v3-loop:local -
     ;;
   start)

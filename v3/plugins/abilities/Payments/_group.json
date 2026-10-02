@@ -1,0 +1,10 @@
+{
+  "name": "Payments",
+  "icon": "credit-card",
+  "color": "#9ece6a",
+  "desc": "Accept payments and read transactions. Free to connect via OAuth; providers charge per-transaction fees.",
+  "entitlement_group": "financial_actions",
+  "risk_class": "write",
+  "action_class": "external_action",
+  "order": 8
+}

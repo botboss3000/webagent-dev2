@@ -1,0 +1,13 @@
+{
+  "display_name": "Google",
+  "kind": "oauth",
+  "description": "Gmail, Drive, Docs, and Calendar.",
+  "tools": [],
+  "icon": "chrome",
+  "color": "#4285F4",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

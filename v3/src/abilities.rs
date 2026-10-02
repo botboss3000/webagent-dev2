@@ -10,7 +10,16 @@ use std::{
 
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SKILL_BYTES: u64 = 32 * 1024;
+const MAX_SELECTABLE_SKILL_BYTES: u64 = 64 * 1024;
 const MAX_ABILITIES: usize = 128;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum EntryKind { Ability, VirtualCore, Oauth, Channel, Service, Placeholder }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Readiness { Ready, Pending, Placeholder }
 
 #[derive(Clone, Debug, Serialize)]
 struct Ability {
@@ -27,17 +36,26 @@ struct Ability {
     icon: Option<String>,
     color: Option<String>,
     order: i32,
+    kind: EntryKind,
+    readiness: Readiness,
+    config: Value,
     tools: Vec<String>,
     skill: Option<String>,
     tool_skills: BTreeMap<String, String>,
+    selectable_skills: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
 struct Manifest {
     display_name: String,
-    kind: String,
+    kind: EntryKind,
     description: String,
+    #[serde(default)]
     tools: Vec<String>,
+    #[serde(default)]
+    readiness: Option<Readiness>,
+    #[serde(default)]
+    config: Value,
     #[serde(default)]
     skill_summary: Option<String>,
     #[serde(default)]
@@ -88,8 +106,10 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 }
 
 fn optional_skill(path: &Path, limit: u64) -> Result<Option<String>> {
-    if !path.exists() {
-        return Ok(None);
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
     }
     let bytes = read_bytes(path, limit)?;
     let text = String::from_utf8(bytes)
@@ -104,6 +124,8 @@ impl Catalog {
     pub fn load(root: &Path) -> Result<Self> {
         let mut abilities = Vec::new();
         let mut ids = HashSet::new();
+        let mut owners = BTreeMap::new();
+        if root.exists() && fs::symlink_metadata(root)?.file_type().is_symlink() { bail!("Symlink catalog root"); }
         let groups = match fs::read_dir(root) {
             Ok(groups) => groups,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -114,6 +136,7 @@ impl Catalog {
         };
         for group in groups {
             let group = group?;
+            if group.file_type()?.is_symlink() { bail!("Symlink ability group"); }
             if !group.file_type()?.is_dir() {
                 continue;
             }
@@ -139,6 +162,7 @@ impl Catalog {
             }
             for folder in fs::read_dir(&group_path)? {
                 let folder = folder?;
+                if folder.file_type()?.is_symlink() { bail!("Symlink ability folder"); }
                 if !folder.file_type()?.is_dir() {
                     continue;
                 }
@@ -148,13 +172,10 @@ impl Catalog {
                 }
                 let ability_path = folder.path();
                 let manifest: Manifest = read_json(&ability_path.join(format!("{id}.json")))?;
-                if manifest.kind != "ability"
-                    || manifest.placeholder
-                    || manifest.display_name.is_empty()
+                if manifest.display_name.is_empty()
                     || manifest.display_name.len() > 100
                     || manifest.description.is_empty()
                     || manifest.description.len() > 1000
-                    || manifest.tools.is_empty()
                     || manifest.tools.len() > 64
                     || manifest
                         .skill_summary
@@ -167,9 +188,34 @@ impl Catalog {
                 {
                     bail!("Invalid active ability: {id}");
                 }
+                let readiness = manifest.readiness.clone().unwrap_or_else(|| {
+                    if manifest.placeholder || manifest.kind == EntryKind::Placeholder { Readiness::Placeholder }
+                    else if manifest.tools.iter().any(|tool| Self::supported(tool)) { Readiness::Ready }
+                    else { Readiness::Pending }
+                });
+                if (manifest.placeholder || manifest.kind == EntryKind::Placeholder)
+                    && (readiness != Readiness::Placeholder || !manifest.tools.is_empty()) {
+                    bail!("Invalid placeholder: {id}");
+                }
+                if readiness == Readiness::Ready &&
+                    (!matches!(manifest.kind, EntryKind::Ability | EntryKind::VirtualCore) ||
+                     !manifest.tools.iter().any(|tool| Self::supported(tool))) {
+                    bail!("Ready entry has no installed adapter: {id}");
+                }
+                for directory in ["tools", "skills"] {
+                    let path = ability_path.join(directory);
+                    if fs::symlink_metadata(&path).is_ok_and(|m| !m.file_type().is_dir()) {
+                        bail!("Invalid ability asset directory: {id}");
+                    }
+                }
                 let mut local = HashSet::new();
                 let mut tool_skills = BTreeMap::new();
                 for tool in &manifest.tools {
+                    if !valid_id(tool) { bail!("Invalid tool identifier: {tool}"); }
+                    // Installed schemas have exactly one authority-owning entry.
+                    if Self::supported(tool) && owners.insert(tool.clone(), id.clone()).is_some() {
+                        bail!("Duplicate installed tool owner: {tool}");
+                    }
                     if !local.insert(tool) {
                         bail!("Ability {id} declares a duplicate tool: {tool}");
                     }
@@ -179,6 +225,26 @@ impl Catalog {
                     )? {
                         tool_skills.insert(tool.clone(), skill);
                     }
+                }
+                let mut selectable_skills = BTreeMap::new();
+                let skills_path = ability_path.join("skills");
+                if skills_path.is_dir() {
+                    for asset in fs::read_dir(&skills_path)? {
+                        let asset = asset?;
+                        let filename = asset.file_name().to_string_lossy().to_string();
+                        let Some(key) = filename.strip_suffix(".skill.md") else {
+                            bail!("Invalid selectable skill asset: {id}");
+                        };
+                        if !valid_id(key) || selectable_skills.len() >= 32 {
+                            bail!("Invalid selectable skill identifier: {id}");
+                        }
+                        let text = optional_skill(&asset.path(), MAX_SELECTABLE_SKILL_BYTES)?
+                            .context("Missing selectable skill")?;
+                        selectable_skills.insert(key.to_owned(), text);
+                    }
+                }
+                if !manifest.config.is_null() && !manifest.config.is_object() {
+                    bail!("Invalid configuration metadata: {id}");
                 }
                 let skill = optional_skill(
                     &ability_path.join(format!("{id}.skill.md")),
@@ -197,9 +263,13 @@ impl Catalog {
                     icon: manifest.icon,
                     color: manifest.color,
                     order: manifest.order,
+                    kind: manifest.kind,
+                    readiness,
+                    config: manifest.config,
                     tools: manifest.tools,
                     skill,
                     tool_skills,
+                    selectable_skills,
                 });
                 if abilities.len() > MAX_ABILITIES {
                     bail!("Too many abilities");
@@ -224,7 +294,14 @@ impl Catalog {
     }
 
     fn present(ability: &Ability) -> bool {
-        ability.path.is_dir() && ability.path.join(format!("{}.json", ability.id)).is_file()
+        fs::symlink_metadata(&ability.path).is_ok_and(|m| m.file_type().is_dir())
+            && fs::symlink_metadata(ability.path.join(format!("{}.json", ability.id)))
+                .is_ok_and(|m| m.file_type().is_file())
+    }
+
+    fn executable(ability: &Ability) -> bool {
+        Self::present(ability) && ability.readiness == Readiness::Ready
+            && matches!(ability.kind, EntryKind::Ability | EntryKind::VirtualCore)
     }
 
     pub fn ids(&self) -> Vec<String> {
@@ -282,7 +359,7 @@ impl Catalog {
     }
 
     fn available(ability: &Ability, visibility: &Value, state: &Value) -> bool {
-        Self::present(ability)
+        Self::executable(ability)
             && !Self::is_off(visibility, &ability.id)
             && !Self::suppressed(state, &ability.id)
             && (Self::is_visible(visibility, &ability.id) || Self::active(state, &ability.id))
@@ -292,7 +369,7 @@ impl Catalog {
         let tools = ability
             .tools
             .iter()
-            .filter(|name| Self::allowed(policy, name) && Self::tool_mode(visibility, name) != "off")
+            .filter(|name| Self::executable(ability) && Self::supported(name) && Self::allowed(policy, name) && Self::tool_mode(visibility, name) != "off")
             .map(|name| json!({"name":name,"policy":policy["rules"][name],
                         "mode":Self::tool_mode(visibility,name),"supported":Self::supported(name)}))
             .collect::<Vec<_>>();
@@ -300,9 +377,11 @@ impl Catalog {
         let off = Self::is_off(visibility, &ability.id);
         json!({"id":ability.id,"group":ability.group,"group_name":ability.group_name,
             "name":ability.name,"description":ability.description,
+            "kind":ability.kind,"readiness":ability.readiness,"config":ability.config,
             "skill_summary":ability.skill_summary,"migration_note":ability.migration_note,
             "icon":ability.icon,"color":ability.color,"tools":tools,
             "has_skill":ability.skill.is_some(),
+            "selectable_skills":ability.selectable_skills.keys().collect::<Vec<_>>(),
             "skill_visibility":Self::skill_mode(visibility, &ability.id),
             "visibility":if off {"off"} else if visible {"visible"} else {"discoverable"},
             "active":Self::active(state, &ability.id)})
@@ -312,10 +391,10 @@ impl Catalog {
         self.abilities
             .iter()
             .filter(|ability| {
-                Self::present(ability)
+                Self::executable(ability)
                     && !Self::is_off(visibility, &ability.id)
                     && !Self::suppressed(state, &ability.id)
-                    && ability.tools.iter().any(|name| Self::allowed(policy, name) && Self::tool_mode(visibility,name) != "off")
+                    && ability.tools.iter().any(|name| Self::supported(name) && Self::allowed(policy, name) && Self::tool_mode(visibility,name) != "off")
             })
             .map(|ability| Self::describe(ability, policy, visibility, state))
             .collect()
@@ -327,7 +406,7 @@ impl Catalog {
             .filter(|ability| Self::present(ability))
             .map(|ability| {
                 let mut item = Self::describe(ability, policy, visibility, &Value::Null);
-                item["available"] = json!(ability.tools.iter().any(|name| Self::supported(name)));
+                item["available"] = json!(Self::executable(ability) && ability.tools.iter().any(|name| Self::supported(name)));
                 item["tools"] = json!(ability.tools.iter().map(|name| {
                     json!({"name":name,"policy":policy["rules"][name],
                         "mode":Self::tool_mode(visibility,name),"supported":Self::supported(name)})
@@ -343,7 +422,7 @@ impl Catalog {
         _loaded:&Value) -> Vec<String> {
         if !Self::supported(name) {return Vec::new();}
         self.abilities.iter().filter(|ability| {
-            Self::present(ability) && ability.tools.iter().any(|tool|tool==name)
+            Self::executable(ability) && ability.tools.iter().any(|tool|tool==name)
         }).map(|ability|ability.id.clone()).collect()
     }
 
@@ -360,7 +439,7 @@ impl Catalog {
         let mut available = false;
         let mut visible = false;
         for ability in &self.abilities {
-            if !Self::present(ability) || !ability.tools.iter().any(|tool| tool == name) {
+            if !Self::executable(ability) || !ability.tools.iter().any(|tool| tool == name) {
                 continue;
             }
             available |= supported;
@@ -443,11 +522,11 @@ impl Catalog {
         const MARKER_RESERVE: usize = 256;
         let mut text = String::new();
         for ability in &self.abilities {
-            if !Self::present(ability)
+            if !Self::executable(ability)
                 || !allow_ability(&ability.id)
                 || Self::is_off(visibility, &ability.id)
                 || !ability.tools.iter().any(|tool| {
-                    Self::allowed(policy, tool) && allow_tool(tool)
+                    Self::supported(tool) && Self::allowed(policy, tool) && allow_tool(tool)
                 })
                 || Self::suppressed(state, &ability.id)
                 || !(Self::is_visible(visibility, &ability.id) || Self::active(state, &ability.id))
@@ -455,14 +534,19 @@ impl Catalog {
                 continue;
             }
             let mut part = format!("\n\nVisible ability {} ({}):", ability.id, ability.name);
-            if Self::skill_mode(visibility, &ability.id) == "visible" {
+            // SKILL-LIFETIME: activated discoverable guidance is rebuilt from the
+            // catalog, independent of transcript compaction. Off and suppressed
+            // remain authoritative; authorization was checked above.
+            if Self::skill_mode(visibility, &ability.id) == "visible"
+                || (Self::skill_mode(visibility, &ability.id) == "discoverable"
+                    && Self::active(state, &ability.id)) {
                 if let Some(skill) = &ability.skill {
                     part.push_str("\n");
                     part.push_str(skill);
                 }
             }
             for (tool, skill) in &ability.tool_skills {
-                if Self::allowed(policy, tool)
+                if Self::supported(tool) && Self::allowed(policy, tool)
                     && allow_tool(tool)
                     && Self::tool_mode(visibility, tool) == "visible" {
                     part.push_str("\n\nTool ");
@@ -535,6 +619,9 @@ impl Catalog {
                 let Some(entry) = self.abilities.iter().find(|ability| ability.id == id && Self::present(ability)) else {
                     return json!({"status":"denied","output":"Ability unavailable"});
                 };
+                if !Self::executable(entry) {
+                    return json!({"status":"denied","output":"Ability pending or non-executable"});
+                }
                 if Self::is_off(visibility, id) {
                     return json!({"status":"denied","output":"Ability disabled for this agent"});
                 }
@@ -555,11 +642,13 @@ impl Catalog {
                 let permitted_skills = entry
                     .tool_skills
                     .iter()
-                    .filter(|(tool, _)| Self::allowed(policy, tool) && Self::tool_mode(visibility, tool) != "off")
+                    .filter(|(tool, _)| Self::supported(tool) && Self::allowed(policy, tool) && Self::tool_mode(visibility, tool) != "off")
                     .collect::<BTreeMap<_, _>>();
                 json!({"status":"ok","ability":ability,
                     "skill":if Self::skill_mode(visibility, id) == "off" {None} else {entry.skill.as_ref()},
-                    "tool_skills":permitted_skills,"catalog_version":self.version})
+                    "tool_skills":permitted_skills,
+                    "selectable_skills":entry.selectable_skills.keys().collect::<Vec<_>>(),
+                    "catalog_version":self.version})
             }
             _ => json!({"status":"denied","output":"Unknown discovery operation"}),
         }
@@ -871,11 +960,103 @@ mod tests {
             &mut run, &policy, &visibility, &state)["skill"], "Use scoped workspace tools.");
     }
 
+    // SKILL-LIFETIME-REGRESSION: activation survives transcript folding but not unload.
+    #[test]
+    fn activated_skill_is_independent_of_transcript() {
+        let (_root,catalog)=fixture();let p=policy();
+        let v=json!({"visibility":{"codebase_admin":"discoverable"},"skill_visibility":{"codebase_admin":"discoverable"}});
+        let active=json!({"active":["codebase_admin"],"suppressed":[]});
+        assert!(catalog.visible_guidance(&p,&v,&active).contains("Use scoped workspace tools."));
+        let suppressed=json!({"active":[],"suppressed":["codebase_admin"]});
+        assert!(!catalog.visible_guidance(&p,&v,&suppressed).contains("Use scoped workspace tools."));
+    }
+
+    #[test]
+    fn typed_pending_entries_never_expose_tools_or_guidance() {
+        let (root, _) = fixture();
+        for (id, kind) in [("core_entry", "virtual_core"), ("connection", "oauth"),
+            ("chat_channel", "channel"), ("background", "service"), ("future", "placeholder")] {
+            let path = root.path().join("Other").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join(format!("{id}.json")), serde_json::to_vec(&json!({
+                "display_name":id,"description":"Catalog only","kind":kind,
+                "readiness":if kind == "placeholder" {"placeholder"} else {"pending"},
+                "tools":[], "config":{"settings":[]}
+            })).unwrap()).unwrap();
+            fs::write(path.join(format!("{id}.skill.md")), "Unsafe v2 instructions").unwrap();
+        }
+        let catalog = Catalog::load(root.path()).unwrap();
+        assert_eq!(catalog.configuration_catalog(&policy(), &Value::Null).len(), 6);
+        for id in ["core_entry", "connection", "chat_channel", "background", "future"] {
+            let vis = json!({"visibility":{id:"visible"}});
+            let mut run = json!({"loaded_abilities":[]});
+            assert_eq!(catalog.discover_with("load_ability", &json!({"ability_id":id}),
+                &mut run, &policy(), &vis, &Value::Null)["status"], "denied");
+            assert_eq!(run["loaded_abilities"], json!([]));
+            assert!(!catalog.visible_guidance(&policy(), &vis, &Value::Null).contains("Unsafe v2"));
+        }
+    }
+
+    #[test]
+    fn installed_tool_ownership_and_identifiers_fail_closed() {
+        let (root, _) = fixture();
+        let path = root.path().join("Other/duplicate");
+        fs::create_dir_all(&path).unwrap();
+        for tool in ["file_read", "../../escape"] {
+            fs::write(path.join("duplicate.json"), serde_json::to_vec(&json!({
+                "display_name":"Duplicate","description":"Invalid owner","kind":"ability",
+                "tools":[tool]
+            })).unwrap()).unwrap();
+            assert!(Catalog::load(root.path()).is_err());
+        }
+    }
+
+    #[test]
+    fn unsupported_allow_rule_does_not_expose_catalog_or_skill() {
+        let (root, _) = fixture();
+        let path = root.path().join("Other/legacy");
+        fs::create_dir_all(path.join("tools")).unwrap();
+        fs::write(path.join("legacy.json"), r#"{"display_name":"Legacy","description":"Pending","kind":"ability","tools":["v2_only"]}"#).unwrap();
+        fs::write(path.join("legacy.skill.md"), "Unsafe guidance").unwrap();
+        let catalog = Catalog::load(root.path()).unwrap();
+        let p = json!({"rules":{"v2_only":"allow"}});
+        let v = json!({"visibility":{"legacy":"visible"}});
+        assert!(catalog.catalog_with(&p, &v, &Value::Null).is_empty());
+        assert!(catalog.visible_guidance(&p, &v, &Value::Null).is_empty());
+    }
+
+    #[test]
+    fn malformed_and_oversized_assets_fail_closed() {
+        let (root, _) = fixture();
+        let path = root.path().join("Administrator/codebase_admin/codebase_admin.json");
+        let original = fs::read(&path).unwrap();
+        for bytes in [b"{".to_vec(), vec![b' '; MAX_MANIFEST_BYTES as usize + 1]] {
+            fs::write(&path, bytes).unwrap();
+            assert!(Catalog::load(root.path()).is_err());
+        }
+        fs::write(&path, original).unwrap();
+        let skill = root.path().join("Administrator/codebase_admin/tools/file_edit.skill.md");
+        fs::write(&skill, vec![b'x'; MAX_SKILL_BYTES as usize + 1]).unwrap();
+        assert!(Catalog::load(root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_assets_fail_closed() {
+        use std::os::unix::fs::symlink;
+        let (root, _) = fixture();
+        let skill = root.path().join("Administrator/codebase_admin/tools/file_edit.skill.md");
+        fs::remove_file(&skill).unwrap();
+        symlink(root.path().join("missing"), &skill).unwrap();
+        assert!(Catalog::load(root.path()).is_err());
+    }
+
     #[test]
     fn production_seed_manifest_loads() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities");
         let catalog = Catalog::load(&root).unwrap();
-        assert_eq!(catalog.abilities.len(), 8);
+        assert_eq!(catalog.abilities.len(), 82);
+        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 1);
         assert!(catalog.abilities.iter().any(|ability| ability.id == "codebase_admin"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "diagnostics"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "terminal_control"));

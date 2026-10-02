@@ -744,7 +744,7 @@ function addChatBubble(role, text, extraClass, imageUrl, turnId, msgId, createdA
   if (role === 'user') {
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = 'You';
+    label.textContent = document.getElementById('chat-panel')?.dataset.userHeadingLabel ?? 'You';
     bubble.appendChild(label);
   }
   // Agent responses, including terminal closers, retain the same sender heading.
@@ -752,7 +752,7 @@ function addChatBubble(role, text, extraClass, imageUrl, turnId, msgId, createdA
       && extraClass !== 'summary-bubble') {
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = 'Agent';
+    label.textContent = document.getElementById('chat-panel')?.dataset.agentHeadingLabel ?? 'Agent';
     bubble.appendChild(label);
   }
   if (role === 'info') {

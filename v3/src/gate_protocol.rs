@@ -20,8 +20,8 @@ const GATE_UID: u32 = 1102;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateOutcome {
     Pass,
-    Reject { reason_code: String },
-    Skipped { reason_code: String },
+    Reject { module_id: String, reason_code: String },
+    Skipped { module_id: String, reason_code: String },
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ enum ErrorPolicy { Mandatory, Optional }
 struct Request<'a> {
     protocol_version: u32,
     request_id: String,
-    module_id: &'static str,
+    module_id: &'a str,
     checkpoint: &'static str,
     run_id: &'a str,
     generation: &'a str,
@@ -72,46 +72,44 @@ struct Response {
 #[serde(rename_all = "snake_case")]
 enum Decision { Pass, Reject }
 
-/// The installed module is opt-in. An explicit rejection always rejects;
-/// optional mode skips only transport/protocol failures and records that skip.
+/// Python modules inspect bounded facts only. Rust owns activation, error policy,
+/// native checks, and the final chat write; a worker response cannot publish.
 pub async fn evaluate_publication(
     socket: &Path,
     policy: &crate::workflow::Policy,
     input: &PublicationGateInput,
 ) -> Result<GateOutcome> {
-    let Some(modules) = policy.modules.get("publication") else {
-        return Ok(GateOutcome::Pass);
-    };
-    let Some(configured) = modules.first() else {
-        return Ok(GateOutcome::Pass);
-    };
-    let error_policy = match configured.as_str() {
-        MODULE_ID => ErrorPolicy::Mandatory,
-        "optional:publication_size_guard_v1" => ErrorPolicy::Optional,
-        _ => bail!("Uninstalled publication module"),
-    };
-    if modules.len() != 1 {
-        bail!("Only one publication module is installed");
-    }
-    match timeout(
-        Duration::from_secs(1),
-        exchange(socket, input, GATE_UID),
-    ).await {
-        Ok(Ok(outcome)) => Ok(outcome),
-        Ok(Err(_)) | Err(_) => match error_policy {
-            ErrorPolicy::Mandatory => Ok(GateOutcome::Reject {
-                reason_code: "module_unavailable".into(),
+    let selections = crate::gate_registry::selected(
+        policy, crate::workflow::Checkpoint::Publication)?;
+    for selected in selections {
+        if selected.manifest.runtime != crate::gate_registry::Runtime::PythonGate {
+            continue;
+        }
+        let error_policy = if selected.optional { ErrorPolicy::Optional }
+            else { ErrorPolicy::Mandatory };
+        match timeout(
+            Duration::from_secs(1),
+            exchange(socket, input, &selected.id, GATE_UID),
+        ).await {
+            Ok(Ok(GateOutcome::Pass)) => {},
+            Ok(Ok(other)) => return Ok(other),
+            Ok(Err(_)) | Err(_) => return Ok(match error_policy {
+                ErrorPolicy::Mandatory => GateOutcome::Reject {
+                    module_id: selected.id, reason_code: "module_unavailable".into(),
+                },
+                ErrorPolicy::Optional => GateOutcome::Skipped {
+                    module_id: selected.id, reason_code: "module_unavailable".into(),
+                },
             }),
-            ErrorPolicy::Optional => Ok(GateOutcome::Skipped {
-                reason_code: "module_unavailable".into(),
-            }),
-        },
+        }
     }
+    Ok(GateOutcome::Pass)
 }
 
 async fn exchange(
     socket: &Path,
     input: &PublicationGateInput,
+    module_id: &str,
     expected_uid: u32,
 ) -> Result<GateOutcome> {
     let mut stream = UnixStream::connect(socket).await.context("gate unavailable")?;
@@ -120,13 +118,13 @@ async fn exchange(
     }
     let identity = serde_json::to_vec(&(
         &input.run_id, &input.generation, &input.policy_revision,
-        &input.input_digest, input.turn, input.call_index,
+        &input.input_digest, input.turn, input.call_index, module_id,
     ))?;
     let request_id = hex::encode(Sha256::digest(identity));
     let request = Request {
         protocol_version: PROTOCOL_VERSION,
         request_id: request_id.clone(),
-        module_id: MODULE_ID,
+        module_id,
         checkpoint: "publication",
         run_id: &input.run_id,
         generation: &input.generation,
@@ -151,13 +149,13 @@ async fn exchange(
     let response: Response = serde_json::from_slice(&frame)?;
     if response.protocol_version != PROTOCOL_VERSION
         || response.request_id != request_id
-        || response.module_id != MODULE_ID {
+        || response.module_id != module_id {
         bail!("gate response identity mismatch");
     }
     match (response.decision, response.reason_code) {
         (Decision::Pass, None) => Ok(GateOutcome::Pass),
         (Decision::Reject, Some(reason)) if reason == "publication_size_exceeded" =>
-            Ok(GateOutcome::Reject { reason_code: reason }),
+            Ok(GateOutcome::Reject { module_id: module_id.into(), reason_code: reason }),
         _ => bail!("invalid gate decision"),
     }
 }
@@ -200,7 +198,7 @@ mod tests {
             "request_id":r["request_id"],"module_id":MODULE_ID,"decision":"pass",
             "reason_code":null})).await;
         let peer_uid = std::fs::metadata(&path).unwrap().uid();
-        assert_eq!(exchange(&path, &input(), peer_uid).await.unwrap(),
+        assert_eq!(exchange(&path, &input(), MODULE_ID, peer_uid).await.unwrap(),
             GateOutcome::Pass);
     }
 
@@ -210,8 +208,8 @@ mod tests {
             "request_id":r["request_id"],"module_id":MODULE_ID,"decision":"reject",
             "reason_code":"publication_size_exceeded"})).await;
         let peer_uid = std::fs::metadata(&path).unwrap().uid();
-        assert_eq!(exchange(&path, &input(), peer_uid).await.unwrap(),
-            GateOutcome::Reject { reason_code:"publication_size_exceeded".into() });
+        assert_eq!(exchange(&path, &input(), MODULE_ID, peer_uid).await.unwrap(),
+            GateOutcome::Reject { module_id: MODULE_ID.into(), reason_code:"publication_size_exceeded".into() });
     }
 
     #[tokio::test]
@@ -223,9 +221,9 @@ mod tests {
         let optional = crate::workflow::Policy::resolve(Some(
             &json!({"modules":{"publication":["optional:publication_size_guard_v1"]}}))).unwrap();
         assert_eq!(evaluate_publication(&missing, &mandatory, &input()).await.unwrap(),
-            GateOutcome::Reject { reason_code:"module_unavailable".into() });
+            GateOutcome::Reject { module_id: MODULE_ID.into(), reason_code:"module_unavailable".into() });
         assert_eq!(evaluate_publication(&missing, &optional, &input()).await.unwrap(),
-            GateOutcome::Skipped { reason_code:"module_unavailable".into() });
+            GateOutcome::Skipped { module_id: MODULE_ID.into(), reason_code:"module_unavailable".into() });
     }
 
     #[tokio::test]
@@ -234,10 +232,10 @@ mod tests {
             "request_id":"wrong","module_id":MODULE_ID,"decision":"pass",
             "reason_code":null})).await;
         let peer_uid = std::fs::metadata(&path).unwrap().uid();
-        assert!(exchange(&path, &input(), peer_uid).await.is_err());
+        assert!(exchange(&path, &input(), crate::gate_registry::PUBLICATION_SIZE, peer_uid).await.is_err());
         let (_dir, path) = mock(|r| json!({"protocol_version":1,
             "request_id":r["request_id"],"module_id":MODULE_ID,"decision":"pass",
             "reason_code":null})).await;
-        assert!(exchange(&path, &input(), u32::MAX).await.is_err());
+        assert!(exchange(&path, &input(), MODULE_ID, u32::MAX).await.is_err());
     }
 }

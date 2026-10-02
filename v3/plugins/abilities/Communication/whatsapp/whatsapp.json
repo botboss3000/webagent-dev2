@@ -1,0 +1,13 @@
+{
+  "display_name": "WhatsApp",
+  "kind": "placeholder",
+  "description": "Send and receive WhatsApp messages.",
+  "tools": [],
+  "icon": "phone",
+  "color": "#26A5E4",
+  "order": 2,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

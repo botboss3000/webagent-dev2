@@ -89,3 +89,31 @@ main.js
 2. **`initChat()`** — sets remaining chat methods, wires input/send/stop/continue, execution mode, scroll chevron, gate, draft restore
 3. **`registerSessionApi()`** — sets session API methods on `app`, loads saved focus positions
 4. **`initSessions()`** — builds dropdown UI, agent picker, header buttons, starts polling (TUI bridge, sessions, related sessions), runs boot sequence (user-panel → sessions → load current chat)
+
+## JSON presentation controls
+
+`data/config/chat_ui.json` → `chat_common` supplies defaults; surface and agent
+profiles may override individual values. Reload after editing.
+
+- `message_bubbles.user/agent`: `radius_px`, unitless `line_height`, plus existing
+  `bg_dark`, `bg_light`, `border` and shared text/padding settings.
+- `message_headings.user/agent`: `visible`, `label`, optional `avatar_text`.
+- `message_spacing`: `message_gap_px`, `turn_gap_px` (extra space before a user
+  turn), `activity_offset_px` (negative pulls activity closer),
+  `content_to_gutter_px`, `gutter_bottom_px`.
+- `gutter_presentation`: `reveal` (`click`, `engagement`, `always`),
+  `transition_ms`, `icon_size_px`, `font_size_px`, `control_gap_px`,
+  `rest_opacity`, `engaged_opacity`. Focus reveals controls in every mode.
+- `glimmer.user/agent`: `enabled`, `intensity` (0–1), `radius_px`,
+  `transition_ms`. Colors follow the theme; reduced motion disables transitions.
+- `composer`: `placeholder` (`null` uses the existing message placeholder),
+  `enter_behavior` (`auto`, `send`, `newline`). Auto sends on desktop and inserts
+  a newline on touch devices. Shift+Enter and IME composition never send;
+  Ctrl/Cmd+Enter sends in newline mode.
+- Composer geometry is configured independently for active and idle footers in
+  `active_footer/idle_footer.chat_pill.controls.textarea`: `font_size`,
+  `line_height`, `min_height`, `max_height`, and `padding` (CSS lengths).
+  Optional textarea `placeholder` and `enter_behavior` override shared settings.
+
+Numeric presentation values are bounded and invalid values fall back to defaults.
+The shared helpers reset profile-specific presentation when switching profiles.

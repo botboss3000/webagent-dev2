@@ -2818,7 +2818,8 @@ async fn prompt_slot_api_requires_auth_csrf_and_current_revision() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), 65536)
+    // The typed 82-entry configuration catalog includes bounded descriptor metadata.
+    let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
         .await
         .unwrap();
     let created: Value = serde_json::from_slice(&bytes).unwrap();
@@ -2961,7 +2962,9 @@ async fn ability_request(
         .await
         .unwrap();
     let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 65536)
+    // CATALOG-TEST-BOUND: the drop-in catalog exceeds 64 KiB; retain a bounded
+    // response reader without truncating authorization/revision assertions.
+    let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
         .await
         .unwrap();
     let body = if bytes.is_empty() {
@@ -3951,7 +3954,8 @@ async fn progress_route_is_session_bound_and_tracks_durable_states() {
     assert!(waiting_view["checkpoint_decisions"].as_array().unwrap().iter()
         .any(|receipt| receipt["checkpoint"] == "pre_tool"
             && receipt["decision"] == "pass"));
-    assert_eq!(waiting_view.as_object().unwrap().len(), 11);
+    assert_eq!(waiting_view.as_object().unwrap().len(), 12);
+    assert!(waiting_view["closing"].is_null());
 
     run["status"] = json!("recovery");
     run["uncertain"] = json!(true);
@@ -4623,4 +4627,176 @@ async fn rolling_compaction_uses_normal_model_and_persists_checkpoint() {
     assert!(session["checkpoint_through"].as_u64().unwrap() > 0);
     assert!(app.store.context(&sid).await.unwrap()[0].to_string().contains("Remember original goal"));
     server.abort();
+}
+#[tokio::test]
+async fn parallel_batch_overlaps_reads_rejects_write_and_preserves_result_order() {
+    use tokio::io::{AsyncBufReadExt,AsyncWriteExt,BufReader};
+    use tokio::net::UnixListener;
+    let (_root,app)=fixture().await;
+    let sid=conversation(&app).await;
+    activate_codebase(&app,&sid).await;
+    let id=queued(&app,&sid).await;
+    let mut run=app.run(&id).await.unwrap();
+    run["phase"]=json!("tools");
+    run["loaded_abilities"]=json!(["codebase_admin"]);
+    run["calls"]=json!([
+        {"type":"function_call","call_id":"read-one","name":"file_list","arguments":"{\"path\":\"one\"}"},
+        {"type":"function_call","call_id":"read-two","name":"file_list","arguments":"{\"path\":\"two\"}"},
+        {"type":"function_call","call_id":"write-rejected","name":"file_write","arguments":"{\"path\":\"x\",\"content\":\"y\"}"}
+    ]);
+    for call in run["calls"].as_array().unwrap().clone() {
+        run["input"].as_array_mut().unwrap().push(call);
+    }
+    app.save(&mut run).await.unwrap();
+    running(&app,&id,"batch-generation").await;
+    let listener=UnixListener::bind(&app.tool_socket).unwrap();
+    // Neither connection gets a reply until both arrive: serial dispatch times out.
+    let worker=tokio::spawn(async move {
+        let (first,_)=listener.accept().await.unwrap();
+        let (second,_)=listener.accept().await.unwrap();
+        let mut requests=Vec::new();
+        for stream in [first,second] {
+            let mut reader=BufReader::new(stream);
+            let mut line=String::new();reader.read_line(&mut line).await.unwrap();
+            requests.push((reader,serde_json::from_str::<Value>(&line).unwrap()));
+        }
+        for (mut reader,request) in requests.into_iter().rev() {
+            let reply=json!({"id":request["id"],"status":"success",
+                "output":{"path":request["arguments"]["path"]}});
+            reader.get_mut().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+        }
+    });
+    let policy=current_workflow_policy(&app).await.unwrap();
+    let access=app.store.live_access(app.store.current_user_id(),"shared_default").await.unwrap();
+    let guard=app.gate.lock().await;
+    tokio::time::timeout(Duration::from_secs(5),
+        parallel_batch::execute_parallel_batch(&app,&id,"batch-generation",
+            &CancellationToken::new(),&policy,&access,
+            app.run(&id).await.unwrap(),guard)).await.unwrap().unwrap();
+    worker.await.unwrap();
+    let after=app.run(&id).await.unwrap();
+    assert_eq!(after["batch"][0]["state"],"done");
+    assert_eq!(after["batch"][1]["state"],"done");
+    assert_eq!(after["batch"][2]["result"]["status"],"denied");
+    let guard=app.gate.lock().await;
+    parallel_batch::execute_parallel_batch(&app,&id,"batch-generation",
+        &CancellationToken::new(),&policy,&access,after,guard).await.unwrap();
+    let finished=app.run(&id).await.unwrap();
+    assert_eq!(finished["phase"],"model");
+    assert_eq!(finished["call_index"],3);
+    let outputs=finished["input"].as_array().unwrap().iter()
+        .filter(|item|item["type"]=="function_call_output")
+        .map(|item|item["call_id"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(outputs,vec!["read-one","read-two","write-rejected"]);
+    let history=app.store.context(&sid).await.unwrap();
+    assert_eq!(history.iter().filter(|item|item["type"]=="function_call_output").count(),3);
+}
+
+#[tokio::test]
+async fn parallel_batch_rejects_duplicate_provider_call_ids_before_dispatch() {
+    let (_root,app)=fixture().await;
+    let sid=conversation(&app).await;
+    let id=queued(&app,&sid).await;
+    let mut run=app.run(&id).await.unwrap();
+    run["phase"]=json!("tools");
+    run["calls"]=json!([
+        {"type":"function_call","call_id":"duplicate","name":"file_list","arguments":"{}"},
+        {"type":"function_call","call_id":"duplicate","name":"file_list","arguments":"{}"}
+    ]);
+    app.save(&mut run).await.unwrap();
+    running(&app,&id,"batch-duplicate").await;
+    let policy=current_workflow_policy(&app).await.unwrap();
+    let access=app.store.live_access(app.store.current_user_id(),"shared_default").await.unwrap();
+    let guard=app.gate.lock().await;
+    parallel_batch::execute_parallel_batch(&app,&id,"batch-duplicate",
+        &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard)
+        .await.unwrap();
+    let failed=app.run(&id).await.unwrap();
+    assert_eq!(failed["status"],"failed");
+    assert!(failed["error"].as_str().unwrap().contains("duplicate"));
+}
+#[tokio::test]
+async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call() {
+    use tokio::io::{AsyncBufReadExt,AsyncWriteExt,BufReader};
+    use tokio::net::UnixListener;
+    let (_root,app)=fixture().await;
+    let mut config=loop_runtime::Config::read(&app.runtime_path).unwrap();
+    config.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
+    config.persist(&app.runtime_path).unwrap();
+    let sid=conversation(&app).await;
+    activate_codebase(&app,&sid).await;
+    let id=queued(&app,&sid).await;
+    let mut run=app.run(&id).await.unwrap();
+    run["phase"]=json!("tools");
+    run["loaded_abilities"]=json!(["codebase_admin"]);
+    run["calls"]=json!([
+        {"type":"function_call","call_id":"write-one","name":"file_write",
+            "arguments":"{\"path\":\"one\",\"content\":\"first\"}"},
+        {"type":"function_call","call_id":"write-two","name":"file_write",
+            "arguments":"{\"path\":\"two\",\"content\":\"second\"}"}
+    ]);
+    for call in run["calls"].as_array().unwrap().clone() {
+        run["input"].as_array_mut().unwrap().push(call);
+    }
+    app.save(&mut run).await.unwrap();
+    let policy=current_workflow_policy(&app).await.unwrap();
+    let access=app.store.live_access(app.store.current_user_id(),"shared_default").await.unwrap();
+    running(&app,&id,"first").await;
+    for generation in ["first","second"] {
+        let guard=app.gate.lock().await;
+        parallel_batch::execute_parallel_batch(&app,&id,generation,
+            &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard)
+            .await.unwrap();
+        let waiting=app.run(&id).await.unwrap();
+        assert_eq!(waiting["status"],"waiting_approval");
+        let approval_id=waiting["pending"]["id"].as_str().unwrap().to_owned();
+        approval(State(app.clone()),Path(approval_id),Json(json!({
+            "client_request_id":format!("approve-{generation}"),"decision":"approve"
+        }))).await.unwrap();
+        if generation=="first" {running(&app,&id,"second").await;}
+    }
+    running(&app,&id,"third").await;
+    let listener=UnixListener::bind(&app.tool_socket).unwrap();
+    let worker=tokio::spawn(async move {
+        let (first,_)=listener.accept().await.unwrap();
+        let (second,_)=listener.accept().await.unwrap();
+        for stream in [first,second] {
+            let mut reader=BufReader::new(stream);
+            let mut line=String::new();reader.read_line(&mut line).await.unwrap();
+            let request:Value=serde_json::from_str(&line).unwrap();
+            let status=if request["arguments"]["path"]=="two" {"uncertain"} else {"success"};
+            let reply=json!({"id":request["id"],"status":status,
+                "output":{"path":request["arguments"]["path"]}});
+            reader.get_mut().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+        }
+    });
+    let guard=app.gate.lock().await;
+    tokio::time::timeout(Duration::from_secs(5),
+        parallel_batch::execute_parallel_batch(&app,&id,"third",
+            &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard))
+        .await.unwrap().unwrap();
+    worker.await.unwrap();
+    let recovering=app.run(&id).await.unwrap();
+    assert_eq!(recovering["status"],"recovery");
+    assert_eq!(recovering["batch"][0]["state"],"done");
+    assert_eq!(recovering["batch"][1]["state"],"uncertain");
+    command(State(app.clone()),Path((id.clone(),"recovery".into())),
+        Json(json!({"client_request_id":"accept-two","decision":"accept",
+            "call_id":"write-two","output":"verified effect"}))).await.unwrap();
+    running(&app,&id,"fourth").await;
+    let guard=app.gate.lock().await;
+    parallel_batch::execute_parallel_batch(&app,&id,"fourth",
+        &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard)
+        .await.unwrap();
+    let done=app.run(&id).await.unwrap();
+    assert_eq!(done["phase"],"model");
+    assert_eq!(done["call_index"],2);
+    let outputs=done["input"].as_array().unwrap().iter()
+        .filter(|item|item["type"]=="function_call_output")
+        .map(|item|item["call_id"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(outputs,vec!["write-one","write-two"]);
+    assert!(done["workflow"]["batch_receipts"]["write-one"].is_object());
+    assert!(done["workflow"]["batch_receipts"]["write-two"].is_object());
+    assert_eq!(app.store.context(&sid).await.unwrap().iter()
+        .filter(|item|item["type"]=="function_call_output").count(),2);
 }

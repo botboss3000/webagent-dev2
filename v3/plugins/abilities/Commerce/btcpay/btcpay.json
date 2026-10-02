@@ -1,0 +1,17 @@
+{
+  "display_name": "BTCPay Server",
+  "kind": "ability",
+  "description": "Query and create hosted Bitcoin and Lightning invoices on BTCPay Server.",
+  "tools": [
+    "btcpay_list_invoices",
+    "btcpay_get_invoice",
+    "btcpay_create_invoice"
+  ],
+  "icon": "bitcoin",
+  "color": "#51b13e",
+  "order": 10,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

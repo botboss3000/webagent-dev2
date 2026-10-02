@@ -5,6 +5,8 @@ COPY v3/src ./src
 # COMPACTION CONFIG: mirror Dockerfile for tests; deploy.sh mounts the same
 # external configuration for the loop and API processes at runtime.
 COPY v3/config ./config
+COPY v3/data/config/gates ./data/config/gates
+COPY v3/plugins/gates ./plugins/gates
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
 ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
@@ -17,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd -g 1100 v3 && useradd -u 1100 -g 1100 -M -s /usr/sbin/nologin v3loop
 COPY --from=builder /build/target/release/webagent-v3 /usr/local/bin/webagent-v3
 COPY v3/plugins/abilities /opt/v3/plugins/abilities
+COPY v3/plugins/gates /opt/v3/plugins/gates
 ENV V3_PROCESS_ROLE=loop V3_STATE_ROOT=/state V3_WORKSPACE_ROOT=/workspaces
 USER 1100:1100
 HEALTHCHECK --interval=5s --timeout=3s --start-period=20s --retries=3 CMD ["env","V3_PROCESS_ROLE=health","/usr/local/bin/webagent-v3"]

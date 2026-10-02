@@ -1,0 +1,13 @@
+{
+  "display_name": "Email",
+  "kind": "placeholder",
+  "description": "Send and receive email via SMTP/IMAP.",
+  "tools": [],
+  "icon": "mail",
+  "color": "#26A5E4",
+  "order": 5,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

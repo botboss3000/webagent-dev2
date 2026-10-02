@@ -17,7 +17,28 @@ PROTOCOL_VERSION = 1
 MODULE_ID = "publication_size_guard_v1"
 SOCKET = Path(os.environ.get("V3_GATE_SOCKET", "/run/v3/gate/gate.sock"))
 MAX_FRAME = 16 * 1024
-MAX_PUBLICATION_BYTES = 8192
+def publication_limit(manifest):
+    # The optional plugin's own JSON is packaged with this isolated worker.
+    # Rust validates activation and still enforces the native publication limit.
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "schema_version", "id", "checkpoint", "runtime", "config"
+    }:
+        raise ValueError("invalid publication plugin manifest")
+    if (type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
+            or manifest["id"] != MODULE_ID or manifest["checkpoint"] != "publication"
+            or manifest["runtime"] != "python_gate"):
+        raise ValueError("invalid publication plugin binding")
+    config = manifest["config"]
+    if not isinstance(config, dict) or set(config) != {"max_text_bytes"}:
+        raise ValueError("invalid publication plugin config")
+    value = config["max_text_bytes"]
+    if type(value) is not int or not 1 <= value <= 262144:
+        raise ValueError("invalid publication plugin size")
+    return value
+
+
+MANIFEST_PATH = Path(__file__).resolve().parent / "plugins/gates/publication_size_guard_v1.json"
+MAX_PUBLICATION_BYTES = publication_limit(json.loads(MANIFEST_PATH.read_text()))
 APP_UID = 1100
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 REQUEST_FIELDS = {

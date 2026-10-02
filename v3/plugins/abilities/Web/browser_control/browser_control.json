@@ -1,0 +1,23 @@
+{
+  "display_name": "Browser Control",
+  "kind": "ability",
+  "description": "Drive a browser, make HTTP requests, and act AS the user on sites you're logged into (using your live browser session's cookies). Can drive the in-app headless browser OR switch a session to the real browser on the user's device. Optional pasted-cookie fallback.",
+  "tools": [
+    "browser_action",
+    "browser_backend",
+    "http_request",
+    "web_session_status",
+    "web_session_fetch",
+    "web_session_graphql",
+    "vault_login",
+    "cookie_allowlist",
+    "browser_popup"
+  ],
+  "icon": "mouse-pointer-2",
+  "color": "#9ece6a",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

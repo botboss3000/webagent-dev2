@@ -195,168 +195,7 @@ function renderUserDropdown() {
       cur.style.flexDirection = 'column';
       cur.style.alignItems = 'stretch';
       cur.style.gap = '8px';
-      cur.innerHTML = `
-        <div id="dd-login-title" style="font-size:13px;font-weight:600;color:var(--fg-2);margin-bottom:2px;">Sign in</div>
-        <div id="dd-social-login" style="display:none;flex-direction:column;gap:8px;"></div>
-        <div id="dd-social-or" style="display:none;align-items:center;gap:8px;color:var(--fg-3);font-size:11px;">
-          <span style="flex:1;height:1px;background:var(--border);"></span>or<span style="flex:1;height:1px;background:var(--border);"></span>
-        </div>
-        <input type="email" id="dd-login-email" placeholder="Email" autocomplete="username" style="
-          width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
-          border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
-          outline:none;box-sizing:border-box;
-        ">
-        <input type="password" id="dd-login-pass" placeholder="Password" autocomplete="current-password" style="
-          width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
-          border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
-          outline:none;box-sizing:border-box;
-        ">
-        <input type="text" id="dd-register-name" placeholder="Display name" autocomplete="name" hidden style="
-          width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
-          border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
-          outline:none;box-sizing:border-box;
-        ">
-        <div style="display:flex;align-items:center;gap:6px;">
-          <input type="checkbox" id="dd-login-remember" checked style="accent-color:var(--brand);margin:0;">
-          <label for="dd-login-remember" style="font-size:12px;color:var(--fg-3);cursor:pointer;">Remember me</label>
-        </div>
-        <button id="dd-login-btn" style="
-          width:100%;padding:8px;background:var(--brand);border:none;border-radius:6px;
-          color:var(--bg-0);font-size:14px;font-weight:700;cursor:pointer;
-        ">Sign In</button>
-        <button id="dd-register-toggle" type="button" style="
-          width:100%;padding:6px;background:transparent;border:none;
-          color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;
-        ">Create an account</button>
-        <div id="dd-login-error" style="color:var(--danger);font-size:12px;display:none;"></div>
-        <div id="dd-login-loading" style="color:var(--fg-3);font-size:12px;text-align:center;display:none;">Signing in…</div>
-      `;
-
-      // Wire up the inline login form
-      const emailInput = document.getElementById('dd-login-email');
-      const passInput = document.getElementById('dd-login-pass');
-      const loginBtn = document.getElementById('dd-login-btn');
-      const titleEl = document.getElementById('dd-login-title');
-      const nameInput = document.getElementById('dd-register-name');
-      const registerToggle = document.getElementById('dd-register-toggle');
-      const errorEl = document.getElementById('dd-login-error');
-      const loadingEl = document.getElementById('dd-login-loading');
-      let registerMode = false;
-
-      registerToggle.addEventListener('click', () => {
-        registerMode = !registerMode;
-        titleEl.textContent = registerMode ? 'Create account' : 'Sign in';
-        loginBtn.textContent = registerMode ? 'Create Account' : 'Sign In';
-        registerToggle.textContent = registerMode ? 'Back to sign in' : 'Create an account';
-        nameInput.hidden = !registerMode;
-        passInput.autocomplete = registerMode ? 'new-password' : 'current-password';
-        errorEl.style.display = 'none';
-      });
-
-      async function doInlineLogin() {
-        const email = emailInput.value.trim();
-        const password = passInput.value;
-        const rememberMe = document.getElementById('dd-login-remember').checked;
-        errorEl.style.display = 'none';
-        errorEl.style.color = 'var(--danger)';
-        loginBtn.disabled = true;
-        loadingEl.style.display = 'block';
-        try {
-          if (registerMode) {
-            const anonToken = localStorage.getItem('auth_token') || '';
-            const registerRes = await fetch('/api/v1/auth/register', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(anonToken ? { Authorization: `Bearer ${anonToken}` } : {}),
-              },
-              body: JSON.stringify({
-                email,
-                password,
-                display_name: nameInput.value.trim(),
-              }),
-            });
-            const registerData = await registerRes.json().catch(() => ({}));
-            if (!registerRes.ok) {
-              errorEl.style.display = 'block';
-              errorEl.textContent = registerRes.status === 409
-                ? 'That email is already registered'
-                : (registerData.detail || 'Could not create account');
-              loginBtn.disabled = false;
-              loadingEl.style.display = 'none';
-              return;
-            }
-            if (registerData.pending_approval) {
-              errorEl.style.display = 'block';
-              errorEl.style.color = 'var(--fg-2)';
-              errorEl.textContent = 'Account created and waiting for administrator approval.';
-              loginBtn.disabled = false;
-              loadingEl.style.display = 'none';
-              return;
-            }
-            upsertAccount({
-              user_id: registerData.user_id,
-              username: registerData.username,
-              display_name: registerData.display_name,
-              access_token: registerData.access_token,
-              remember_token: '',
-            });
-            window.location.reload();
-            return;
-          }
-          const res = await fetch('/api/v1/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email,
-              password,
-              remember_me: rememberMe,
-              device_id: loginDeviceId(),
-            }),
-          });
-          if (!res.ok) {
-            errorEl.style.display = 'block';
-            if (res.status === 429) {
-              const seconds = Number(res.headers.get('Retry-After'));
-              const wait = Number.isFinite(seconds) && seconds > 0
-                ? ` Wait about ${Math.ceil(seconds / 60)} minute(s) before trying again.`
-                : ' Please wait before trying again.';
-              errorEl.textContent = 'Too many sign-in attempts.' + wait;
-            } else if (res.status === 401) {
-              errorEl.textContent = 'Invalid email or password';
-            } else if (res.status === 403) {
-              errorEl.textContent = 'Account pending approval';
-            } else {
-              errorEl.textContent = 'Sign-in is temporarily unavailable. Please try again later.';
-            }
-            loginBtn.disabled = false;
-            loadingEl.style.display = 'none';
-            return;
-          }
-          const data = await res.json();
-          const { upsertAccount } = await import('./accounts.js');
-          upsertAccount({
-            user_id: data.user_id,
-            username: data.username,
-            display_name: data.display_name,
-            access_token: data.access_token,
-            remember_token: data.remember_token || '',
-          });
-          window.location.reload();
-        } catch (err) {
-          errorEl.style.display = 'block';
-          errorEl.textContent = 'Connection error';
-          loginBtn.disabled = false;
-          loadingEl.style.display = 'none';
-        }
-      }
-
-      loginBtn.addEventListener('click', doInlineLogin);
-      passInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doInlineLogin(); });
-      emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') passInput.focus(); });
-
-      // Populate the "Continue with …" buttons for any enabled social providers.
-      _renderSocialButtons();
+      mountAccountSignInForm(cur);
     }
   }
 
@@ -431,6 +270,184 @@ function renderUserDropdown() {
   } catch (_) {}
 }
 
+
+/** Shared account sign-in/register form. Instance-scoped for the private gate and dropdown. */
+export function mountAccountSignInForm(cur, prefix = 'dd') {
+  cur.innerHTML = `
+    <form id="dd-login-form" action="/api/v1/auth/login" method="post" autocomplete="on" aria-label="Account sign in" style="display:flex;flex-direction:column;gap:inherit;width:100%;margin:0;">
+    <div id="dd-login-title" style="font-size:13px;font-weight:600;color:var(--fg-2);margin-bottom:2px;">Sign in</div>
+    <div id="dd-social-login" style="display:none;flex-direction:column;gap:8px;"></div>
+    <div id="dd-social-or" style="display:none;align-items:center;gap:8px;color:var(--fg-3);font-size:11px;">
+      <span style="flex:1;height:1px;background:var(--border);"></span>or<span style="flex:1;height:1px;background:var(--border);"></span>
+    </div>
+    <input type="text" name="username" id="dd-login-email" placeholder="Email or username" aria-label="Email or username" autocomplete="username" style="
+      width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
+      border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
+      outline:none;box-sizing:border-box;
+    ">
+    <input type="password" name="password" id="dd-login-pass" placeholder="Password" aria-label="Password" autocomplete="current-password" style="
+      width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
+      border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
+      outline:none;box-sizing:border-box;
+    ">
+    <input type="text" id="dd-register-name" placeholder="Display name" aria-label="Display name" autocomplete="name" hidden style="
+      width:100%;padding:8px 10px;background:var(--bg-0);border:1px solid var(--border);
+      border-radius:6px;color:var(--fg-1);font-size:13px;font-family:inherit;
+      outline:none;box-sizing:border-box;
+    ">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="dd-login-remember" checked style="accent-color:var(--brand);margin:0;">
+      <label for="dd-login-remember" style="font-size:12px;color:var(--fg-3);cursor:pointer;">Remember me</label>
+    </div>
+    <button id="dd-login-btn" type="submit" style="
+      width:100%;padding:8px;background:var(--brand);border:none;border-radius:6px;
+      color:var(--bg-0);font-size:14px;font-weight:700;cursor:pointer;
+    ">Sign In</button>
+    <button id="dd-register-toggle" type="button" style="
+      width:100%;padding:6px;background:transparent;border:none;
+      color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;
+    ">Create an account</button>
+    <div id="dd-login-error" style="color:var(--danger);font-size:12px;display:none;"></div>
+    <div id="dd-login-loading" style="color:var(--fg-3);font-size:12px;text-align:center;display:none;">Signing in…</div>
+    </form>
+  `;
+  cur.querySelectorAll('[id]').forEach(el => { el.id = el.id.replace('dd-', prefix + '-'); });
+  cur.querySelectorAll('[for]').forEach(el => { el.htmlFor = el.htmlFor.replace('dd-', prefix + '-'); });
+  const field = id => cur.querySelector('#' + id.replace('dd-', prefix + '-'));
+
+  // Wire up the inline login form
+  const emailInput = field('dd-login-email');
+  const passInput = field('dd-login-pass');
+  const loginBtn = field('dd-login-btn');
+  const titleEl = field('dd-login-title');
+  const nameInput = field('dd-register-name');
+  const registerToggle = field('dd-register-toggle');
+  const errorEl = field('dd-login-error');
+  const loadingEl = field('dd-login-loading');
+  let registerMode = false;
+
+  registerToggle.addEventListener('click', () => {
+    registerMode = !registerMode;
+    titleEl.textContent = registerMode ? 'Create account' : 'Sign in';
+    loginBtn.textContent = registerMode ? 'Create Account' : 'Sign In';
+    registerToggle.textContent = registerMode ? 'Back to sign in' : 'Create an account';
+    nameInput.hidden = !registerMode;
+    passInput.autocomplete = registerMode ? 'new-password' : 'current-password';
+    errorEl.style.display = 'none';
+  });
+
+  async function doInlineLogin() {
+    const email = emailInput.value.trim();
+    const password = passInput.value;
+    const rememberMe = field('dd-login-remember').checked;
+    errorEl.style.display = 'none';
+    errorEl.style.color = 'var(--danger)';
+    loginBtn.disabled = true;
+    loadingEl.style.display = 'block';
+    try {
+      if (registerMode) {
+        const anonToken = localStorage.getItem('auth_token') || '';
+        const registerRes = await fetch('/api/v1/auth/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(anonToken ? { Authorization: `Bearer ${anonToken}` } : {}),
+          },
+          body: JSON.stringify({
+            email,
+            password,
+            display_name: nameInput.value.trim(),
+          }),
+        });
+        const registerData = await registerRes.json().catch(() => ({}));
+        if (!registerRes.ok) {
+          errorEl.style.display = 'block';
+          errorEl.textContent = registerRes.status === 409
+            ? 'That email is already registered'
+            : (registerData.detail || 'Could not create account');
+          loginBtn.disabled = false;
+          loadingEl.style.display = 'none';
+          return;
+        }
+        if (registerData.pending_approval) {
+          errorEl.style.display = 'block';
+          errorEl.style.color = 'var(--fg-2)';
+          errorEl.textContent = 'Account created and waiting for administrator approval.';
+          loginBtn.disabled = false;
+          loadingEl.style.display = 'none';
+          return;
+        }
+        upsertAccount({
+          user_id: registerData.user_id,
+          username: registerData.username,
+          display_name: registerData.display_name,
+          access_token: registerData.access_token,
+          remember_token: '',
+        });
+        window.location.reload();
+        return;
+      }
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          remember_me: rememberMe,
+          device_id: loginDeviceId(),
+        }),
+      });
+      if (!res.ok) {
+        errorEl.style.display = 'block';
+        if (res.status === 429) {
+          const seconds = Number(res.headers.get('Retry-After'));
+          const wait = Number.isFinite(seconds) && seconds > 0
+            ? ` Wait about ${Math.ceil(seconds / 60)} minute(s) before trying again.`
+            : ' Please wait before trying again.';
+          errorEl.textContent = 'Too many sign-in attempts.' + wait;
+        } else if (res.status === 401) {
+          errorEl.textContent = 'Invalid email or password';
+        } else if (res.status === 403) {
+          errorEl.textContent = 'Account pending approval';
+        } else {
+          errorEl.textContent = 'Sign-in is temporarily unavailable. Please try again later.';
+        }
+        loginBtn.disabled = false;
+        loadingEl.style.display = 'none';
+        return;
+      }
+      const data = await res.json();
+      const { upsertAccount } = await import('./accounts.js');
+      upsertAccount({
+        user_id: data.user_id,
+        username: data.username,
+        display_name: data.display_name,
+        access_token: data.access_token,
+        remember_token: data.remember_token || '',
+      });
+      window.location.reload();
+    } catch (err) {
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Connection error';
+      loginBtn.disabled = false;
+      loadingEl.style.display = 'none';
+    }
+  }
+
+  // Native form ownership and stable field names let password managers classify
+  // both instances identically. Keep authentication in the existing API handler.
+  field('dd-login-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!loginBtn.disabled) void doInlineLogin();
+  });
+  emailInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); passInput.focus(); }
+  });
+
+  // Populate the "Continue with …" buttons for any enabled social providers.
+  _renderSocialButtons(cur);
+}
+
 // ── Social sign-in buttons ──────────────────────────────────────────────────
 // Shown in the header login form when the admin has enabled + configured any
 // drop-in providers (plugins/auth_providers/). A button opens the provider in a
@@ -439,9 +456,9 @@ function renderUserDropdown() {
 
 let _socialMsgWired = false;
 
-async function _renderSocialButtons() {
-  const box = document.getElementById('dd-social-login');
-  const orDiv = document.getElementById('dd-social-or');
+async function _renderSocialButtons(root) {
+  const box = root.querySelector('[id$="-social-login"]');
+  const orDiv = root.querySelector('[id$="-social-or"]');
   if (!box) return;
   let providers = [];
   try {

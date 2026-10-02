@@ -5,7 +5,7 @@
   "color": "#e0af68",
   "description": "Lets the agent diagnose WebAgent runs and safely test the local development app in an authenticated server-backed browser. On by default; switch off to remove it platform-wide.",
   "skill_summary": "The recipe for diagnosing any chat session, run failure, or tool error in one or two calls. Load before investigating a misbehaving session, a stuck run, a resume question, or a vague error.",
-  "migration_note": "Catalog and skill imported from v2. Its host tools are not available in the isolated v3 worker yet.",
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
   "order": 2,
   "placeholder": false,
   "tools": [
@@ -14,5 +14,7 @@
     "dev_browser_url",
     "dev_browser_action",
     "dev_browser_record"
-  ]
+  ],
+  "readiness": "pending",
+  "config": {}
 }

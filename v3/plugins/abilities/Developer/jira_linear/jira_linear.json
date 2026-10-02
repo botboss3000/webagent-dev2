@@ -1,0 +1,13 @@
+{
+  "display_name": "Jira / Linear",
+  "kind": "placeholder",
+  "description": "Issues and project management.",
+  "tools": [],
+  "icon": "kanban-square",
+  "color": "#7aa2f7",
+  "order": 3,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

@@ -1,0 +1,13 @@
+{
+  "display_name": "Dropbox",
+  "kind": "oauth",
+  "description": "File read/write and sharing.",
+  "tools": [],
+  "icon": "hard-drive",
+  "color": "#4285F4",
+  "order": 5,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

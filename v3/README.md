@@ -441,8 +441,8 @@ and requeues; legacy indices initialize from their existing row order.
 snapshots once per new item, uses a counting serializer, and resets on compaction or restart.
 Logical request reports remain byte-based, not provider-token or RSS limits. Assembly borrows
 history/schemas; the existing provider interface still takes one owned dispatch snapshot.
-There is no second full-history cache. Cache budgets are estimates per store handle; the
-concurrent multi-user storage work requires aggregate cache/handle budgeting before claiming
+There is no second full-history cache. Cache budgets are estimates shared across the user
+handles of one Store family in each process; pool/handle budgeting is still needed before claiming
 a process-wide memory ceiling.
 
 Verification: run `cargo test --locked` from `v3/`; the
@@ -450,8 +450,8 @@ Verification: run `cargo test --locked` from `v3/`; the
 CPU time and avoided temporary JSON bytes. This is an accounting microbenchmark, not a
 provider-throughput or peak-server-memory benchmark.
 
-Remaining optimization phases: delta/periodic recovery snapshots (active-run saves still
-serialize full input), versioned guidance/schema caching, aggregate multi-user cache limits,
+Remaining optimization phases: incremental recovery comparison and hydration, versioned
+guidance/schema caching, aggregate database-pool/active-copy limits,
 provider-aware token budgets and loaded-skill lifecycle, then measured operational tuning.
 Deployment/restart is separate; source tests do not apply settings to the running service.
 
@@ -506,18 +506,34 @@ stale, then 200 after the loop resumes. Check health and one persisted reply
 after each replacement. The socket directory is transient and is not
 application data or backup authority.
 
-The gate is off by default (`workflow.modules={}`). An administrator can opt
-in through the revisioned workflow policy using
-`{"modules":{"publication":["publication_size_guard_v1"]}}` for mandatory
-fail-closed behavior, or
-`{"modules":{"publication":["optional:publication_size_guard_v1"]}}` to
-record and skip gate transport/protocol failures. A mandatory gate failure
-pauses the run without publishing; an optional skip is recorded in the private
-run checkpoint at `workflow.module_skips.publication` and can proceed only
-through Rust's native publication checks. An explicit module rejection always
-blocks publication in either mode. Unknown modules or checkpoints are
-rejected. Gate failure never grants a tool permission, overrides a native
-denial, or permits a second terminal publication.
+Gate activation and order live in `/state/config/loop-runtime.json` under
+`workflow.modules`. The default is empty. For the first two native modules and
+the optional size plugin, use:
+`{"model_dispatch":["message_visibility_v1"],"publication":["closing_status_v1","optional:publication_size_guard_v1"]}`.
+The fixed Rust checkpoints run in their normal order; each list orders modules
+within that checkpoint. Unknown, duplicate, or wrong-checkpoint modules fail
+validation. Only the isolated Python size plugin accepts the `optional:` prefix.
+
+The integral module definitions and settings are single live JSON files at
+`v3/data/config/gates/message_visibility_v1.json` and
+`v3/data/config/gates/closing_status_v1.json` (mounted at
+`/state/config/gates`). These same files are selected build/test inputs;
+there is no duplicate packaged default. The visibility module adds the v2
+message-visibility guidance and private `publish_main_message` control before
+a model call. A validated call commits a nonterminal working chat row while
+the run continues. The closing module offers private `set_closer_status`
+with a configured flag and short notification. Rust stores this intent with
+the final reply; missing or invalid status becomes the configured
+`unverified` fallback without a repair turn. Its status does not itself
+publish a reply.
+
+The optional `publication_size_guard_v1` descriptor lives in
+`v3/plugins/gates/` and is packaged with the isolated Python gate. A
+mandatory transport or protocol failure pauses publication; an optional
+failure records a private skip and native Rust checks still apply. An explicit
+rejection always blocks. No gate can grant tool permission or publish a
+terminal reply; Rust alone commits that reply exactly once. Gate settings
+have no UI yet.
 
 ## Context compaction
 
@@ -547,3 +563,119 @@ Unicode character measurements feed compaction planning without reserializing un
 No settings UI, recall tools, or failure-policy changes are added. Rust changes require rebuilding;
 data JSON edits apply at the next call boundary without restart. Back up configuration and state
 before rollout. Original interactions and checkpoint representation remain compatible.
+
+## Recovery input deltas and shared retained-cache limits
+
+Run metadata now references a version-1 item set in the user database's encrypted
+`recovery_input` table. Saves compare the working input with existing items and encrypt/write
+only new or changed items. Truncation and compaction replace the affected recovery items;
+original `interactions` rows remain untouched. Metadata, item updates, revision/lease fences,
+events and publication receipts commit in the same transaction. Readers reconstruct the
+complete run in one transaction and reject missing ordinals, unsupported versions and failed
+authentication. Existing inline-input run documents remain readable and upgrade on write.
+
+<!-- RECOVERY-MANIFEST: sealed commitments avoid decryption without trusting a caller hint. -->
+This is a materialized recovery checkpoint with item-level deltas, not an unbounded replay
+journal or a periodic-checkpoint scheduler. The encrypted metadata optionally holds a v1
+manifest pairing SHA-256 digests of compact JSON content and its ciphertext at each ordinal.
+Saves verify every prior ciphertext against that authenticated manifest before mutation and
+hash current input through a streaming JSON writer, without a full temporary JSON buffer.
+Unchanged retained items need no decryption, encryption, or row rewrite. Inline and older
+split records remain readable; manifest-free split records decrypt once on their next save
+to establish commitments, preserving unchanged ciphertext. Malformed manifests, missing
+rows, swapped ciphertext, and damaged rows fail closed; reads still decrypt and verify the
+complete input. Metadata and manifests commit alongside item deltas in the same transaction.
+
+Saves still read all retained ciphertext and serialize/hash current input: this is not yet
+committed mutation tracking or constant-time metadata persistence. Terminal fencing still
+hydrates a previous run. Active snapshots and provider payloads still own copies. The
+verified benefit is avoiding unchanged history decryption, encryption and database rewrites;
+no overall CPU, allocation, RSS or latency speedup is inferred from this change.
+
+Each Store family shares one document LRU and one context LRU across all its user handles.
+Context keys include the account identity, and invalidation affects only that account/session.
+Reconfiguration resets these shared caches for existing and future handles. Runtime JSON
+`document_budget_bytes` and `context_budget_bytes` therefore bound estimated retained cache
+weight per process, not per user. Document caching remains disabled for cross-process runtime
+authority reads. API and loop processes have separate caches; pools, live request copies,
+streaming buffers and allocator overhead are outside these limits. Independent Store roots
+also have independent budgets. Idle connections expire after 60 seconds. At 64 registered user handles, idle entries are pruned; active handles retain their shared synchronization gate. This is not a hard cap on active users or all process memory.
+
+Rollout requires a rebuilt API and loop using the same format. Older binaries cannot hydrate
+split run records: stop old writers before rollout and back up the state root. Do not downgrade
+a populated state root without restoring its compatible backup or a deliberate export migration.
+Source verification used temporary fixtures only; this change does not migrate live data by itself.
+
+## Runtime optimization boundaries
+
+<!-- CONTEXT-ROADMAP: keep operational estimates separate from compaction authority. -->
+Run-local guidance/schema reuse keys the full freshly resolved authorization state,
+catalog, policy, visibility, loaded abilities and mode. Tool execution still checks live
+permissions. Activated discoverable skills are rebuilt from the catalog across compaction;
+Off and suppressed states remain authoritative. Catalog refresh still requires restart.
+
+Optional `context.model_profiles` in `config/loop-runtime.json` maps
+`provider/model` to `context_tokens`, `output_reserve_tokens`, and `bytes_per_token`
+(1–8). The logical-envelope ceiling is the smaller of the existing byte ceiling and
+`(context_tokens - output_reserve_tokens) * bytes_per_token`. Unknown models retain
+the existing ceiling. These are operator estimates, not tokenizers, entitlement claims,
+or provider output controls. Compaction policy remains solely in context-compaction.json.
+
+Subscription streaming retains at most 4096 completed fallback items and 16 MiB
+serialized fallback output, with bounded diagnostic event-kind cardinality. This does
+not bound HTTP-library buffers, allocator overhead or all concurrent request memory.
+Public context summaries allowlist numeric logical-envelope byte totals only; they are
+not billed/provider tokens. The UI displays those summaries when the deployed backend
+supplies them. Source tests alone do not establish deployed UI acceptance.
+
+Repeatable accounting measurement:
+`cargo test --locked context_accounting::measurements::repeated_accounting_measurement -- --nocapture`.
+This compares unchanged-history serialization with cached accounting, not end-to-end
+runtime throughput, allocations or RSS. Full runtime benchmarking and coordinated
+API/loop rollout remain acceptance work; do not infer those outcomes from this test.
+
+<!-- RECOVERY-BENCHMARK: opt-in fixture never reads or changes deployed state. -->
+Repeatable transactional recovery measurement (temporary encrypted SQLite state):
+`cargo test --locked repeated_recovery_save_measurement -- --ignored --nocapture`.
+It times 50 status-only saves of 512 retained items and a reopen/read, asserting
+unchanged ciphertext and exact reconstruction. It does not claim a baseline speedup,
+provider throughput, allocation count, or total-process RSS reduction.
+
+### Dispatch allocation boundaries
+
+DISPATCH-HISTORY-TRANSFER / DISPATCH-RELEASE-SNAPSHOTS: after durable
+assembly receipts and credential resolution, normal dispatch moves the local
+history allocation into the provider instead of cloning it. The separately
+loaded fencing snapshot is saved and released before awaiting the provider;
+response handling reloads authoritative state. Cancellation, permission and
+workflow checks remain in place. Schemas still have an owned dispatch copy.
+
+DISPATCH-DIGEST-STREAM / PROVIDER-BORROWED-BODY: fingerprints stream JSON
+directly into SHA-256; subscription requests serialize borrowed fields directly
+into the HTTP body without an intermediate owned JSON tree. Wire-parity tests
+cover omitted tools, reasoning, escaping and complete arguments. Transport
+buffers and provider-specific conversions still allocate, and recovery saves
+still perform history-sized integrity work. No measured process-wide CPU or
+peak-RAM reduction is claimed from these allocation removals alone.
+
+## App access-policy configuration
+
+V3 owns `<state-root>/config/access-policy.json` (deployed as
+`v3/data/config/access-policy.json`, mounted at `/state/config/access-policy.json`).
+The repository template is `v3/config/access-policy.json`:
+
+```json
+{"registration": "restricted"}
+```
+
+`restricted` creates pending accounts requiring administrator approval; `open`
+activates ordinary registered accounts and enables the existing guest admission
+flow. Neither grants administrator privileges or agent/tool entitlements.
+The file is read on policy checks, so edits require no restart after this code
+is deployed. Invalid or unreadable policy fails closed, rather than opening access.
+On first startup without a file, the existing database registration mode is
+migrated; otherwise the default is restricted. The file then becomes authoritative.
+The existing access-mode API keeps its V2-compatible values (`admin_approval` /
+`public_registered`) and writes this file atomically. Registration edits preserve
+additional JSON fields for future feature/page policies; those fields do not yet
+enforce restrictions. Do not put credentials or user records in this file.

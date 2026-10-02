@@ -1,0 +1,30 @@
+{
+  "display_name": "Image Vision",
+  "kind": "ability",
+  "description": "Lets the agent understand attached images by delegating a look to a vision model. (Taking over on a vision model for sustained image work is done with the separate Model Switcher ability.)",
+  "tools": [
+    "process_image"
+  ],
+  "icon": "eye",
+  "color": "#7dcfff",
+  "order": 7,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "handles": [
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp"
+    ],
+    "worker_system": "You are a vision assistant. A user attached an image to a conversation and the main assistant cannot see images, so your answer IS what it will rely on. Your job is to answer the user's SPECIFIC request about this image — focus on exactly what they asked (e.g. 'check the margins', 'read the error text', 'what colour is the header'), answer that precisely and concretely, and include only the surrounding detail that genuinely helps that answer. Do NOT pad with an exhaustive head-to-toe catalogue of everything in the image when a focused request was made. When you do report detail, make it factual and measurable: visible text verbatim, objects, layout, colours, positions, counts, spatial relationships, and (where relevant) dimensions, alignment, and spacing. If the user did not ask anything specific (image attached with no question), then give a clear, well-organised general description instead. Use the recent context only to understand the user's intent — do not narrate it back. Do not speculate beyond what is visible.\n\nThe user's request (answer THIS, focused):\n{request}\n\nRecent context (for intent only):\n{context}",
+    "worker_instruction": "Answer the user's specific request about this image — focused, factual, and concrete. Only add surrounding detail if it helps that answer. If no specific request was made, give a clear general description.",
+    "guidance": {
+      "switch_available": "NOTE: your current model cannot see images, so a vision model's description of the attached image has been added below. Answer from it if it's enough. If the user's request needs you to inspect the image directly (fine visual detail, iterating on a design), you may call set_model('{switch_target}') to run on a vision-capable model, then revert with set_model('default') when done. If a detail is missing, call process_image with a precise question.",
+      "describe_only": "NOTE: your current model cannot see images, so a vision model's description of the attached image has been added below. Answer from it. If you need a sharper detail, call process_image with a precise, narrow question (you can call it again with an even tighter question).",
+      "not_enabled": "An image was attached ({names}) but your Image Vision ability is not enabled, so you cannot see images. Tell the user plainly that your Image Vision ability is turned off and that an admin can enable it for this agent (Agent Settings → Abilities → Image Vision). Do NOT say it is a limitation of your model, and do NOT guess, invent, or describe the image's contents.",
+      "no_vision_model": "An image was attached ({names}) but no vision model is configured, so your Image Vision ability has nothing to look at the image with. Tell the user plainly that image viewing isn't set up and that an admin can add a vision model in App Config → Models (tick In on a vision-capable model). Do NOT guess, invent, or describe the image's contents."
+    }
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

@@ -1,0 +1,94 @@
+{
+  "display_name": "Agent Management",
+  "kind": "ability",
+  "description": "Lets the agent list, create, and update the user's own agents — their prompts, abilities, per-tool availability/permissions, and skills — and read, start, continue and monitor the user's sessions, including arming a session watch that reports when a turn settles. On by default; switch off to remove it platform-wide.",
+  "tools": [
+    "list_agent_templates",
+    "list_my_agents",
+    "get_agent",
+    "list_agent_tools",
+    "create_agent",
+    "update_agent",
+    "set_agent_tool",
+    "edit_agent_prompt",
+    "set_agent_ability",
+    "manage_agent_skills",
+    "list_user_sessions",
+    "manage_user_session",
+    "create_user_session",
+    "kick_user_session",
+    "watch_sessions"
+  ],
+  "icon": "users",
+  "color": "#9ece6a",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "max_agents_per_user",
+        "label": "Max Agents per User",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "hint": "How many agents this orchestrator can create for the user in total. Once the user's agent count reaches this limit, create_agent calls are refused. Prevents an orchestrator from flooding the account with hundreds of agents. Does not affect the orchestrator editing existing agents — only creation is capped."
+      },
+      {
+        "key": "allow_agent_deletion",
+        "label": "Allow Agent Deletion",
+        "type": "boolean",
+        "default": false,
+        "hint": "Whether the agent is allowed to delete the user's agents. Off by default — agent deletion should be a deliberate human decision, not something an agent decides on its own. When off, any attempt to delete an agent is refused."
+      },
+      {
+        "key": "allow_discoverable_agents",
+        "label": "Allow Discoverable Agents",
+        "type": "boolean",
+        "default": false,
+        "hint": "Whether created agents can be marked as discoverable (visible to other users on the platform). Off by default for privacy — agent-created agents stay private to the user. When on, the agent can set discoverable=true on create_agent."
+      },
+      {
+        "key": "max_prompt_edits_per_session",
+        "label": "Max Prompt Edits per Session",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 100,
+        "step": 1,
+        "hint": "How many times the agent can edit prompts (edit_agent_prompt) in a single chat session. Catches runaway prompt-rewriting loops where the agent keeps tweaking prompts indefinitely. The counter resets when a new session starts."
+      },
+      {
+        "key": "max_agent_updates_per_session",
+        "label": "Max Agent Updates per Session",
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 200,
+        "step": 1,
+        "hint": "How many configuration changes (update_agent, set_agent_tool, set_agent_ability, manage_agent_skills) the agent can make in a single session. Catches runaway configuration loops. The counter resets when a new session starts."
+      },
+      {
+        "key": "restrict_to_custom_only",
+        "label": "Restrict to Custom Only",
+        "type": "boolean",
+        "default": false,
+        "hint": "When on, the agent can only create and edit custom agents (source='custom') — never touch templates, system agents, or app-provided agents. When off, the agent can manage any agent the user owns. Turn this on for safety when you don't want the agent modifying pre-built templates."
+      },
+      {
+        "key": "allow_session_watch",
+        "label": "Allow Session Watching",
+        "type": "boolean",
+        "default": true,
+        "hint": "Whether an agent can arm a session watch (watch_sessions), which triggers it when one of your sessions settles — a turn that was running stops. When off, the tool refuses platform-wide. Note this only controls ARMING: the agent still needs the Automation ability enabled for the platform to deliver the events. Per-agent control is the normal tool permission dial — deny watch_sessions on every agent except the one you want watching."
+      }
+    ],
+    "notes": {
+      "ability_changes_are_additive": "set_agent_ability is ADDITIVE / independent — turning one ability on (or off) never touches any other ability the agent already has. Enabling diagnostics on an agent that already had web_access leaves web_access enabled. There is no 'enabling one disables the others' behaviour; configure each ability with its own call.",
+      "bulk_set_proposal": "PROPOSED (not yet built): a single 'set exactly these abilities' tool (e.g. set_agent_abilities(agent_id, abilities=[...], read_only=[...])) that diffs the agent's current enabled set against the requested set and enables/disables in one call. Today, fully re-provisioning an agent's abilities takes one set_agent_ability call per ability added AND one per ability removed, which is verbose for big reconfigurations (e.g. swapping a build agent over to a research profile). A bulk diff tool would cut a 6-ability reprovision from ~10 calls to 1 and make the desired end-state explicit. Low correctness risk because each underlying op already exists; it is purely a convenience/round-trip win. Add it as a DROP-IN tool in this ability folder (never a core edit) if prioritised."
+    }
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

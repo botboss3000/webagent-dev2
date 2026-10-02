@@ -12,7 +12,7 @@ The shell loads its HTML into `#app-restricted-overlay` before `main.js` runs.
 
 - `private-access-page.html` — accessible page markup and administrator-approval copy.
 - `private-access-page.css` — the complete restricted shell layout and responsive styling.
-- `js/private-access-page.js` — visibility presentation and sign-in/register button wiring.
+- `js/private-access-page.js` — visibility presentation and shared account form mounting.
 
 ## Security boundary
 
@@ -23,10 +23,10 @@ hidden decision into this page module.
 
 In Private mode:
 
-1. A visitor can open the existing account menu and register.
+1. A visitor can sign in or register directly in the card using the same instance-scoped form as the account menu.
 2. The account is created in a pending state.
 3. The visitor remains restricted until an administrator approves the account.
 4. An approved member can sign in and the shared auth layer removes this page.
 
 The static header remains visible above the page so the normal account menu is
-still available even if the page's own button cannot be wired.
+still available as an alternative entry point.

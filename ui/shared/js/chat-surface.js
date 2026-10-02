@@ -210,6 +210,43 @@ export function applyMessageBubbleConfig(root, profile) {
     const valid = typeof value === 'number' && Number.isFinite(value) && value >= min;
     root.style.setProperty(token, `${valid ? value : fallback}px`);
   }
+  const number = (value, fallback, min = 0, max = 2000) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+  const spacing = profile?.message_spacing || {};
+  for (const [key, fallback, min] of [['message_gap_px',12,0],['turn_gap_px',0,0],['activity_offset_px',-8,-100],['content_to_gutter_px',4,0],['gutter_bottom_px',6,0]]) {
+    root.style.setProperty(`--chat-${key.replaceAll('_','-')}`, `${number(spacing[key],fallback,min)}px`);
+  }
+  const gutters = profile?.gutter_presentation || {};
+  root.dataset.gutterReveal = ['always','engagement','click'].includes(gutters.reveal) ? gutters.reveal : 'click';
+  for (const [key,fallback,unit,max] of [['transition_ms',150,'ms',5000],['icon_size_px',14,'px',64],['font_size_px',11,'px',48],['control_gap_px',4,'px',100],['rest_opacity',0.65,'',1],['engaged_opacity',1,'',1]]) {
+    root.style.setProperty(`--chat-gutter-${key.replaceAll('_','-')}`, `${number(gutters[key],fallback,0,max)}${unit}`);
+  }
+  for (const role of ['user','agent']) {
+    const heading = profile?.message_headings?.[role] || {};
+    const label = typeof heading.label === 'string' ? heading.label : role === 'user' ? 'You' : 'Agent';
+    root.dataset[`${role}HeadingLabel`] = label;
+    root.querySelectorAll(`.chat-bubble.${role} > .label`).forEach(el => { el.textContent = label; });
+    root.style.setProperty(`--chat-${role}-heading-display`, heading.visible === true ? 'block' : 'none');
+    root.style.setProperty(`--chat-${role}-heading-label`, JSON.stringify(typeof heading.label === 'string' ? heading.label : role === 'user' ? 'You' : 'Agent'));
+    root.style.setProperty(`--chat-${role}-avatar-text`, JSON.stringify(typeof heading.avatar_text === 'string' ? heading.avatar_text : ''));
+    const surface = cfg[role] || {};
+    root.style.setProperty(`--chat-${role}-radius`, `${number(surface.radius_px,14)}px`);
+    root.style.setProperty(`--chat-${role}-line-height`, String(number(surface.line_height,1.5,0.5,4)));
+    const glimmer = profile?.glimmer?.[role] || {};
+    root.style.setProperty(`--chat-${role}-glimmer-enabled`, glimmer.enabled === false ? 'none' : 'block');
+    root.style.setProperty(`--chat-${role}-glimmer-color`, `rgba(var(--brand-rgb), ${number(glimmer.intensity,0.12,0,1)})`);
+    root.style.setProperty(`--chat-${role}-glimmer-radius`, `${number(glimmer.radius_px,240)}px`);
+    root.style.setProperty(`--chat-${role}-glimmer-transition`, `${number(glimmer.transition_ms,250,0,5000)}ms`);
+  }
+  const composer = profile?.composer || {};
+  root.dataset.composerEnter = ['auto','send','newline'].includes(composer.enter_behavior) ? composer.enter_behavior : 'auto';
+  const input = root.querySelector('textarea.chat-pill-input, #chat-input');
+  if (input) {
+    input.dataset.composerEnter = root.dataset.composerEnter;
+    const placeholder = typeof composer.placeholder === 'string' ? composer.placeholder : profile?.messages?.pill_placeholder;
+    if (typeof placeholder === 'string') input.placeholder = placeholder;
+    input.dataset.configPlaceholder = typeof composer.placeholder === 'string' ? composer.placeholder : '';
+  }
   // Role surfaces come from the profile, reset on switches, and resolve theme
   // variables at the bubble rather than freezing palette values on the root.
   for (const role of ['user', 'agent']) {
@@ -377,4 +414,13 @@ export function applyChatSurfaceHeader(els, profile) {
     if (!el) continue;
     el.hidden = !wanted.has(name);
   }
+}
+
+// One keyboard policy shared by the panel and other chat surfaces. IME composition
+// and Shift+Enter never send; mobile keeps newline under the default auto policy.
+export function shouldSendComposer(event, input) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return false;
+  const mode = input?.dataset.composerEnter || input?.closest('[data-composer-enter]')?.dataset.composerEnter || 'auto';
+  if (mode === 'newline') return !!(event.ctrlKey || event.metaKey);
+  return mode === 'send' || !window.matchMedia?.('(pointer: coarse)').matches;
 }

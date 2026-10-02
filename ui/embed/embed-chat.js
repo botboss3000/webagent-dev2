@@ -10,6 +10,7 @@ import {
   installChatSurfaceIcons,
   wireChatSurfaceComposer,
   wireStatsCarousel,
+  shouldSendComposer,
 } from '../shared/js/chat-surface.js';
 
 // Standalone embed chat client. No imports from the SPA — talks straight to the
@@ -467,8 +468,7 @@ function wireEvents() {
       .catch(err => addBubble('error', err.message || 'Could not stop this turn.'));
   });
   els.input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (window.matchMedia?.('(pointer: coarse)').matches) return;
+    if (shouldSendComposer(e, els.input)) {
       e.preventDefault();
       sendMessage(els.input.value);
     }

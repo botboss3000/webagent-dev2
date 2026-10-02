@@ -5,6 +5,9 @@ COPY v3/src ./src
 # COMPACTION CONFIG: build-time tests read this fixture; runtime uses the single
 # host config directory mounted by deploy.sh, not an embedded configuration.
 COPY v3/config ./config
+# GATE-CONFIG: only the two selected non-secret live JSON files enter the image.
+COPY v3/data/config/gates ./data/config/gates
+COPY v3/plugins/gates ./plugins/gates
 # Runtime tests load the installed ability catalog and chat configuration.
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
@@ -21,6 +24,7 @@ COPY --from=builder /build/target/release/webagent-v3 /usr/local/bin/webagent-v3
 COPY --from=builder /usr/local/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu /opt/rust
 COPY v3/worker.py v3/launch.py v3/promote.py /opt/v3/
 COPY v3/plugins/abilities /opt/v3/plugins/abilities
+COPY v3/plugins/gates /opt/v3/plugins/gates
 COPY v3 /opt/v3/source-template
 COPY v3/ui /opt/v3/ui
 COPY v3/ui-baseline.json /opt/v3/ui-baseline.json

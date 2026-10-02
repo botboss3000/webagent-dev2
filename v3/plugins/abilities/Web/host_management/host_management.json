@@ -1,0 +1,18 @@
+{
+  "display_name": "Host Management",
+  "kind": "ability",
+  "description": "Connect Cloudflare and other hosting providers so the agent can inspect domains and manage approved DNS records.",
+  "tools": [
+    "host_list_connections",
+    "host_list_zones",
+    "host_list_dns_records",
+    "host_upsert_dns_record"
+  ],
+  "icon": "server-cog",
+  "color": "#7aa2f7",
+  "order": 5,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

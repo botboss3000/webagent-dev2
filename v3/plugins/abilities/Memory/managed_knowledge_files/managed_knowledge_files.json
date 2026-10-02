@@ -1,0 +1,48 @@
+{
+  "display_name": "Managed Knowledge Files",
+  "kind": "ability",
+  "description": "Upload durable files directly to an agent and search or automatically recall their extracted contents.",
+  "tools": [
+    "knowledge_file_list",
+    "knowledge_file_search",
+    "knowledge_file_get"
+  ],
+  "icon": "files",
+  "color": "#73daca",
+  "order": 3,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "knowledge_file_recall_enabled",
+        "label": "Automatic File Recall",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Search files marked for recall before substantive turns and inject a few cited excerpts."
+      },
+      {
+        "key": "knowledge_file_max_results",
+        "label": "Maximum Search Results",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 50,
+        "ceiling": "max",
+        "hint": "Hard cap for managed-file search results returned to the agent."
+      },
+      {
+        "key": "knowledge_file_excerpt_chars",
+        "label": "Recall Excerpt Characters",
+        "type": "number",
+        "default": 900,
+        "min": 200,
+        "max": 3000,
+        "ceiling": "max",
+        "hint": "Maximum characters injected from each automatically recalled file."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

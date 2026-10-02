@@ -1,0 +1,127 @@
+{
+  "display_name": "Agent Orchestration",
+  "kind": "ability",
+  "description": "Lets the agent orchestrate other agents: spawn purpose-built helpers with a system prompt it writes on the spot (or by cloning an existing agent), hold a real back-and-forth with them (saved like any chat), and run them blocking or forked. Forked helpers report back when they finish, and the agent can set durable follow-up timers to check on them. It can also delegate a discrete task to one of the user's own saved agents — including a Local Claude Code agent — which runs as itself (its own persona/abilities/engine) as a family member shown in the chat sub-header, distinct from handing the whole session over (delegate). Also runs the prompt optimizer. Switch off to remove it platform-wide.",
+  "tools": [
+    "spawn_agent",
+    "message_spawn",
+    "read_spawn",
+    "quote_spawn",
+    "list_spawns",
+    "stop_spawn",
+    "schedule_spawn_check",
+    "list_abilities",
+    "promote_spawn",
+    "delegate_to_agent",
+    "list_delegatable_agents",
+    "delegate_task_to_agent",
+    "list_task_delegatable_agents",
+    "run_optimizer",
+    "fork_self"
+  ],
+  "icon": "share-2",
+  "color": "#7dcfff",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "bias": {
+      "key": "delegation_level",
+      "default": "balanced",
+      "levels": {
+        "conservative": "DELEGATION POSTURE — Conservative: strongly prefer doing the work yourself in this session. Only spawn a helper when the task genuinely cannot proceed without one (e.g. truly independent parallel work, or a sub-job that needs an ability you'd rather not run inline). Default to NOT spawning.",
+        "balanced": "",
+        "eager": "DELEGATION POSTURE — Eager: delegation is your DEFAULT working style — doing the whole job yourself is the exception you have to justify. Before you build or write anything, STOP and break the task into separable units, then spawn a purpose-built helper for EACH unit (forked for units that can run in parallel, blocking for a sequential chain). Keep a piece for yourself only when it genuinely cannot be handed off — e.g. it shares tight, inseparable state with everything else. Do not quietly fall back to doing it all yourself because it feels easier. When in doubt, spawn."
+      }
+    },
+    "settings": [
+      {
+        "key": "delegation_level",
+        "label": "Delegation",
+        "type": "select",
+        "default": "balanced",
+        "options": [
+          {
+            "value": "conservative",
+            "label": "Conservative — do it yourself"
+          },
+          {
+            "value": "balanced",
+            "label": "Balanced (default)"
+          },
+          {
+            "value": "eager",
+            "label": "Eager — delegate by default"
+          }
+        ],
+        "hint": "How readily this agent hands work to spawned helpers. Conservative = only spawn when truly necessary; Balanced = today's judgment; Eager = default to splitting separable work across helpers. This rides along as a posture note in the agent's prompt — it nudges the decision, it is not a hard rule."
+      },
+      {
+        "key": "max_concurrent_spawns",
+        "label": "Max Concurrent Spawns",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "hint": "Maximum active user-task helpers for one working agent. Pending, queued, and running helpers count; terminal helpers immediately free a slot. Manager and contract reviewers use separate internal capacity."
+      },
+      {
+        "key": "max_spawns_per_spawn",
+        "label": "Max Spawns per Spawn",
+        "type": "number",
+        "default": 1,
+        "min": 0,
+        "max": 10,
+        "step": 1,
+        "hint": "How many sub-helpers a spawned clone is allowed to create. This governs recursion breadth at each level. Set to 0 to forbid spawned clones from spawning anything (even if they have the orchestration ability — the main agent can still spawn normally). The default of 1 means each clone makes at most one helper of its own."
+      },
+      {
+        "key": "max_spawn_depth",
+        "label": "Max Spawn Depth",
+        "type": "number",
+        "default": 2,
+        "min": 0,
+        "max": 5,
+        "step": 1,
+        "hint": "How many levels of spawns-within-spawns are allowed. 0 means only the main orchestrator can spawn (all clones are leaf workers, even those given the orchestration ability). 1 lets the main agent's direct spawns also spawn one more level. 2 allows two levels of nesting, and so on. The main agent is level 0; each spawn increments the depth by 1."
+      },
+      {
+        "key": "auto_stop_on_session_end",
+        "label": "Auto-Stop on Session End",
+        "type": "boolean",
+        "default": true,
+        "hint": "When the orchestrator's chat session ends (user closes or navigates away), automatically stop all running and queued spawns. On by default to prevent orphaned workers burning resources with nobody to receive their results. Turn off only if you need long-running spawns to outlive the chat session."
+      },
+      {
+        "key": "default_spawn_mode",
+        "label": "Default Spawn Mode",
+        "type": "boolean",
+        "default": false,
+        "hint": "How spawns run when the orchestrator doesn't explicitly pick. OFF (default) = forked — the spawn queues up and runs in parallel; the orchestrator gets re-woken when it finishes. ON = blocking — the orchestrator waits inline for the spawn's full reply before continuing. The orchestrator can always override this per-spawn with the wait parameter. Forked mode keeps the conversation moving; blocking mode is simpler for sequential chains."
+      },
+      {
+        "key": "completion_delivery",
+        "label": "Helper Completion",
+        "type": "select",
+        "default": "resume",
+        "options": [
+          {
+            "value": "resume",
+            "label": "Resume parent (default)"
+          },
+          {
+            "value": "notify",
+            "label": "Show notification only"
+          }
+        ],
+        "hint": "When a forked helper finishes or fails, resume this agent once with its event, or only show a status notification. Follow-up timers always remain notifications."
+      }
+    ],
+    "notes": {
+      "clone_turn_count": "Not yet configurable per-agent — clone max turn count defaults to 20. This prevents a misdirected clone from looping endlessly on a narrow task. It is separate from the orchestrator's own max_turn_count on the Limits table.",
+      "clone_wall_clock": "Not yet configurable per-agent — clone wall clock defaults to 300 seconds (5 minutes). This time cap cuts off a spawn that hasn't finished within the window. Separate from the orchestrator's own max_wall_seconds on the Limits table."
+    }
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

@@ -1,0 +1,12 @@
+{
+  "display_name": "Run Watchdog",
+  "kind": "service",
+  "description": "Detects and revives agent runs that stall, freeze or go zombie mid-turn. Turn off only if you want stuck runs to stay stuck. Applies after a restart.",
+  "tools": [],
+  "icon": "heart-pulse",
+  "color": "#f7768e",
+  "order": 12,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

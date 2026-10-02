@@ -1,0 +1,16 @@
+{
+  "display_name": "V3 Workspace",
+  "kind": "ability",
+  "description": "Trusted-admin isolated v3 source preparation, review, patching, fixed verification and frozen proposals through a dedicated private adapter. No live apply or deployment.",
+  "tools": [
+    "v3_workspace_status",
+    "v3_workspace_action",
+    "v3_workspace_receipt"
+  ],
+  "icon": "folder-git-2",
+  "order": 10,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

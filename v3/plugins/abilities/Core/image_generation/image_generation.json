@@ -1,0 +1,17 @@
+{
+  "display_name": "Image Generation",
+  "kind": "ability",
+  "description": "Lets the agent generate images from text prompts. Requires a provider + model config.",
+  "tools": [
+    "generate_image"
+  ],
+  "icon": "image",
+  "color": "#bb9af7",
+  "order": 6,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": []
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

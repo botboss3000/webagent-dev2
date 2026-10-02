@@ -1,0 +1,49 @@
+{
+  "display_name": "Web Scraper",
+  "kind": "ability",
+  "description": "Bring-your-own scraping provider (Apify, RapidAPI, or any custom HTTP endpoint) for structured web extraction on sites with no public API.",
+  "tools": [
+    "web_scrape_search",
+    "web_scrape_url"
+  ],
+  "icon": "scan-search",
+  "color": "#7aa2f7",
+  "order": 3,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "bias": {
+      "key": "js_render_posture",
+      "default": "auto",
+      "levels": {
+        "never": "SCRAPER JS-RENDER POSTURE — Never: call the scrape tools with render_js=false. Use this for plain HTML sites; it's faster and cheaper. Only override if a page clearly returns nothing without JS.",
+        "auto": "",
+        "always": "SCRAPER JS-RENDER POSTURE — Always: call the scrape tools with render_js=true by default. The target sites are JavaScript-heavy (single-page apps / infinite scroll), so render the page before extracting even though it is slower and costs more provider credits."
+      }
+    },
+    "settings": [
+      {
+        "key": "js_render_posture",
+        "label": "JS rendering",
+        "type": "select",
+        "default": "auto",
+        "options": [
+          {
+            "value": "never",
+            "label": "Never — assume plain HTML (fast/cheap)"
+          },
+          {
+            "value": "auto",
+            "label": "Auto (default) — agent decides per page"
+          },
+          {
+            "value": "always",
+            "label": "Always — render JS (for SPAs; slower)"
+          }
+        ],
+        "hint": "How readily this agent asks the scraper to render JavaScript before extracting. Always = best for single-page-apps / infinite-scroll sites but uses more provider credits; Never = fast/cheap for static HTML; Auto = today's per-page judgment. This rides along as a posture note in the agent's prompt — a nudge, not a hard rule."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

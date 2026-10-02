@@ -5,6 +5,7 @@ cd /home/ar/webagent-dev2
 case "${1:-build}" in
   build)
     tar -cf - v3/gate.Dockerfile v3/gate_worker.py v3/tests/test_gate_worker.py \
+      v3/plugins/gates/publication_size_guard_v1.json \
       | docker build -f v3/gate.Dockerfile -t webagent-dev-v3-gate:local -
     ;;
   start)

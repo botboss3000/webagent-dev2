@@ -50,6 +50,24 @@ impl Store {
         rows.iter().map(|row| account_view(&self.unseal(&row.get::<Vec<u8>,_>("value"))?))
             .collect()
     }
+    /// Guests are durable independent identities, never password accounts.
+    pub async fn create_guest_account(&self) -> Result<Value> {
+        let id = format!("guest_{}", uuid::Uuid::new_v4().simple());
+        let account = json!({"user_id":id,"username":id,"password_hash":null,
+            "generation":uuid::Uuid::new_v4().to_string(),"is_approved":true,
+            "status":AccountStatus::Active,"role":Role::Guest,"tier_id":"basic",
+            "access_revision":1});
+        let profile = json!({"user_id":id,"display_name":"Guest","is_admin":false,
+            "default_agent_id":null,"last_login_at":null,"source_channel":"web_public"});
+        let mut tx = self.app_pool.begin().await?;
+        sqlx::query("INSERT INTO user_accounts(user_id,username,value) VALUES(?,?,?)")
+            .bind(&id).bind(&id).bind(self.seal(&account)?).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO user_profiles(user_id,value) VALUES(?,?)")
+            .bind(&id).bind(self.seal(&profile)?).execute(&mut *tx).await?;
+        audit(&mut tx,self,"account_created",&json!({"user_id":id,"role":"guest"})).await?;
+        tx.commit().await?;
+        Ok(account)
+    }
     pub async fn create_user_account(&self, username: &str, password_hash: &str) -> Result<Value> {
         if !username_ok(username) || password_hash.len() < 20 || password_hash.len() > 1024 {
             bail!("Invalid account input");
@@ -87,6 +105,9 @@ impl Store {
             .bind(id).fetch_optional(&mut *tx).await?
             .ok_or_else(|| anyhow!("Account not found"))?;
         let mut account = self.unseal(&blob)?;
+        if (account["role"] == "guest") != (role == Role::Guest) {
+            bail!("Guest identity cannot be converted through access administration");
+        }
         if Principal::from_account(&account)?.access_revision != expected_revision {
             bail!("Account revision changed");
         }

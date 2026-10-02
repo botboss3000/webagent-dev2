@@ -1,0 +1,12 @@
+{
+  "display_name": "Multi-Device Worker",
+  "kind": "service",
+  "description": "Lets this machine take part in multi-device control — heartbeating its presence and claiming remote-control jobs addressed to it. Turn off to keep this machine out of the device pool. Applies after a restart.",
+  "tools": [],
+  "icon": "monitor-smartphone",
+  "color": "#bb9af7",
+  "order": 15,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

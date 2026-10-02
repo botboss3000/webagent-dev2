@@ -1,0 +1,20 @@
+{
+  "display_name": "eBay",
+  "kind": "oauth",
+  "description": "eBay marketplace listings, inventory, offers, and order management.",
+  "tools": [
+    "ebay_search_items",
+    "ebay_get_item",
+    "ebay_list_my_active_listings",
+    "ebay_create_inventory_item",
+    "ebay_create_offer",
+    "ebay_end_offer"
+  ],
+  "icon": "tag",
+  "color": "#e0af68",
+  "order": 5,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

@@ -1,0 +1,12 @@
+{
+  "display_name": "Scheduler",
+  "kind": "service",
+  "description": "Runs automations on their schedules. Turn off to pause every scheduled automation run app-wide. Applies after a restart.",
+  "tools": [],
+  "icon": "alarm-clock",
+  "color": "#7dcfff",
+  "order": 10,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

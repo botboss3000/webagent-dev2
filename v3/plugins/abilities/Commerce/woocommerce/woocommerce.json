@@ -1,0 +1,18 @@
+{
+  "display_name": "WooCommerce",
+  "kind": "ability",
+  "description": "Query products and orders and create pending WooCommerce checkouts.",
+  "tools": [
+    "woocommerce_list_products",
+    "woocommerce_get_product",
+    "woocommerce_list_orders",
+    "woocommerce_create_checkout"
+  ],
+  "icon": "shopping-basket",
+  "color": "#e0af68",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

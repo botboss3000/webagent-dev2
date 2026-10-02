@@ -98,19 +98,26 @@ impl Policy {
             || !(1..=262144).contains(&policy.max_publication_bytes) {
             bail!("Invalid workflow policy or operator ceiling exceeded");
         }
-        for (checkpoint, modules) in &policy.modules {
-            let _: Checkpoint = serde_json::from_value(json!(checkpoint))?;
-            if modules.is_empty() { continue; }
-            if checkpoint != "publication" || modules.len() != 1
-                || !matches!(modules[0].as_str(), "publication_size_guard_v1"
-                    | "optional:publication_size_guard_v1") {
-                bail!("Optional workflow module is not installed at this checkpoint");
-            }
+        for checkpoint in policy.modules.keys() {
+            let checkpoint: Checkpoint = serde_json::from_value(json!(checkpoint))?;
+            // Gate manifests constrain each configured module to its fixed Rust checkpoint.
+            // Selection order is operator-defined; it never changes checkpoint order.
+            crate::gate_registry::selected(&policy, checkpoint)?;
         }
         Ok(policy)
     }
     pub fn revision(&self) -> Result<String> {
-        Ok(hex::encode(Sha256::digest(serde_json::to_vec(self)?)))
+        let mut digest=Sha256::new();
+        digest.update(serde_json::to_vec(self)?);
+        // A live JSON gate edit changes the receipt identity even when activation
+        // and order stay the same. A run can then re-evaluate at the next boundary.
+        for checkpoint in self.modules.keys() {
+            let checkpoint: Checkpoint=serde_json::from_value(json!(checkpoint))?;
+            for selected in crate::gate_registry::selected(self,checkpoint)? {
+                digest.update(serde_json::to_vec(&selected.manifest.config)?);
+            }
+        }
+        Ok(hex::encode(digest.finalize()))
     }
 }
 

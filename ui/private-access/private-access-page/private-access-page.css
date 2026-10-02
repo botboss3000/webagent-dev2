@@ -59,35 +59,13 @@
   height: 34px;
 }
 
-.private-access-kicker {
-  margin: 0 0 10px;
-  color: var(--accent);
-  font: 700 11px/1.2 Inter, sans-serif;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.private-access-card h1 {
-  margin: 0;
-  color: var(--fg-1);
-  font: 650 clamp(30px, 6vw, 44px)/1.08 Inter, sans-serif;
-  letter-spacing: -0.035em;
-}
-
-.private-access-intro {
-  max-width: 410px;
-  margin: 18px 0 0;
-  color: var(--fg-3);
-  font: 400 15px/1.65 Inter, sans-serif;
-}
-
 .private-access-approval {
   width: 100%;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 13px;
   align-items: start;
-  margin: 30px 0 0;
+  margin: 0;
   padding: 16px;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   border-radius: 16px;
@@ -122,7 +100,7 @@
 .private-access-action {
   width: 100%;
   min-height: 48px;
-  margin-top: 24px;
+  margin-top: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
   border-radius: 14px;
   color: var(--bg-0);
@@ -142,12 +120,6 @@
 .private-access-action:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 34%, transparent);
   outline-offset: 3px;
-}
-
-.private-access-footnote {
-  margin: 16px 0 0;
-  color: var(--fg-4);
-  font: 400 12px/1.5 Inter, sans-serif;
 }
 
 .private-access-glow {
@@ -195,3 +167,24 @@ body.app-restricted #session-new-header-btn { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .private-access-action { transition: none; }
 }
+
+/* The account panel owns the fields and authentication behavior; this host only
+   supplies the card layout. */
+.private-access-sign-in {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 0;
+  text-align: left;
+}
+.private-access-sign-in input:focus-visible,
+.private-access-sign-in button:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+
+/* Hidden must override the flex layouts of the reveal button and form host. */
+.private-access-sign-in[hidden],
+.private-access-action[hidden] { display: none; }
+.private-access-sign-in, .private-access-action { margin-bottom: 24px; }

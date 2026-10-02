@@ -1,0 +1,17 @@
+{
+  "display_name": "PayPal",
+  "kind": "ability",
+  "description": "Create, inspect, and capture PayPal Orders v2 payments.",
+  "tools": [
+    "paypal_get_order",
+    "paypal_create_order",
+    "paypal_capture_order"
+  ],
+  "icon": "wallet",
+  "color": "#0070ba",
+  "order": 9,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

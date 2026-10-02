@@ -1,0 +1,48 @@
+{
+  "display_name": "Document Libraries",
+  "kind": "ability",
+  "description": "Search and read approved business documents from Google Drive, OneDrive, SharePoint, and Dropbox, with optional relevant-document recall before a turn.",
+  "tools": [
+    "document_list_sources",
+    "document_search",
+    "document_get"
+  ],
+  "icon": "folder-search",
+  "color": "#73daca",
+  "order": 3,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "document_recall_enabled",
+        "label": "Automatic Document Recall",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Search configured libraries before substantive turns and inject a few cited excerpts."
+      },
+      {
+        "key": "document_max_results",
+        "label": "Maximum Search Results",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 50,
+        "ceiling": "max",
+        "hint": "Hard cap for document search results returned to the agent."
+      },
+      {
+        "key": "document_excerpt_chars",
+        "label": "Recall Excerpt Characters",
+        "type": "number",
+        "default": 800,
+        "min": 200,
+        "max": 3000,
+        "ceiling": "max",
+        "hint": "Maximum characters injected from each automatically recalled document."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

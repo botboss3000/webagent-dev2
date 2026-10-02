@@ -1,0 +1,49 @@
+{
+  "display_name": "Task Grouping",
+  "kind": "service",
+  "description": "AI-assisted grouping of a chat's turns into tasks. When off, grouping falls back to the fast keyword rule with no model calls. Expanded settings control off-task tool-output hiding, the tie-breaker's context, and the injected prompts.",
+  "tools": [],
+  "icon": "list-tree",
+  "color": "#7aa2f7",
+  "order": 1,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "hide_off_task_outputs",
+        "label": "Hide closed-task tool outputs",
+        "type": "boolean",
+        "default": true,
+        "hint": "When ON, tool results belonging to earlier, finished tasks are replaced in the model context with a short placeholder that names the tool and how to re-obtain the result (re-run it or search the session transcript); current-task results stay in full. The database keeps the complete output either way — only what is sent to the model provider shrinks. Takes effect immediately; the HIDE_OFF_TASK_TOOL_OUTPUTS environment variable overrides."
+      },
+      {
+        "key": "llm_context",
+        "label": "Tie-breaker context (recent turns)",
+        "type": "number",
+        "default": 5,
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "hint": "How many of the most recent turns (each turn = the user's message plus the agent's reply to it) the AI tie-breaker sees when deciding whether an ambiguous turn starts a new task. More context is more accurate but costs more per boundary. Takes effect immediately; TASK_GROUPING_LLM_CONTEXT overrides."
+      },
+      {
+        "key": "updates_directive",
+        "label": "Tool-result updates directive (injected prompt)",
+        "type": "textarea",
+        "rows": 6,
+        "default": "## Tool result updates\nAfter every tool call — before your next call or your reply — give the user a short status update: one or two lines on (1) what the tool returned, (2) what you're doing next, (3) why. Keep it brief and factual; no ceremony.\nWhen a tool result is a placeholder like \"[tool result hidden — completed in an earlier task]\", it came from an earlier, finished task and was kept out of your context to save cost. Treat it as \"the tool ran\" — note anything still relevant in your update, and do not re-run the tool just to recover the hidden result. Re-run only if you genuinely need its details for the current task.",
+        "hint": "Injected into every agent's system prompt while off-task hiding is ON. Tells the agent to narrate tool results / next steps / reasoning after each call, and how to treat a hidden placeholder. Clear the field to restore the factory text."
+      },
+      {
+        "key": "classifier_prompt",
+        "label": "Task-qualifying prompt (tie-breaker template)",
+        "type": "textarea",
+        "rows": 8,
+        "default": "You are a fast classifier that decides whether a new user message continues the SAME task as the recent conversation, or starts a NEW task.\n\nYOUR PURPOSE — context-pool optimization. Your verdict decides what the agent keeps in its working context. Everything a task's agent did — all of its tool results — stays fully available while that task is the current one. As soon as a task is closed, its tool results are removed from context and replaced by a small placeholder (the full output stays in storage and can be re-fetched by re-running the tool or searching the session transcript, but the agent no longer sees it). So:\n- SAME keeps the recent task's tool results available — the right call when the new message genuinely builds on, refines, corrects, or asks about that same work.\n- NEW drops the previous task's tool results from context — the right call when the new message is a fresh, unrelated piece of work.\n\nA \"task\" is one piece of work the user asked for: the original request plus any follow-ups, corrections, approvals, or additions about THAT SAME thing. A message starts a NEW task when it asks for something unrelated to what the recent conversation was about — a different feature, a different file/topic, a fresh question, a change of subject.\n\nYou see the user's recent messages AND the agent's replies to them. The agent's replies tell you what was actually done — use them to judge whether the new message refers to that work.\n- SAME — the new message refers to, builds on, refines, corrects, or asks about the same thing the recent conversation was about (even loosely: \"make that bigger\", \"why did it do that\", \"now the colour too\").\n- NEW — it switches to an unrelated subject or asks for a different piece of work, even right after the previous one finished.\n\nWhen genuinely unsure, prefer SAME: keeping a possibly-related task's results in context costs tokens but preserves correctness; splitting hides them and forces the agent to re-fetch details it may still need.\n\nRecent user messages (oldest first):\n{recent_user_messages}\n\nAgent replies to them (oldest first):\n{recent_assistant_messages}\n\nNew user message:\n{new_message}\n\nReply with ONE word only: SAME or NEW.",
+        "hint": "Template used by the AI tie-breaker to decide if an ambiguous user turn starts a new task. The verdict controls the context pool: SAME keeps the task's tool results in the agent's context, NEW closes the task and its results degrade to a placeholder. Variables: {recent_user_messages}, {recent_assistant_messages} and {new_message} (all required). Clear the field to restore the factory template."
+      }
+    ],
+    "notes": "Task Grouping draws boundaries between user turns with a fast text rule, plus an optional AI tie-breaker for ambiguous cases. The same boundaries power off-task tool-output hiding: results of closed tasks are replaced by placeholders in the model context to cut provider cost."
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

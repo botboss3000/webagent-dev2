@@ -36,22 +36,32 @@ executable in separate containers. The `health` role checks the loop heartbeat.
    generation and revision. An old worker cannot overwrite a newer attempt.
    See `claim_run` and `save_run` in [store.rs](../src/store.rs).
 5. **Prepare and call the model.** The loop assembles history, instructions,
-   and available tools. [workflow.rs](../src/workflow.rs) names the fixed
+   and available tools. Configured model-dispatch gates add trusted, call-scoped
+   guidance and private control schemas; this guidance is not durable chat text.
+   The integral gate JSON under `v3/data/config/gates` is both the build input
+   and live configuration. Optional modules live under `v3/plugins/gates`. [workflow.rs](../src/workflow.rs) names the fixed
    checkpoints; [context_input.rs](../src/context_input.rs) defines borrowed inputs
    and selects temporary contributions, [context_accounting.rs](../src/context_accounting.rs)
    measures append-only history, and [context_assembly.rs](../src/context_assembly.rs)
    combines and validates the request, [context_compaction.rs](../src/context_compaction.rs) plans and validates
    history compaction, and [provider.rs](../src/provider.rs) sends it.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
-   again. Some actions need human approval. Only a permitted action reaches
-   the Python tool worker. Showing a tool to the model does not permit its use.
-7. **Check a final reply.** Rust applies its own output rules. If enabled,
+   again. Some actions need human approval. Eligible independent calls can run
+   together under each tool's concurrency setting; rejected calls get their own
+   result. Only a permitted low-level action reaches the Python tool worker.
+   The private `publish_main_message` and `set_closer_status` controls stay in
+   Rust. A valid working update becomes a nonterminal assistant chat row in the
+   same transaction as its tool result. Showing a tool to the model does not
+   permit its use.
+7. **Check a final reply.** Rust applies its own output rules. The configured
+   closer records a status flag and short notification intent; missing or
+   malformed status becomes `unverified` without another model turn. If enabled,
    `publication_size_guard_v1` receives bounded metadata such as the reply's
    byte count, run identifiers, and digests, never its text. It can pass or
    reject, but cannot publish.
-8. **Publish once.** Rust commits the completed run, one assistant message,
-   and a publication record together. That record has no separate delivery
-   consumer today. See [publication.rs](../src/publication.rs).
+8. **Publish once.** Rust commits the completed run, one final assistant
+   message, and a publication record with the notification intent together.
+   That record has no separate delivery consumer today. See [publication.rs](../src/publication.rs).
 
 Clients read messages and run status through the API; they do not open database
 files directly.

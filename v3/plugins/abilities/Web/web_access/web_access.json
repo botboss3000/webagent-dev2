@@ -1,0 +1,17 @@
+{
+  "display_name": "Web Access",
+  "kind": "ability",
+  "description": "Lets the agent search the web, look up weather, and geocode addresses. No API keys needed.",
+  "tools": [
+    "web_search",
+    "maps_geocode",
+    "get_weather"
+  ],
+  "icon": "globe",
+  "color": "#7aa2f7",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

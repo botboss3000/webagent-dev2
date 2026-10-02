@@ -5,7 +5,7 @@
   "color": "#bb9af7",
   "description": "Inspect current-session state and inspect, search, edit, and run code in the isolated v3 workspace.",
   "skill_summary": "Inspect current-session state through typed APIs; work from repository instructions, make scoped changes, and verify results.",
-  "migration_note": "V3 workspace tools are callable. The original v2 Codebase Admin host tools are listed below but unavailable until ported to the v3 worker.",
+  "migration_note": "Existing v3 isolated workspace adapter; Rust authorization and approval gates remain authoritative.",
   "order": 1,
   "placeholder": false,
   "tools": [
@@ -22,22 +22,19 @@
     "source_patch",
     "promotion_propose",
     "shell",
-    "python",
-    "db_query",
-    "read_source",
-    "checkout_files",
-    "checkin_files",
-    "abandon_file_checkouts",
-    "file_checkout_status",
-    "write_source",
-    "edit_source",
-    "patch_source",
-    "delete_source",
-    "search_source",
-    "search_comments",
-    "read_directory",
-    "run_command",
-    "run_python",
-    "restart_server"
-  ]
+    "python"
+  ],
+  "readiness": "ready",
+  "config": {
+    "bias": {
+      "key": "destructive_caution",
+      "label": "Caution on destructive actions",
+      "default": "balanced",
+      "levels": {
+        "cautious": "Before any file delete, overwrite, bulk edit, or non-read-only shell command, STOP and ask the user to confirm in plain language what will change — even if they gave a broad instruction. Prefer the smallest reversible step and never act on your own initiative without an explicit go-ahead. (Restarting the server after a change is exempt — use restart_server.)",
+        "balanced": "Carry out the user's explicit file/shell commands directly, but ask first whenever YOU decide on your own initiative to delete, overwrite, or run something irreversible, and when an action is ambiguous or far-reaching.",
+        "trusted": "Act decisively on the user's intent without pausing to re-confirm routine writes, edits, or shell commands; only stop for clearly irreversible or repo-wide destructive actions (mass delete, force-push)."
+      }
+    }
+  }
 }

@@ -32,12 +32,16 @@
 </div>
 <div id="notice" role="status" aria-live="polite"></div>
 <section id="login" hidden><div class="setup-box">
-  <div class="lock-icon">🔐</div><h1>Sign in</h1><p class="sub">Sign in to WebAgent.</p>
+  <div class="lock-icon">🔐</div><h1 id="login-title">Sign in</h1><p class="sub" id="login-description">Sign in to WebAgent.</p>
   <form id="login-form" autocomplete="off">
+    <div class="form-group" id="register-name-row" hidden><label for="register-name">Display name</label><input id="register-name" name="display_name" maxlength="128" autocomplete="name" disabled></div>
     <div class="form-group"><label for="login-username">Login Username</label><input id="login-username" name="username" autocomplete="username" required></div>
     <div class="form-group"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn-setup">Sign in</button>
+    <button class="btn-setup" id="login-submit">Sign in</button>
   </form>
+  <button type="button" id="register-toggle">Create an account</button>
+  <button type="button" id="guest-login" hidden>Continue as guest</button>
+  <p id="registration-status" role="status" aria-live="polite"></p>
 </div></section>
 <div id="app" hidden>
   <div id="main-header">

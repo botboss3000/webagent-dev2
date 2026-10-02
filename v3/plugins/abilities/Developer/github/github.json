@@ -1,0 +1,13 @@
+{
+  "display_name": "GitHub",
+  "kind": "placeholder",
+  "description": "Repos, issues, and pull requests.",
+  "tools": [],
+  "icon": "github",
+  "color": "#7aa2f7",
+  "order": 1,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

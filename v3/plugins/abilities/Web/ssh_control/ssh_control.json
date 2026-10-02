@@ -1,0 +1,23 @@
+{
+  "display_name": "SSH Control",
+  "kind": "ability",
+  "description": "Connect to named external devices over SSH, run commands, and manage process-lifetime remote jobs without granting access to this WebAgent host.",
+  "tools": [
+    "ssh_request_connection",
+    "ssh_list_connections",
+    "ssh_test_connection",
+    "ssh_delete_connection",
+    "ssh_run_command",
+    "ssh_start_job",
+    "ssh_poll_job",
+    "ssh_list_jobs",
+    "ssh_cancel_job"
+  ],
+  "icon": "square-terminal",
+  "color": "#7aa2f7",
+  "order": 4,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

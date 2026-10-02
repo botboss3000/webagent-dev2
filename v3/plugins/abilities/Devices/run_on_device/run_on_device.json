@@ -1,0 +1,16 @@
+{
+  "display_name": "Multi-Device Control",
+  "kind": "ability",
+  "description": "Hand a task to one of the user's other devices to run with its own local tools.",
+  "tools": [
+    "list_my_devices",
+    "run_on_device"
+  ],
+  "icon": "monitor-smartphone",
+  "color": "#7aa2f7",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

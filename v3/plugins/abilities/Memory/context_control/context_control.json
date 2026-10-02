@@ -1,0 +1,167 @@
+{
+  "display_name": "Context Control",
+  "kind": "virtual_core",
+  "description": "Per-agent context controls: choose the token target where compaction activates and the exact recent amount kept verbatim. Unchanged prompt blocks are reused from bounded RAM/disk caches and provider prefix caches, while the app-wide 1.05M-token maximum remains a hard safety ceiling.",
+  "tools": [],
+  "icon": "gauge",
+  "color": "#bb9af7",
+  "order": 0,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "bias": {
+      "key": "self_compaction_posture",
+      "default": "balanced",
+      "levels": {
+        "off": "Do NOT call compact_context yourself — leave all compaction to the automatic background threshold.",
+        "balanced": "Reserve compact_context for a rare, deliberate fold only at a clean checkpoint of a long multi-step project, when early settled turns are taking room you need next.",
+        "eager": "On big multi-step work, proactively call compact_context at each phase boundary to reclaim room before the next phase (still never mid-phase)."
+      }
+    },
+    "settings": [
+      {
+        "key": "self_compaction_posture",
+        "label": "Self-Compaction Posture",
+        "type": "select",
+        "default": "balanced",
+        "options": [
+          {
+            "value": "off",
+            "label": "Off — never self-compact"
+          },
+          {
+            "value": "balanced",
+            "label": "Balanced — only at clean phase checkpoints"
+          },
+          {
+            "value": "eager",
+            "label": "Eager — free room proactively between phases"
+          }
+        ],
+        "hint": "How willing the agent is to run compact_context ITSELF (separate from automatic compaction).",
+        "scope": "agent"
+      },
+      {
+        "key": "tool_evidence_policy",
+        "label": "Historical Tool Evidence",
+        "type": "select",
+        "default": "current_task",
+        "options": [
+          {
+            "value": "current_task",
+            "label": "Quality — full current task"
+          },
+          {
+            "value": "recent_runs",
+            "label": "Run window — newest runs"
+          },
+          {
+            "value": "token_budget",
+            "label": "Token budget — newest that fit"
+          },
+          {
+            "value": "hybrid",
+            "label": "Economy — run and token limits"
+          },
+          {
+            "value": "all",
+            "label": "Archive — keep all tool evidence"
+          }
+        ],
+        "hint": "Controls when historical tool inputs and outputs become compact retrieval receipts. User and assistant messages remain; the current run is always full. Quality compacts completed tasks, while Economy also bounds long tasks.",
+        "scope": "agent"
+      },
+      {
+        "key": "full_evidence_runs",
+        "label": "Full-Evidence Runs",
+        "type": "number",
+        "default": 2,
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "hint": "Total newest user-triggered runs kept with complete tool evidence, including the current run. Internal manager, scout, closer, and resume iterations do not create runs.",
+        "scope": "agent"
+      },
+      {
+        "key": "full_evidence_token_budget",
+        "label": "Full Tool-Evidence Token Budget",
+        "type": "number",
+        "default": 40000,
+        "min": 1000,
+        "max": 1050000,
+        "step": 5000,
+        "display": "tokens",
+        "hint": "Approximate budget for complete tool arguments and results in the active task. Whole newest runs are retained until the budget is reached; the current run is never reduced.",
+        "scope": "agent"
+      },
+      {
+        "key": "auto_context_limit",
+        "label": "Auto-Detect Window From Model",
+        "type": "boolean",
+        "default": true,
+        "hint": "Use the active model's published context window, capped by the app-wide maximum below.",
+        "scope": "app"
+      },
+      {
+        "key": "token_limit",
+        "label": "Maximum Context Tokens",
+        "type": "number",
+        "default": 1050000,
+        "min": 1000,
+        "max": 1050000,
+        "step": 10000,
+        "hint": "App-wide hard ceiling for every agent. Auto-detected model windows and per-agent compaction targets can be smaller, never larger.",
+        "ceiling": "max",
+        "scope": "app"
+      },
+      {
+        "key": "compact_target_tokens",
+        "label": "Compaction Target Tokens",
+        "type": "range",
+        "default": 100000,
+        "min": 10000,
+        "max": 1050000,
+        "step": 10000,
+        "display": "tokens",
+        "ceiling": "max",
+        "ceiling_key": "token_limit",
+        "hint": "Absolute assembled-context size where compaction activates. For example, 100K starts folding old turns once the live context reaches about 100,000 tokens.",
+        "scope": "both"
+      },
+      {
+        "key": "verbatim_tail_tokens",
+        "label": "Keep Verbatim Tokens",
+        "type": "range",
+        "default": 30000,
+        "min": 5000,
+        "max": 1050000,
+        "step": 5000,
+        "display": "tokens",
+        "ceiling": "max",
+        "ceiling_key": "token_limit",
+        "hint": "Absolute number of newest tokens kept word-for-word after compaction. This is clamped below the effective target at runtime.",
+        "scope": "both"
+      },
+      {
+        "key": "segment_target_fraction",
+        "label": "Rolling Checkpoint Size (fraction of target)",
+        "type": "number",
+        "default": 0.05,
+        "min": 0.01,
+        "max": 0.5,
+        "step": 0.01,
+        "hint": "Maximum output size for the one rolling checkpoint, as a fraction of the compaction target.",
+        "scope": "app"
+      },
+      {
+        "key": "summary_model",
+        "label": "Summary Model (optional)",
+        "type": "text",
+        "default": "",
+        "hint": "Optional model id used only to write compacted summaries. Leave blank to reuse the configured chat model.",
+        "scope": "app"
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

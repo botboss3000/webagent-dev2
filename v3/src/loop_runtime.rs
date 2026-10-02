@@ -8,22 +8,63 @@ use crate::workflow;
 pub struct Scheduler { pub max_active_runs:usize, pub max_unresolved_runs:usize, pub poll_interval_ms:u64, pub recovery_interval_ms:u64 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Context { pub max_context_bytes:usize }
+pub struct Context {
+ pub max_context_bytes:usize,
+ /// MODEL-BUDGET-PROFILES: optional operator estimates, not provider tokenizers
+ /// or compaction settings. Keys are provider/model; unknown models use bytes.
+ #[serde(default)] pub model_profiles:BTreeMap<String,ModelBudget>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelBudget { pub context_tokens:usize, pub output_reserve_tokens:usize, pub bytes_per_token:usize }
+impl Context {
+ /// Conservative logical-byte proxy; never expands the existing safety ceiling.
+ /// Output reserve is budgeting only, not a claim about upstream output controls.
+ pub fn ceiling(&self,selection:&crate::provider::ProviderSelection)->Result<usize> {
+  let provider=match selection.provider {crate::provider::ProviderId::Deepseek=>"deepseek",crate::provider::ProviderId::OpenaiSubscription=>"openai_subscription"};
+  match self.model_profiles.get(&format!("{provider}/{}",selection.model)) {
+   None=>Ok(self.max_context_bytes), Some(p)=> {
+    if p.context_tokens==0 || p.output_reserve_tokens>=p.context_tokens || !(1..=8).contains(&p.bytes_per_token) {bail!("Invalid model budget profile");}
+    Ok(self.max_context_bytes.min((p.context_tokens-p.output_reserve_tokens).checked_mul(p.bytes_per_token).ok_or_else(||anyhow::anyhow!("Model budget overflow"))?))
+   }
+  }
+ }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cache { pub document_budget_bytes:usize, pub context_budget_bytes:usize }
+// Explicit parallel modes are per tool; omitted tools reject multi-call batches.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tools { pub max_parallel_calls:usize, pub parallel_modes:BTreeMap<String,String> }
+impl Default for Tools { fn default()->Self {
+ let parallel_modes=["file_list","file_read","file_search","source_review","state_inspect","prompt_slot_read"]
+  .into_iter().map(|name|(name.to_owned(),"concurrent".to_owned())).collect();
+ Self {max_parallel_calls:4,parallel_modes}
+} }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workflow { pub max_turns:u64, pub max_attempts:u64, pub max_publication_bytes:usize, pub modules:BTreeMap<String,Vec<String>> }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Config { pub schema_version:u32, pub scheduler:Scheduler, pub context:Context, pub cache:Cache, pub workflow:Workflow }
+pub struct Config { pub schema_version:u32, pub scheduler:Scheduler, pub context:Context, pub cache:Cache, #[serde(default)] pub tools:Tools, pub workflow:Workflow }
 // Bootstrap only. Once present, the validated data file is the sole authority.
-impl Default for Config { fn default()->Self { Self {schema_version:2,scheduler:Scheduler {max_active_runs:1,max_unresolved_runs:200,poll_interval_ms:300,recovery_interval_ms:10000},context:Context {max_context_bytes:262144},cache:Cache {document_budget_bytes:67108864,context_budget_bytes:16777216},workflow:Workflow {max_turns:50,max_attempts:3,max_publication_bytes:262144,modules:BTreeMap::new()}} } }
+impl Default for Config { fn default()->Self { Self {schema_version:2,scheduler:Scheduler {max_active_runs:1,max_unresolved_runs:200,poll_interval_ms:300,recovery_interval_ms:10000},context:Context {max_context_bytes:262144,model_profiles:BTreeMap::new()},cache:Cache {document_budget_bytes:67108864,context_budget_bytes:16777216},tools:Tools::default(),workflow:Workflow {max_turns:50,max_attempts:3,max_publication_bytes:262144,modules:BTreeMap::new()}} } }
 impl Config {
  pub fn policy(&self)->Result<workflow::Policy> { workflow::Policy::resolve(Some(&serde_json::json!({"schema_version":1,"max_turns":self.workflow.max_turns,"max_attempts":self.workflow.max_attempts,"max_publication_bytes":self.workflow.max_publication_bytes,"modules":self.workflow.modules,"max_context_bytes":self.context.max_context_bytes}))) }
  pub fn apply_policy(&mut self,p:&workflow::Policy) { self.context.max_context_bytes=p.max_context_bytes;self.workflow=Workflow {max_turns:p.max_turns,max_attempts:p.max_attempts,max_publication_bytes:p.max_publication_bytes,modules:p.modules.clone()}; }
- pub fn validate(&self)->Result<()> { self.policy()?; if self.schema_version!=2 || !(1..=16).contains(&self.scheduler.max_active_runs) || self.scheduler.max_unresolved_runs<self.scheduler.max_active_runs || self.scheduler.max_unresolved_runs>200 || !(10..=60000).contains(&self.scheduler.poll_interval_ms) || !(1000..=3600000).contains(&self.scheduler.recovery_interval_ms) || self.cache.document_budget_bytes>268435456 || self.cache.context_budget_bytes>67108864 { bail!("Invalid loop runtime configuration"); } Ok(()) }
+ pub fn validate(&self)->Result<()> { self.policy()?;
+ // MODEL-PROFILE-VALIDATION: reject invalid estimates before any provider call.
+ for (key,p) in &self.context.model_profiles {
+  if self.context.model_profiles.len()>128 || key.len()>256 || !key.contains('/') || p.context_tokens==0 || p.context_tokens>10_000_000 || p.output_reserve_tokens>=p.context_tokens || !(1..=8).contains(&p.bytes_per_token) {bail!("Invalid model budget profile");}
+ }
+ // BATCH-CONFIG-VALIDATION: unknown names and modes fail closed at startup.
+ if !(1..=4).contains(&self.tools.max_parallel_calls) || self.tools.parallel_modes.len()>64 {bail!("Invalid parallel tool configuration");}
+ for (name,mode) in &self.tools.parallel_modes {
+  if !crate::tools::schemas().iter().any(|schema|schema["name"]==name.as_str())
+   || !matches!(mode.as_str(),"concurrent"|"reject") {bail!("Invalid parallel tool mode");}
+ }
+ if self.schema_version!=2 || !(1..=16).contains(&self.scheduler.max_active_runs) || self.scheduler.max_unresolved_runs<self.scheduler.max_active_runs || self.scheduler.max_unresolved_runs>200 || !(10..=60000).contains(&self.scheduler.poll_interval_ms) || !(1000..=3600000).contains(&self.scheduler.recovery_interval_ms) || self.cache.document_budget_bytes>268435456 || self.cache.context_budget_bytes>67108864 { bail!("Invalid loop runtime configuration"); } Ok(()) }
  pub fn read(path:&Path)->Result<Self> { let mut value:serde_json::Value=serde_json::from_slice(&std::fs::read(path)?)?;
  // Schema 1's reserve was redundant. Preserve all other settings and reject unknown fields.
  if value["schema_version"]==1 { value["schema_version"]=serde_json::json!(2); if let Some(c)=value["context"].as_object_mut(){c.remove("summary_reserve_bytes");} }
@@ -58,5 +99,38 @@ impl Config {
   assert!(migrated["context"].get("summary_reserve_bytes").is_none());
   assert!(workflow::Policy::resolve(Some(&serde_json::json!({"summary_reserve_bytes":999}))).is_err());
   Config::initialize(root.path(),&store).await.unwrap();
+ }
+}
+
+#[cfg(test)] mod parallel_tool_tests {
+ use super::*;
+ #[test] fn old_config_gets_bounded_defaults_and_bad_modes_fail_closed() {
+  let d=tempfile::tempdir().unwrap();let p=d.path().join("config/loop-runtime.json");
+  let mut old=serde_json::to_value(Config::default()).unwrap();
+  old.as_object_mut().unwrap().remove("tools");
+  std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+  std::fs::write(&p,serde_json::to_vec(&old).unwrap()).unwrap();
+  let mut c=Config::read(&p).unwrap();
+  assert_eq!(c.tools.max_parallel_calls,4);
+  assert_eq!(c.tools.parallel_modes.get("file_read").map(String::as_str),Some("concurrent"));
+  assert!(c.tools.parallel_modes.get("file_write").is_none());
+  c.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
+  c.validate().unwrap();
+  c.tools.parallel_modes.insert("unknown".into(),"concurrent".into());
+  assert!(c.validate().is_err());
+  c.tools.parallel_modes.remove("unknown");
+  c.tools.parallel_modes.insert("file_read".into(),"serial".into());
+  assert!(c.validate().is_err());
+ }
+}
+#[cfg(test)] mod model_budget_tests {
+ use super::*;
+ // MODEL-BUDGET-REGRESSION: unknown models preserve bytes; explicit estimates tighten only.
+ #[test] fn profiles_tighten_and_reserve_output() {
+  let mut c=Config::default();let selection=crate::provider::ProviderSelection::parse(&serde_json::json!({"provider":"deepseek","model":"fixture"}),"unused").unwrap();
+  assert_eq!(c.context.ceiling(&selection).unwrap(),262144);
+  c.context.model_profiles.insert("deepseek/fixture".into(),ModelBudget{context_tokens:1000,output_reserve_tokens:100,bytes_per_token:2});
+  c.validate().unwrap();assert_eq!(c.context.ceiling(&selection).unwrap(),1800);
+  c.context.model_profiles.get_mut("deepseek/fixture").unwrap().output_reserve_tokens=1000;assert!(c.validate().is_err());
  }
 }

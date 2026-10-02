@@ -1,0 +1,13 @@
+{
+  "display_name": "Twitch",
+  "kind": "oauth",
+  "description": "Twitch channel, chat, and clips.",
+  "tools": [],
+  "icon": "twitch",
+  "color": "#bb9af7",
+  "order": 8,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

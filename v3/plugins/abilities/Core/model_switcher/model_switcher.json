@@ -1,0 +1,55 @@
+{
+  "display_name": "Model Switcher",
+  "kind": "ability",
+  "description": "Lets the agent right-size its own brain for this chat — check the menu of available models and what each can do (vision, image output, premium), switch to a specific model (including a vision or image-output model for image work), upgrade onto a premium model for a hard task (with permission), and tune how hard the model thinks (reasoning effort: minimal → high) per task. Cleanup is automatic: the backend returns the chat to the default model and effort when the run ends, so the agent never needs a closing switch-back step.",
+  "tools": [
+    "list_models",
+    "set_model",
+    "use_premium_model",
+    "set_effort",
+    "reset_to_default"
+  ],
+  "icon": "gauge",
+  "color": "#bb9af7",
+  "order": 8,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "bias": {
+      "key": "switch_level",
+      "default": "balanced",
+      "levels": {
+        "conservative": "MODEL-SWITCHING POSTURE — Conservative: stay on your default model at its default effort. Only switch model, or raise reasoning effort, when the user explicitly asks or when you are genuinely stuck and a stronger model / deeper thinking is the clear remedy. Do not proactively upgrade or raise effort.",
+        "balanced": "",
+        "eager": "MODEL-SWITCHING POSTURE — Eager: actively right-size your model AND its reasoning effort to the work. Before a task, rate how much thinking it needs: for genuinely hard reasoning or planning, raise the effort with set_effort (or upgrade to the premium model), and for light/mechanical work drop the effort down for speed; switch onto the vision model whenever a task involves looking at images. No closing revert is needed — the backend returns the chat to the default model and effort automatically when the run ends; use reset_to_default() mid-run only if you want to drop back before the run finishes. Don't grind on the cheap default — or burn high effort on trivia — when a better fit is available. (Still ask before a change that costs more.)"
+      }
+    },
+    "guidance": {
+      "no_premium_model": "No premium model is configured, so there's nothing stronger to upgrade onto. Tell the user plainly that an admin can assign the Premium role to a capable model in App Config → Models. Do NOT pretend you switched."
+    },
+    "settings": [
+      {
+        "key": "switch_level",
+        "label": "Model switching",
+        "type": "select",
+        "default": "balanced",
+        "options": [
+          {
+            "value": "conservative",
+            "label": "Conservative — stay on default"
+          },
+          {
+            "value": "balanced",
+            "label": "Balanced (default)"
+          },
+          {
+            "value": "eager",
+            "label": "Eager — right-size the model"
+          }
+        ],
+        "hint": "How readily this agent changes its own model and reasoning effort. Conservative = stay on the default at default effort unless asked or stuck; Balanced = upgrade or raise effort only for genuinely hard steps; Eager = proactively right-size the model and the thinking depth per task (raise effort/upgrade for hard reasoning, lower it for speed, switch to the vision model for image work). Cleanup to the default model and effort is automatic at run end — no closing revert step. This rides along as a posture note in the agent's prompt — a nudge, not a hard rule."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

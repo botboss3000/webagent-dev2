@@ -1,0 +1,31 @@
+{
+  "display_name": "Memory",
+  "kind": "ability",
+  "description": "Recalls useful facts from earlier conversations and saves durable notes for future chats.",
+  "tools": [
+    "memory"
+  ],
+  "icon": "brain",
+  "color": "#bb9af7",
+  "order": 1,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "memory_recall",
+        "label": "Recall Past Info",
+        "type": "boolean",
+        "default": true,
+        "hint": "Search long-term memory before answering."
+      },
+      {
+        "key": "memory_save",
+        "label": "Remember Conversations",
+        "type": "boolean",
+        "default": true,
+        "hint": "Automatically save a short durable note after each exchange."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

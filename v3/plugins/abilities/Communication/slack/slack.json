@@ -1,0 +1,13 @@
+{
+  "display_name": "Slack",
+  "kind": "placeholder",
+  "description": "Send messages and read channels via Slack.",
+  "tools": [],
+  "icon": "slack",
+  "color": "#26A5E4",
+  "order": 3,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

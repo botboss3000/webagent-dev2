@@ -1,0 +1,13 @@
+{
+  "display_name": "Twilio",
+  "kind": "placeholder",
+  "description": "SMS and voice via Twilio.",
+  "tools": [],
+  "icon": "phone-call",
+  "color": "#26A5E4",
+  "order": 6,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

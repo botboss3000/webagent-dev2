@@ -1,0 +1,13 @@
+{
+  "display_name": "Reddit",
+  "kind": "oauth",
+  "description": "Reddit reading and posting.",
+  "tools": [],
+  "icon": "message-circle",
+  "color": "#bb9af7",
+  "order": 6,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

@@ -1,0 +1,42 @@
+{
+  "display_name": "App Control",
+  "kind": "ability",
+  "description": "Two-way control of what you're looking at. The agent can switch the main view (Browser, Pages, Agents...), show or hide the chat panel, and resize it — and you can right-click anywhere in the app to point at something and send it to the chat (a small panel with one-click questions plus a message box, sharing the element you clicked and where on the page it is). On by default; switch off to remove both halves platform-wide.",
+  "tools": [
+    "set_app_view"
+  ],
+  "icon": "app-window",
+  "color": "#73daca",
+  "order": 3,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "allow_hide_chat",
+        "label": "Allow Hiding Chat",
+        "type": "boolean",
+        "default": true,
+        "hint": "ON (default) lets the agent hide the chat panel to give the main view (e.g. the browser) the full width while it narrates. OFF keeps the chat panel always visible — the agent can still switch views and resize, just not hide chat."
+      },
+      {
+        "key": "allow_resize_chat",
+        "label": "Allow Resizing Chat",
+        "type": "boolean",
+        "default": true,
+        "hint": "ON (default) lets the agent widen or narrow the chat panel (e.g. to give the browser more room). OFF locks the chat panel at its current width."
+      },
+      {
+        "key": "max_chat_width",
+        "label": "Max Chat Width (px)",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "max": 1200,
+        "step": 10,
+        "hint": "Upper bound on how wide the agent may make the chat panel, in pixels. 0 means no cap. Requests above this are clamped down. The system floor is 280px regardless."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

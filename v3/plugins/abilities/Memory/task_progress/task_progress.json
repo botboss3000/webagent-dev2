@@ -1,0 +1,46 @@
+{
+  "display_name": "Task Progress",
+  "kind": "virtual_core",
+  "description": "Durable task state, evidence-backed self-completion, and task-aware history retention.",
+  "tools": [],
+  "icon": "list-checks",
+  "color": "#bb9af7",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "completed_task_evidence_tokens",
+        "label": "Completed-Task Carryover Tokens",
+        "type": "number",
+        "default": 20000,
+        "min": 0,
+        "max": 1050000,
+        "step": 1000,
+        "display": "tokens",
+        "hint": "Maximum completed-task tool evidence retained after the active task. Current-task evidence remains until Context Control needs to reduce history.",
+        "scope": "agent"
+      },
+      {
+        "key": "allow_self_completion",
+        "label": "Allow Self-Completion",
+        "type": "select",
+        "default": "true",
+        "options": [
+          {
+            "value": "true",
+            "label": "Permitted"
+          },
+          {
+            "value": "false",
+            "label": "Not permitted"
+          }
+        ],
+        "hint": "Allow the working agent to complete a task when the durable evidence supports it.",
+        "scope": "agent"
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

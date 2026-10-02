@@ -1,0 +1,17 @@
+{
+  "display_name": "Stripe",
+  "kind": "ability",
+  "description": "Query Stripe products and checkout sessions and create hosted Checkout pages.",
+  "tools": [
+    "stripe_list_products",
+    "stripe_get_checkout_session",
+    "stripe_create_checkout"
+  ],
+  "icon": "credit-card",
+  "color": "#635bff",
+  "order": 8,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

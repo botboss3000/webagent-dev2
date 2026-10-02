@@ -1,0 +1,25 @@
+{
+  "display_name": "Wiki Control",
+  "kind": "ability",
+  "description": "Automatically recalls relevant company Wiki excerpts into the agent's context, and lets it search, read, create, edit, publish, restore, and delete Wiki entries. Writes change shared data everyone sees, so grant per agent with care.",
+  "tools": [
+    "wiki_search",
+    "wiki_list",
+    "wiki_get",
+    "wiki_create",
+    "wiki_update",
+    "wiki_set_status",
+    "wiki_delete",
+    "wiki_history",
+    "wiki_get_revision",
+    "wiki_restore",
+    "wiki_backlinks"
+  ],
+  "icon": "database",
+  "color": "#7dcfff",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

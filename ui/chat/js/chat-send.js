@@ -102,7 +102,7 @@ function applyChatGate() {
     app.chatInput.disabled = false;
     app.chatInput.readOnly = false;
     app.chatInput.removeAttribute('aria-disabled');
-    app.chatInput.placeholder = agentChatMsg('pill_placeholder');
+    app.chatInput.placeholder = app.chatInput.dataset.configPlaceholder || agentChatMsg('pill_placeholder');
     app.chatSend.disabled = !app.chatInput.value.trim();
   } else {
     // Keep the normal placeholder. The read-only input can still receive a
@@ -111,7 +111,7 @@ function applyChatGate() {
     app.chatInput.readOnly = true;
     app.chatInput.setAttribute('aria-disabled', 'true');
     app.chatInput.value = '';
-    app.chatInput.placeholder = agentChatMsg('pill_placeholder');
+    app.chatInput.placeholder = app.chatInput.dataset.configPlaceholder || agentChatMsg('pill_placeholder');
     app.chatSend.disabled = true;
   }
   _updateInputRowState();

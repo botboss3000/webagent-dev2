@@ -1,33 +1,40 @@
-/**
- * Private Access page presentation.
- *
- * Authentication remains authoritative in ui/shared/js/main.js. This module
- * owns only the restricted shell surface and its sign-in/register action.
- */
+/** Private Access presentation; authentication is owned by the shared account form. */
+import { mountAccountSignInForm } from '../../../shared/js/user-panel.js';
 
-let _wiredButton = null;
-let _signInHandler = null;
-
-export function wirePrivateAccessPage(onSignIn) {
-  const overlay = document.getElementById('app-restricted-overlay');
-  const button = overlay?.querySelector('[data-private-access-sign-in]');
-  if (!button) return false;
-
-  _signInHandler = typeof onSignIn === 'function' ? onSignIn : null;
-  if (_wiredButton !== button) {
-    button.addEventListener('click', () => {
-      if (_signInHandler) _signInHandler();
+export function wirePrivateAccessPage() {
+  const host = document.querySelector('[data-private-access-form]');
+  const reveal = document.querySelector('[data-private-access-reveal]');
+  if (!host || !reveal) return false;
+  if (!host.dataset.mounted) {
+    mountAccountSignInForm(host, 'private');
+    const login = host.querySelector('#private-login-email');
+    login.placeholder = 'Email';
+    login.setAttribute('aria-label', 'Email');
+    host.dataset.mounted = 'true';
+    reveal.addEventListener('click', () => {
+      host.hidden = false;
+      reveal.hidden = true;
+      reveal.setAttribute('aria-expanded', 'true');
+      // Keep focus in the real click handler for browser credential suggestions.
+      login.focus({ preventScroll: true });
     });
-    _wiredButton = button;
   }
   return true;
 }
 
 export function setPrivateAccessVisible(visible) {
   const restricted = Boolean(visible);
+  const wasRestricted = document.body?.classList.contains('app-restricted');
   document.body?.classList.toggle('app-restricted', restricted);
   const overlay = document.getElementById('app-restricted-overlay');
-  if (overlay) {
-    overlay.setAttribute('aria-hidden', restricted ? 'false' : 'true');
+  if (overlay) overlay.setAttribute('aria-hidden', restricted ? 'false' : 'true');
+  if (!restricted || !wasRestricted) {
+    const host = document.querySelector('[data-private-access-form]');
+    const reveal = document.querySelector('[data-private-access-reveal]');
+    if (host) host.hidden = true;
+    if (reveal) {
+      reveal.hidden = false;
+      reveal.setAttribute('aria-expanded', 'false');
+    }
   }
 }

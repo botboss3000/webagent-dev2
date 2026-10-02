@@ -2485,6 +2485,8 @@ function _addBubbleActions(bubble) {
   // use display:none, so the message itself remains the reveal target.
   if ((isAgent || isUser) && !bubble._gutterRevealWired) {
     bubble._gutterRevealWired = true;
+    // A hidden gutter must have a keyboard-reachable reveal target.
+    bubble.tabIndex = 0;
     bubble.addEventListener('click', (event) => {
       if (event.target.closest('a, button, input, textarea, select, .turn-gutter, .bubble-actions')) return;
       // Selecting message text should not change its layout.

@@ -41,6 +41,7 @@ import {
   createChatSurfaceUsage,
   wireChatSurfaceComposer,
   wireStatsCarousel,
+  shouldSendComposer,
 } from '../../shared/js/chat-surface.js';
 
 // ── Widget registry (enumerate / close / restore all open widgets) ─────────
@@ -358,9 +359,7 @@ export function createChatWidget(opts = {}) {
     root.appendChild(footer);
 
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        // On touch devices (mobile), let Enter insert a newline; send via the button.
-        if (window.matchMedia?.('(pointer: coarse)').matches) return;
+      if (shouldSendComposer(e, input)) {
         e.preventDefault();
         if (!sendBtn.disabled) _sendFromInput();
       }

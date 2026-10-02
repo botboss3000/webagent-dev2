@@ -1,0 +1,47 @@
+{
+  "display_name": "SQL Databases",
+  "kind": "ability",
+  "description": "Connect read-only business databases so the agent can inspect approved schemas, answer questions with live SQL, and recall relevant records before a turn.",
+  "tools": [
+    "sql_list_connections",
+    "sql_describe",
+    "sql_search",
+    "sql_query"
+  ],
+  "icon": "database",
+  "color": "#7dcfff",
+  "order": 4,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "sql_query_enabled",
+        "label": "Allow Live Queries",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Let this agent issue read-only SELECT queries against approved tables."
+      },
+      {
+        "key": "sql_recall_enabled",
+        "label": "Automatic Recall",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "Search configured knowledge columns before substantive turns and inject a few cited excerpts."
+      },
+      {
+        "key": "sql_max_rows",
+        "label": "Maximum Query Rows",
+        "type": "number",
+        "default": 100,
+        "min": 1,
+        "max": 1000,
+        "ceiling": "max",
+        "hint": "Hard result cap applied even when generated SQL omits LIMIT."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

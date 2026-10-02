@@ -1,0 +1,18 @@
+{
+  "display_name": "Etsy",
+  "kind": "oauth",
+  "description": "Etsy shop, listing, inventory, and receipt management.",
+  "tools": [
+    "etsy_me",
+    "etsy_search_listings",
+    "etsy_list_my_shop_listings",
+    "etsy_create_draft_listing"
+  ],
+  "icon": "heart",
+  "color": "#e0af68",
+  "order": 6,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

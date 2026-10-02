@@ -1,0 +1,88 @@
+{
+  "display_name": "Automation",
+  "kind": "ability",
+  "description": "Scheduled tasks and event-triggered jobs that can call integrations.",
+  "tools": [
+    "list_event_sources",
+    "list_delivery_channels",
+    "event_subscribe",
+    "list_event_subscriptions",
+    "event_unsubscribe",
+    "schedule_task",
+    "remind_me",
+    "list_automations",
+    "update_automation",
+    "pause_automation",
+    "resume_automation",
+    "cancel_automation",
+    "run_automation_now",
+    "remember_automation_state"
+  ],
+  "icon": "clock",
+  "color": "#e0af68",
+  "order": 4,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {
+    "settings": [
+      {
+        "key": "allow_recurring_schedules",
+        "label": "Allow Recurring Schedules",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "ON (default) lets the agent create repeating cron schedules (every morning at 9, every Monday) as well as one-shot tasks. OFF restricts it to one-shot tasks only (a reminder in 10 minutes, a job at a fixed time). Recurring jobs keep running until paused or cancelled, so turn this off if you don't want the agent setting up jobs that fire on their own indefinitely."
+      },
+      {
+        "key": "allow_event_subscriptions",
+        "label": "Allow Event Triggers",
+        "type": "boolean",
+        "default": true,
+        "ceiling": "off",
+        "hint": "ON (default) lets the agent set up real-time triggers — 'when an email arrives, do X', 'when a file is added, do Y'. OFF removes that entirely and the agent can only use timed/scheduled tasks. Event triggers still require the underlying source (Gmail, Slack, etc.) to be connected before they actually fire."
+      },
+      {
+        "key": "max_automations_per_user",
+        "label": "Max Automations per User",
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 200,
+        "step": 1,
+        "ceiling": "max",
+        "hint": "The total number of scheduled tasks plus event triggers this agent will keep alive for one user at a time. Once the ceiling is hit, new schedule/subscribe requests are refused until the user cancels some. Stops an agent from quietly piling up hundreds of background jobs."
+      },
+      {
+        "key": "max_events_per_subscription",
+        "label": "Max Fires per Day (event triggers)",
+        "type": "number",
+        "default": 50,
+        "min": 1,
+        "max": 1000,
+        "step": 1,
+        "ceiling": "max",
+        "hint": "A daily ceiling on how many times a single event trigger may fire. A noisy source (a busy inbox, a chatty channel) could otherwise wake the agent hundreds of times a day; this caps the per-day spend. The agent may request a lower cap per trigger, but never a higher one than this."
+      },
+      {
+        "key": "max_delivery_channels",
+        "label": "Max Delivery Targets",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "ceiling": "max",
+        "hint": "How many places one automation may fan its result out to at once (this chat, plus e.g. Telegram and a webhook). Requests with more targets than this are trimmed down to the limit. Keeps a single job from blasting a result to a long list of destinations."
+      },
+      {
+        "key": "require_approval",
+        "label": "Require Human Approval",
+        "type": "boolean",
+        "default": false,
+        "ceiling": "on",
+        "hint": "ON makes every automation the agent creates start PAUSED — a person must switch it on from the Automation tab before it will ever run. Use this when you want the agent to propose schedules and triggers but never arm them by itself. OFF (default) lets the agent's automations start running immediately."
+      }
+    ]
+  },
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

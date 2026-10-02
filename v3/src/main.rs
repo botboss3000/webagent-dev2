@@ -9,9 +9,13 @@ mod phase3_api;
 mod user_api;
 mod context_accounting;
 mod loop_runtime;
+mod gate_registry;
+mod gate_controls;
+mod parallel_batch;
 mod abilities;
 mod browser_login;
 mod accounts;
+mod registration;
 mod cache;
 mod context_compaction;
 mod attachments;
@@ -128,8 +132,21 @@ fn now() -> u64 {
 fn uuid() -> String {
     Uuid::new_v4().to_string()
 }
-fn digest(value: &Value) -> String {
-    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
+// DISPATCH-DIGEST-STREAM: hash the exact JSON representation without allocating
+// a temporary JSON tree or serialized history-sized byte buffer.
+fn digest<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            use sha2::Digest;
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, value).expect("JSON digest serialization");
+    hex::encode(writer.0.finalize())
 }
 fn key(prefix: &str, id: &str) -> String {
     format!("{prefix}:{id}")
@@ -140,10 +157,26 @@ fn terminal(status: &str) -> bool {
 fn status(run: &Value) -> &str {
     run["status"].as_str().unwrap_or("failed")
 }
+// CONTEXT-PUBLIC-SUMMARY: publish measured numeric totals only, never arbitrary
+// persisted report fields, overlays, schema descriptions or transcript content.
+fn public_context_summary(run: &Value) -> Value {
+    let report = &run["context_assembly_report"];
+    if report["version"] != 1 || report["scope"] != "logical_call_envelope" { return Value::Null; }
+    let fields = ["envelope_bytes", "max_bytes", "history_json_bytes",
+        "instruction_json_bytes", "schemas_json_bytes", "turn", "call"];
+    let mut summary=serde_json::Map::new();
+    for field in fields {
+        let Some(value)=report[field].as_u64() else {return Value::Null;};
+        summary.insert(field.into(),json!(value));
+    }
+    summary.insert("accounting".into(),json!("serialized_json_bytes_not_provider_tokens"));
+    Value::Object(summary)
+}
 fn public_run(run: &Value) -> Value {
     json!({"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
         "pending":run["pending"],"uncertain":run["uncertain"],"turns":run["turns"],
-        "attachments":run["attachments"].as_array().cloned().unwrap_or_default()})
+        "attachments":run["attachments"].as_array().cloned().unwrap_or_default(),
+        "context_summary":public_context_summary(run)})
 }
 fn run_diagnostics(run: &Value) -> Value {
     const CHECKPOINTS: [&str; 8] = ["admission", "attachment_preparation", "context_assembly",
@@ -525,6 +558,9 @@ async fn auth(State(app): State<App>, mut request: Request, next: Next) -> Respo
         Ok(value) if value.active() && account["is_approved"] == true => value,
         _ => return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response(),
     };
+    if principal.role == access::Role::Guest && registration::mode(&app).await.unwrap_or_default() != "public_registered" {
+        return ApiError(StatusCode::UNAUTHORIZED, "Guest access is not enabled".into()).into_response();
+    }
     if doc["generation"] != account["generation"] {
         return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response();
     }
@@ -618,7 +654,8 @@ async fn login(
             .await?
             .ok_or_else(|| bad("Admin unavailable"))?
     };
-    let hash = credential["password_hash"].as_str().unwrap().to_owned();
+    if credential["role"] == "guest" {return Err(ApiError(StatusCode::UNAUTHORIZED,"Invalid login".into()));}
+    let hash = credential["password_hash"].as_str().unwrap_or("").to_owned();
     let password = password.to_owned();
     let valid = tokio::task::spawn_blocking(move || {
         PasswordHash::new(&hash).ok().is_some_and(|h| {
@@ -743,6 +780,7 @@ async fn update_profile(
     axum::Extension(doc): axum::Extension<Value>,
     Json(body): Json<Value>,
 ) -> Api {
+    if doc["_role"] == "guest" {return Err(ApiError(StatusCode::FORBIDDEN,"Register an account to edit a profile".into()));}
     let display_name = required(&body, "display_name", 128)?.trim();
     let username = required(&body, "username", 128)?.trim();
     if display_name.is_empty() || display_name.chars().any(char::is_control) {
@@ -770,6 +808,7 @@ async fn update_session_policy(
     axum::Extension(doc): axum::Extension<Value>,
     Json(body): Json<Value>,
 ) -> Api {
+    if doc["_role"] == "guest" {return Err(ApiError(StatusCode::FORBIDDEN,"Guest sign-in duration is fixed".into()));}
     let days = body["days"]
         .as_u64()
         .ok_or_else(|| bad("Invalid sign-in duration"))?;
@@ -2496,10 +2535,12 @@ async fn control(State(app): State<App>, Json(body): Json<Value>) -> Api {
                     let mut run = user_app.run(view["id"].as_str().unwrap()).await?;
                     run["status"] = json!("stopped");
                     run["error"] = json!("Stopped by global shutoff");
-                    if run["pending"]["state"] == "executing"
-                        && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+                    if (run["pending"]["state"] == "executing"
+                        && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+                        || parallel_batch::executing_write(&run)
                     {
                         run["uncertain"] = json!(true);
+                        parallel_batch::mark_uncertain_writes(&mut run);
                     }
                     user_app.save_override(&mut run).await?;
                 }
@@ -2532,11 +2573,13 @@ async fn command(
                 token.cancel();
             }
             if !terminal(status(&run)) {
-                if run["pending"]["state"] == "executing"
-                    && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+                if (run["pending"]["state"] == "executing"
+                    && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+                    || parallel_batch::executing_write(&run)
                 {
                     run["status"] = json!("recovery");
                     run["uncertain"] = json!(true);
+                    parallel_batch::mark_uncertain_writes(&mut run);
                 } else {
                     run["status"] = json!("cancelled");
                 }
@@ -2565,11 +2608,51 @@ async fn command(
             if run["pending"]["state"] == "executing" {
                 run["pending"]["state"] = json!("requested");
             }
+            if let Some(items)=run["batch"].as_array_mut() {
+                for item in items { if item["state"]=="executing" && tools::is_read(item["pending"]["name"].as_str().unwrap_or("")) {item["state"]=json!("requested");} }
+            }
         }
         "recovery" => {
             if run["uncertain"] != true {
                 return Err(conflict("Run does not require recovery review"));
             }
+            if run["batch"].is_array() {
+                // RECOVERY-PER-CALL: the reviewer names the uncertain call when
+                // more than one write was in flight. No other call is retried.
+                let uncertain=run["batch"].as_array().unwrap().iter().enumerate()
+                    .filter(|(_,item)|item["state"]=="uncertain").map(|(idx,_)|idx)
+                    .collect::<Vec<_>>();
+                let idx=if let Some(call_id)=body["call_id"].as_str() {
+                    uncertain.iter().copied().find(|idx|run["batch"][*idx]["pending"]["call_id"]==call_id)
+                        .ok_or_else(||bad("Unknown uncertain call ID"))?
+                } else if uncertain.len()==1 {uncertain[0]}
+                    else {return Err(bad("Specify call_id for uncertain parallel writes"));};
+                match body["decision"].as_str() {
+                    Some("abandon")=>{
+                        run["status"]=json!("cancelled");
+                        run["uncertain"]=json!(false);
+                    },
+                    Some("retry")=>{
+                        if app.shutoff().await? {return Err(conflict("Clear global shutoff first"));}
+                        // A retry is a new authorization attempt with a new ID.
+                        run["batch"][idx]["state"]=json!("new");
+                        run["batch"][idx]["pending"]=Value::Null;
+                        run["batch"][idx]["result"]=Value::Null;
+                    },
+                    Some("accept")=>{
+                        let output=required(&body,"output",1048576)?;
+                        run["batch"][idx]["result"]=json!({"status":"reconciled","output":output});
+                        run["batch"][idx]["state"]=json!("done");
+                    },
+                    _=>return Err(bad("Choose retry, accept, or abandon")),
+                }
+                if body["decision"]!="abandon" {
+                    run["uncertain"]=json!(parallel_batch::uncertain_count(&run)>0);
+                    run["status"]=json!(if run["uncertain"]==true {"recovery"}
+                        else if app.shutoff().await? {"stopped"} else {"queued"});
+                }
+                run["pending"]=Value::Null;
+            } else {
             match body["decision"].as_str() {
                 Some("abandon") => {
                     run["status"] = json!("cancelled");
@@ -2595,7 +2678,8 @@ async fn command(
                     run["uncertain"] = json!(false);
                 }
                 _ => return Err(bad("Choose retry, accept, or abandon")),
-            }
+
+            }}
         }
         _ => return Err(ApiError(StatusCode::NOT_FOUND, "Unknown run action".into())),
     }
@@ -2662,8 +2746,19 @@ async fn approval(State(app): State<App>, Path(id): Path<String>, Json(body): Js
             .unwrap_or(0)
             != ability_state["revision"].as_u64().unwrap()
     {
-        run["pending"]["state"] = json!("requested");
-        run["pending"]["decision"] = Value::Null;
+        // BATCH-APPROVAL-REVOCATION: a changed policy invalidates only this
+        // call. Its next pass gets a new pending ID and fresh revisions.
+        let stale_id=run["pending"]["id"].clone();
+        if let Some(items)=run["batch"].as_array_mut() {
+            for item in items { if item["pending"]["id"]==stale_id {
+                item["state"]=json!("new"); item["pending"]=Value::Null;
+                item["result"]=Value::Null; break;
+            } }
+            run["pending"]=Value::Null;
+        } else {
+            run["pending"]["state"] = json!("requested");
+            run["pending"]["decision"] = Value::Null;
+        }
         run["status"] = json!("queued");
         app.save(&mut run).await?;
         return Err(conflict(
@@ -2740,11 +2835,13 @@ async fn recover(app: &App, startup: bool) -> Result<()> {
             continue;
         }
         let mut run = user_app.run(id).await?;
-        if run["pending"]["state"] == "executing"
-            && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+        if (run["pending"]["state"] == "executing"
+            && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+            || parallel_batch::executing_write(&run)
         {
             run["status"] = json!("recovery");
             run["uncertain"] = json!(true);
+            parallel_batch::mark_uncertain_writes(&mut run);
             run["error"] = json!("Tool outcome is uncertain after interruption");
         } else {
             let agent_id=run["agent_id"].as_str().unwrap_or("shared_default");
@@ -2759,6 +2856,9 @@ async fn recover(app: &App, startup: bool) -> Result<()> {
             });
             if run["pending"]["state"] == "executing" {
                 run["pending"]["state"] = json!("requested");
+            }
+            if let Some(items)=run["batch"].as_array_mut() {
+                for item in items { if item["state"]=="executing" {item["state"]=json!("requested");item["pending"]["state"]=json!("requested");} }
             }
             run["error"] = json!("Recovered after interruption");
         }
@@ -2882,6 +2982,10 @@ async fn execute_run(
     cancel: CancellationToken,
 ) -> Result<()> {
     let mut context_accounting = context_accounting::ContextAccounting::default();
+    // CONTEXT-ASSET-CACHE: one entry per executing run, never shared across callers.
+    // Fresh live access and all shaping controls below invalidate this derived data;
+    // actual tool execution still performs its own live authorization checks.
+    let mut context_assets: Option<(String, Vec<Value>, String)> = None;
     loop {
         let _guard = app.gate.lock().await;
         let mut run = app.run(&id).await?;
@@ -2967,35 +3071,69 @@ async fn execute_run(
             let (policy, _, visibility, ability_state) = ability_controls(&app, &sid).await?;
             let mode = session_mode(&app, &sid).await?;
             let read_only=mode["mode"]=="read_only";
-            let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state)
-                .into_iter().filter(|schema| {
-                    let name=schema["name"].as_str().unwrap_or("");
-                    if abilities::is_discovery(name) {
-                        let installation=access::Permission::from_policy(policy_decision(&policy,name))
-                            .unwrap_or(access::Permission::Deny);
-                        access.tool_decision(name,installation,true,true,read_only,true)
-                            .permission!=access::Permission::Deny
-                    } else {
-                        live_tool_decision(&app,&access,name,&policy,&visibility,
-                            &ability_state,&run["loaded_abilities"],read_only)
-                            .permission!=access::Permission::Deny
-                    }
-                }).collect::<Vec<_>>();
-            let guidance = app.abilities.visible_guidance_filtered(&policy,&visibility,
-                &ability_state,
-                |id|access.ability_permission(id)!=access::Permission::Deny,
-                |name|live_tool_decision(&app,&access,name,&policy,&visibility,
-                    &ability_state,&run["loaded_abilities"],read_only)
-                    .permission!=access::Permission::Deny);
+            // CONTEXT-ASSET-KEY: include full freshly resolved access (including
+            // grants), catalog, policy, visibility, loaded state and session mode.
+            // Hash only in memory; never publish private grant data in reports.
+            let asset_key = digest(&json!([app.abilities.version(), policy, visibility,
+                ability_state, run["loaded_abilities"], mode, access.context_fingerprint()]));
+            if context_assets.as_ref().map(|entry| &entry.0) != Some(&asset_key) {
+                let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state)
+                    .into_iter().filter(|schema| {
+                        let name=schema["name"].as_str().unwrap_or("");
+                        if abilities::is_discovery(name) {
+                            let installation=access::Permission::from_policy(policy_decision(&policy,name))
+                                .unwrap_or(access::Permission::Deny);
+                            access.tool_decision(name,installation,true,true,read_only,true)
+                                .permission!=access::Permission::Deny
+                        } else {
+                            live_tool_decision(&app,&access,name,&policy,&visibility,
+                                &ability_state,&run["loaded_abilities"],read_only)
+                                .permission!=access::Permission::Deny
+                        }
+                    }).collect::<Vec<_>>();
+                let guidance = app.abilities.visible_guidance_filtered(&policy,&visibility,
+                    &ability_state,
+                    |id|access.ability_permission(id)!=access::Permission::Deny,
+                    |name|live_tool_decision(&app,&access,name,&policy,&visibility,
+                        &ability_state,&run["loaded_abilities"],read_only)
+                        .permission!=access::Permission::Deny);
+                context_assets = Some((asset_key, schemas, guidance));
+            }
+            let (_, base_schemas, guidance) = context_assets.as_ref().unwrap();
+            let mut gate_schemas = base_schemas.clone();
             let mode_content = format!("Current session capability mode: {} (revision {}). Recheck authorization before every tool call.",
                 mode["mode"].as_str().unwrap(), mode["revision"].as_u64().unwrap());
-            let mode_contribution = context_input::Contribution {
+            let call_number = run["attempt"].as_u64().unwrap_or(0) + 1;
+            let mut contributions = vec![context_input::Contribution {
                 id: "session_mode".into(), source: "native_session_mode".into(),
-                lifetime: context_input::Lifetime::Call, content: mode_content.clone(),
-                turn: run["turns"].as_u64().unwrap_or(0),
-                call: run["attempt"].as_u64().unwrap_or(0) + 1,
-            };
-            let contributions = [mode_contribution];
+                lifetime: context_input::Lifetime::Call, content: mode_content,
+                turn: run["turns"].as_u64().unwrap_or(0), call: call_number,
+            }];
+            // GATE-INJECTION: Rust reads validated gate JSON and adds trusted
+            // call-scoped guidance. The model sees private control schemas, but
+            // their replies return to Rust for validation and durable storage.
+            let before_model = gate_registry::selected(&workflow_policy,
+                workflow::Checkpoint::ModelDispatch)?;
+            if before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
+                let config=gate_registry::visibility_config()?;
+                gate_schemas.push(gate_controls::working_schema(&config));
+                contributions.push(context_input::Contribution {
+                    id:"gate_message_visibility".into(),source:"native_gate_config".into(),
+                    lifetime:context_input::Lifetime::Call,content:config.guidance,
+                    turn:run["turns"].as_u64().unwrap_or(0),call:call_number,
+                });
+            }
+            let before_publication = gate_registry::selected(&workflow_policy,
+                workflow::Checkpoint::Publication)?;
+            if before_publication.iter().any(|item|item.id==gate_registry::CLOSING_STATUS) {
+                let config=gate_registry::closing_config()?;
+                gate_schemas.push(gate_controls::closing_schema(&config));
+                contributions.push(context_input::Contribution {
+                    id:"gate_closing_status".into(),source:"native_gate_config".into(),
+                    lifetime:context_input::Lifetime::Call,content:config.guidance,
+                    turn:run["turns"].as_u64().unwrap_or(0),call:call_number,
+                });
+            }
             // COMPACTION CONFIG: reread the single external JSON at each call boundary.
             // Keep this snapshot through planning, prompting and validation; edits apply
             // next boundary. See context_compaction::Config and deploy.sh for the path.
@@ -3008,14 +3146,18 @@ async fn execute_run(
                     return Ok(());
                 }
             };
+            // MODEL-CONTEXT-CEILING: runtime profiles bound the entire envelope;
+            // compaction JSON still owns folding policy and summary reserves.
+            let model_ceiling = loop_runtime::Config::read(&app.runtime_path)?
+                .context.ceiling(&selection)?.min(workflow_policy.max_context_bytes);
             let assembled = match context_assembly::prepare_incremental(context_input::Request {
                 history: run["input"].as_array().unwrap(), base: &instructions,
-                guidance: &guidance, schemas: &schemas, contributions: &contributions,
+                guidance, schemas: &gate_schemas, contributions: &contributions,
                 identity: context_input::CallIdentity {
                     turn: run["turns"].as_u64().unwrap_or(0),
                     call: run["attempt"].as_u64().unwrap_or(0) + 1,
                 },
-                selection: &selection, max_bytes: workflow_policy.max_context_bytes,
+                selection: &selection, max_bytes: model_ceiling,
                 compaction: &compaction_config,
             }, &mut context_accounting) {
                 Ok(prepared) => prepared,
@@ -3172,16 +3314,18 @@ async fn execute_run(
             };
             let report = serde_json::to_value(&envelope.report)?;
             let instructions = envelope.instructions;
-            // Existing provider API owns the dispatch snapshot; assembly itself borrows.
-            let input = envelope.input.to_vec();
+            // DISPATCH-HISTORY-TRANSFER: fingerprint the borrowed history before
+            // metadata mutation, then transfer its allocation only after saves.
+            // Durable input remains intact; this local run is reloaded after dispatch.
+            let input_digest = digest(envelope.input);
             let schemas = envelope.schemas.to_vec();
             run["attempt"] = json!(run["attempt"].as_u64().unwrap() + 1);
             run["context_assembly_report"] = report;
             app.save(&mut run).await?;
             let snapshot = workflow::ModelSnapshot {
-                input_digest:digest(&json!(&input)),
-                instructions_digest:digest(&json!(&instructions)),
-                schemas_digest:digest(&json!(&schemas)),
+                input_digest,
+                instructions_digest:digest(&instructions),
+                schemas_digest:digest(&schemas),
             };
             workflow::record(&mut run, &workflow_policy,
                 &workflow::Input::ContextAssembly(snapshot.clone()), workflow::Decision::Pass)?;
@@ -3200,6 +3344,12 @@ async fn execute_run(
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     return Ok(());
                 }
+            };
+            // DISPATCH-HISTORY-TRANSFER: no save may use this consumed local run.
+            // Ownership/generation checks below load their own authoritative run.
+            let input = match std::mem::take(&mut run["input"]) {
+                Value::Array(items) => items,
+                _ => return Err(anyhow!("Dispatch history must be an array")),
             };
             let (sender, mut receiver) = tokio::sync::mpsc::channel::<String>(32);
             // Provider fragments remain private; only a final chat row is streamed.
@@ -3238,6 +3388,11 @@ async fn execute_run(
             workflow::record(&mut current, &workflow_policy,
                 &workflow::Input::ModelDispatch(snapshot), workflow::Decision::Pass)?;
             app.save(&mut current).await?;
+            // DISPATCH-RELEASE-SNAPSHOTS: fencing is committed; do not retain its
+            // reconstructed history or consumed local metadata during network waits.
+            // Response handling below reloads authoritative state under the gate.
+            drop(current);
+            drop(run);
             let mut completion = Box::pin(app.provider.complete_selected_with_instructions(
                 &selection,
                 &tokens,
@@ -3311,7 +3466,7 @@ async fn execute_run(
                     let output = response["output"]
                         .as_array()
                         .ok_or_else(|| anyhow!("Missing provider output"))?;
-                    let calls = output
+                    let mut calls = output
                         .iter()
                         .filter(|v| v["type"] == "function_call")
                         .cloned()
@@ -3335,6 +3490,36 @@ async fn execute_run(
                     run["calls"] = json!(calls);
                     run["call_index"] = json!(0);
                     run["phase"] = json!("tools");
+                    let closing_enabled=gate_registry::selected(&publication_policy,
+                        workflow::Checkpoint::Publication)?.iter()
+                        .any(|item|item.id==gate_registry::CLOSING_STATUS);
+                    // CLOSING-SAME-RESPONSE: the private status tool may accompany
+                    // the final prose. Validate it here, then let the existing
+                    // terminal transaction publish that prose exactly once.
+                    if closing_enabled && calls.len()==1
+                        && calls[0]["name"]=="set_closer_status"
+                        && !text.trim().is_empty() {
+                        let config=gate_registry::closing_config()?;
+                        let call_id=calls[0]["call_id"].as_str()
+                            .filter(|value|!value.is_empty() && value.len()<=128
+                                && !value.chars().any(char::is_control));
+                        let arguments=calls[0]["arguments"].as_str()
+                            .and_then(|raw|serde_json::from_str::<Value>(raw).ok());
+                        let accepted=call_id.and_then(|_|arguments.as_ref())
+                            .and_then(|args|gate_controls::closing_status(args,&config).ok());
+                        run["closing"]=accepted.clone()
+                            .unwrap_or_else(||gate_controls::fallback_status(&config));
+                        if let Some(call_id)=call_id {
+                            let result=json!({"status":if accepted.is_some() {"ok"} else {"denied"},
+                                "output":if accepted.is_some() {"Closing status recorded"}
+                                    else {"Closing status invalid; unverified fallback recorded"}});
+                            run["input"].as_array_mut().unwrap().push(json!({
+                                "type":"function_call_output","call_id":call_id,
+                                "output":result.to_string()}));
+                        }
+                        calls.clear();
+                        run["calls"]=json!([]);
+                    }
                     if calls.is_empty() {
                         if text.trim().is_empty() {
                             let reasoning_only = !output.is_empty()
@@ -3356,6 +3541,20 @@ async fn execute_run(
                                 .save_run(&mut run, "model_output", &json!({"output":output}))
                                 .await?;
                             return Ok(());
+                        }
+                        if closing_enabled {
+                            // CLOSING-FALLBACK: missing or malformed model status
+                            // never blocks a valid final reply or starts a repair turn.
+                            let config=gate_registry::closing_config()?;
+                            let valid=run["closing"]["flag"].as_str()
+                                .is_some_and(|flag|config.flags.iter().any(|item|item==flag))
+                                && run["closing"]["notification"].as_str()
+                                    .is_some_and(|note|!note.trim().is_empty()
+                                        && note.chars().count()<=config.notification_max_chars
+                                        && note.split_whitespace().count()<=config.notification_max_words);
+                            if !valid {
+                                run["closing"]=gate_controls::fallback_status(&config);
+                            }
                         }
                         if text.len() > publication_policy.max_publication_bytes {
                             workflow::record(&mut run, &publication_policy,
@@ -3381,20 +3580,20 @@ async fn execute_run(
                         match gate_protocol::evaluate_publication(
                             &gate_socket,&publication_policy,&gate_input).await? {
                             gate_protocol::GateOutcome::Pass=>{},
-                            gate_protocol::GateOutcome::Reject{reason_code}=>{
+                            gate_protocol::GateOutcome::Reject{module_id,reason_code}=>{
                                 workflow::record(&mut run,&publication_policy,
                                     &workflow::Input::Publication {
                                         text_digest:digest(&json!(text)) },
                                     workflow::Decision::Reject {
-                                        reason:format!("Publication module rejected: {reason_code}") })?;
+                                        reason:format!("Publication module {module_id} rejected: {reason_code}") })?;
                                 run["status"]=json!("paused");
                                 run["error"]=json!("Publication rejected by configured gate");
                                 app.store.save_run(&mut run,"model_output",&json!({"output":output})).await?;
                                 return Ok(());
                             },
-                            gate_protocol::GateOutcome::Skipped{reason_code}=>{
+                            gate_protocol::GateOutcome::Skipped{module_id,reason_code}=>{
                                 run["workflow"]["module_skips"]["publication"]=
-                                    json!({"module_id":gate_protocol::MODULE_ID,"reason_code":reason_code});
+                                    json!({"module_id":module_id,"reason_code":reason_code});
                             },
                         }
                         publication::terminal(&app.store, &mut run, output, &text, &publication_policy).await?;
@@ -3406,6 +3605,16 @@ async fn execute_run(
                 }
             }
         } else {
+            if run["calls"].as_array().is_some_and(|calls|calls.len()>1
+                && !calls.iter().any(|call|matches!(call["name"].as_str(),
+                    Some("publish_main_message" | "set_closer_status")))) {
+                // NATIVE-GATE-SERIAL: private controls keep provider order and
+                // never enter a parallel batch or the Python tool worker.
+                run["closing"]=Value::Null;
+                parallel_batch::execute_parallel_batch(&app,&id,&generation,&cancel,&workflow_policy,
+                    &access,run,_guard).await?;
+                continue;
+            }
             let idx = run["call_index"].as_u64().unwrap() as usize;
             let calls = run["calls"].as_array().unwrap();
             if idx >= calls.len() {
@@ -3422,6 +3631,73 @@ async fn execute_run(
                 Some(Ok(v)) if v.is_object() => v,
                 _ => json!({"invalid_arguments":true}),
             };
+            if name != "set_closer_status" {
+                // A later tool means the earlier closer no longer describes
+                // the eventual final reply.
+                run["closing"]=Value::Null;
+            }
+            if matches!(name.as_str(),"publish_main_message" | "set_closer_status") {
+                // NATIVE-CONTROL-DISPATCH: reserved calls never request approval
+                // or enter the Python worker. Rust checks activation and arguments.
+                let call_id=call["call_id"].as_str().filter(|value|!value.is_empty()
+                    && value.len()<=128 && !value.chars().any(char::is_control));
+                let Some(call_id)=call_id else {
+                    run["status"]=json!("paused");
+                    run["error"]=json!("Invalid private control call ID");
+                    app.save(&mut run).await?;
+                    return Ok(());
+                };
+                let checkpoint=if name=="publish_main_message" {
+                    workflow::Checkpoint::ModelDispatch
+                } else {workflow::Checkpoint::Publication};
+                let module_id=if name=="publish_main_message" {
+                    gate_registry::MESSAGE_VISIBILITY
+                } else {gate_registry::CLOSING_STATUS};
+                let enabled=gate_registry::selected(&workflow_policy,checkpoint)?
+                    .iter().any(|item|item.id==module_id);
+                workflow::record(&mut run,&workflow_policy,
+                    &workflow::Input::PreTool(workflow::PreToolInput {
+                        name:name.clone(),arguments_digest:digest(&args),
+                        policy_version:0,mode_revision:0,visibility_revision:0,
+                        ability_state_revision:0,
+                    }),workflow::Decision::Pass)?;
+                run["pending"]=json!({"call_id":call_id});
+                let mut working_text=None;
+                let result=if !enabled {
+                    run["closing"]=Value::Null;
+                    json!({"status":"denied","output":"Private control is not enabled"})
+                } else if name=="publish_main_message" {
+                    match gate_controls::working_text(&args) {
+                        Ok(text)=>{
+                            working_text=Some(text);
+                            json!({"status":"ok","output":"Working message published"})
+                        },
+                        Err(_)=>json!({"status":"denied","output":"Invalid working message"}),
+                    }
+                } else {
+                    let config=gate_registry::closing_config()?;
+                    match gate_controls::closing_status(&args,&config) {
+                        Ok(status)=>{
+                            run["closing"]=status;
+                            json!({"status":"ok","output":"Closing status recorded"})
+                        },
+                        Err(_)=>{
+                            run["closing"]=gate_controls::fallback_status(&config);
+                            json!({"status":"denied","output":"Invalid closing status; unverified fallback recorded"})
+                        },
+                    }
+                };
+                append_tool(&mut run,&result)?;
+                if let Some(text)=working_text {
+                    let message_id=format!("working:{id}:{}:{idx}",run["turns"]);
+                    app.store.save_run(&mut run,"working_message",
+                        &json!({"id":message_id,"text":text})).await?;
+                } else {
+                    app.store.save_run(&mut run,"tool_result",
+                        &json!({"run_id":id,"name":name,"result":result})).await?;
+                }
+                continue;
+            }
             let (policy, mode_revision, visibility, mut ability_state) =
                 ability_controls(&app, &sid).await?;
             let read_only=session_mode(&app,&sid).await?["mode"]=="read_only";
@@ -3682,6 +3958,7 @@ fn router(app: App) -> Router {
         .route("/settings", put(settings))
         .nest("/models", model_selection_api::router())
         .nest("/admin/access", phase3_api::router())
+        .route("/admin/access/registration", get(registration::access_mode).put(registration::set_mode))
         .route("/workflow/policy", get(workflow_policy_get).put(workflow_policy_set))
         .route("/agents/{id}/model", get(agent_model).put(agent_model_set))
         .route("/agents/{id}/abilities", get(agent_ability_catalog))
@@ -3716,6 +3993,9 @@ fn router(app: App) -> Router {
     let shared = std::env::var("V3_SHARED_UI_ROOT").unwrap_or_else(|_| "/opt/v3/shared-ui".into());
     Router::new().route("/api/v3/pages/catalog",get(ui_pages::catalog))
         .route("/api/v3/auth/login",post(login))
+        .route("/api/v3/auth/register",post(registration::register))
+        .route("/api/v3/auth/guest-login",post(registration::guest_login))
+        .route("/api/v3/auth/access-mode",get(registration::access_mode))
         .route("/api/v3/diagnostics/browser-login",post(browser_login::login))
         .route("/api/v3/auth/setup-status",get(setup_status))
         .route("/api/v3/auth/setup-admin",post(setup_admin))
@@ -3933,6 +4213,15 @@ mod tests {
         assert_eq!(migrated["rules"]["workspace_seed"], "require_approval");
         assert_eq!(migrated["version"], 2);
     }
+    // DISPATCH-DIGEST-PARITY: streaming must retain the historical buffered
+    // JSON fingerprint, including Unicode, escaping, nested data and empty arrays.
+    #[test]
+    fn streaming_digest_matches_buffered_json() {
+        for value in [json!([]), json!({"text":"é\n\"quoted\"","nested":[null,true,42]}),
+            json!({"output":"x".repeat(65536)})] {
+            assert_eq!(digest(&value), hex::encode(Sha256::digest(serde_json::to_vec(&value).unwrap())));
+        }
+    }
     #[test]
     fn arguments_digest_changes_with_action() {
         assert_ne!(
@@ -3948,4 +4237,15 @@ mod tests {
         assert!(r["pending"].is_null());
         assert_eq!(r["input"][0]["call_id"], "c");
     }
+}
+
+#[cfg(test)] mod context_summary_tests {
+ use super::*;
+ // CONTEXT-SUMMARY-REGRESSION: neither private fields nor malformed counts escape.
+ #[test] fn summary_is_numeric_and_allowlisted() {
+  let mut run=json!({"context_assembly_report":{"version":1,"scope":"logical_call_envelope","envelope_bytes":100,"max_bytes":200,"history_json_bytes":50,"instruction_json_bytes":30,"schemas_json_bytes":20,"turn":1,"call":2,"private":"SECRET"}});
+  assert!(!public_context_summary(&run).to_string().contains("SECRET"));
+  assert_eq!(public_context_summary(&run)["envelope_bytes"],100);
+  run["context_assembly_report"]["call"]=json!("SECRET");assert!(public_context_summary(&run).is_null());
+ }
 }

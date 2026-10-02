@@ -1,0 +1,12 @@
+{
+  "display_name": "Diagnostics Logs",
+  "kind": "service",
+  "description": "Background flight recorder that captures server warnings, errors, tracebacks, run outcomes and tool metrics for after-the-fact diagnosis. Logs self-prune (row + age caps) to keep storage bounded. All knobs are adjustable in app-settings.json — defaults in brackets: diagnostics_enabled [true], diagnostics_ring_size [4000 — in-memory live-feed records], diagnostics_retention_rows [200000 — max rows kept in logs.db], diagnostics_retention_hours [168 = 7 days — max age of durable rows], diagnostics_persist_level [info — minimum level written to logs.db], diagnostics_file_logging [true — per-source text files], diagnostics_log_dir [logs], diagnostics_log_max_bytes [5000000 = 5 MB — rotation size], diagnostics_log_backups [3 — rotated files kept per category]. Changes apply after a restart.",
+  "tools": [],
+  "icon": "activity",
+  "color": "#bb9af7",
+  "order": 2,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

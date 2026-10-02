@@ -171,7 +171,7 @@ body.light-mode .chat-bubble.agent { --chat-bubble-bg: var(--agent-bubble-bg, co
     border: var(--border-width) solid var(--chat-bubble-border, color-mix(in oklab, currentColor 12%, transparent)) !important;
     backdrop-filter: blur(12px) saturate(140%) !important;
     -webkit-backdrop-filter: blur(12px) saturate(140%) !important;
-    border-radius: 14px !important;
+    border-radius: var(--chat-role-radius, 14px) !important;
     position: relative;
     overflow: hidden;
 }
@@ -675,3 +675,9 @@ body[data-offline-readonly="true"] :is(
   margin: 8px 0 0;
   color: var(--fg-3);
 }
+
+/* Role-scoped glimmer parameters affect only chat bubbles, never other spots. */
+.chat-bubble.user { --chat-role-radius: var(--chat-user-radius,14px); --spot-radius:var(--chat-user-glimmer-radius,240px); --spot-color:var(--chat-user-glimmer-color,rgba(var(--brand-rgb),0.12)); }
+.chat-bubble.agent { --chat-role-radius: var(--chat-agent-radius,14px); --spot-radius:var(--chat-agent-glimmer-radius,240px); --spot-color:var(--chat-agent-glimmer-color,rgba(var(--brand-rgb),0.12)); }
+.chat-bubble.user.spot::before { display:var(--chat-user-glimmer-enabled,block); transition-duration:var(--chat-user-glimmer-transition,250ms); }
+.chat-bubble.agent.spot::before { display:var(--chat-agent-glimmer-enabled,block); transition-duration:var(--chat-agent-glimmer-transition,250ms); }

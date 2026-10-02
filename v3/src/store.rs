@@ -9,6 +9,7 @@ use aes_gcm::{
 };
 use anyhow::{anyhow, Result};
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 use serde_json::{json, Value};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous},
@@ -23,6 +24,47 @@ use std::{
     str::FromStr,
 };
 use tokio::sync::RwLock;
+
+// RECOVERY-MANIFEST: hashes are committed inside AEAD-sealed metadata, never
+// trusted from a caller or an unencrypted side table. Pair content and ciphertext
+// digests to compare current input without decrypting unchanged retained rows.
+fn recovery_digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+// RECOVERY-HASH-STREAM: serde writes canonical compact JSON directly into the
+// digest. No history-sized temporary JSON buffer is allocated for comparison.
+// The digest must match recovery_digest(serde_json::to_vec(item)) exactly.
+fn recovery_item_digest(item: &Value) -> Result<String> {
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, item)?;
+    Ok(format!("{:x}", writer.0.finalize()))
+}
+
+/// Optional extension of the v1 split format. Old records validate by decryption;
+/// malformed manifests fail closed instead of silently falling back to that path.
+fn recovery_manifest(reference: &Value, count: usize) -> Result<Option<Vec<(String, String)>>> {
+    match reference.get("manifest") {
+        None => Ok(None),
+        Some(value) => {
+            let pairs: Vec<(String, String)> = serde_json::from_value(value.clone())
+                .map_err(|_| anyhow!("Invalid recovery input manifest"))?;
+            if pairs.len() != count || pairs.iter().any(|(plain, sealed)|
+                [plain, sealed].iter().any(|hash| hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()))) {
+                return Err(anyhow!("Invalid recovery input manifest"));
+            }
+            Ok(Some(pairs))
+        }
+    }
+}
 
 const PROMPT_SLOT_NAME_MAX: usize = 128;
 const PROMPT_SLOT_CONTENT_MAX: usize = 16 * 1024;
@@ -39,7 +81,6 @@ pub struct Store {
     agent_id: String,
     user_states: Arc<RwLock<HashMap<String, UserState>>>,
     agent_states: Arc<RwLock<HashMap<String, SqlitePool>>>,
-    cache_budgets: Arc<Mutex<(usize,usize)>>,
     cipher: Aes256Gcm,
     cache: Arc<Mutex<Cache>>,
     context_cache: Arc<Mutex<ContextCache>>,
@@ -130,6 +171,10 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
         .synchronous(SqliteSynchronous::Full)
         .busy_timeout(std::time::Duration::from_secs(5));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        // IDLE-POOL-BOUND: release idle connections without closing pools that
+        // active Store clones still use. Reconnection remains transparent.
+        .min_connections(0)
+        .idle_timeout(std::time::Duration::from_secs(60))
         .max_connections(4)
         .connect_with(options)
         .await?;
@@ -162,6 +207,10 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
             CREATE TABLE IF NOT EXISTS loop_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,schema_version INTEGER NOT NULL CHECK(schema_version=1),kind TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS loop_events_run ON loop_events(run_id,seq);
             CREATE TABLE IF NOT EXISTS publication_outbox(run_id TEXT PRIMARY KEY,schema_version INTEGER NOT NULL CHECK(schema_version=1),payload BLOB NOT NULL,created_at INTEGER NOT NULL);")
+            .execute(&pool).await?;
+        // Recovery input is encrypted item-by-item, separate from small run
+        // metadata. Both are committed atomically; interactions remain untouched.
+        sqlx::query("CREATE TABLE IF NOT EXISTS recovery_input(run_id TEXT NOT NULL,ordinal INTEGER NOT NULL,item BLOB NOT NULL,PRIMARY KEY(run_id,ordinal))")
             .execute(&pool).await?;
         let columns = sqlx::query("PRAGMA table_info(run_index)").fetch_all(&pool).await?;
         if !columns.iter().any(|r| r.get::<String,_>("name") == "enqueue_seq") {
@@ -201,7 +250,6 @@ impl Store {
             agent_id: "shared_default".to_owned(),
             user_states: Arc::new(RwLock::new(user_states)),
             agent_states: Arc::new(RwLock::new(agent_states)),
-            cache_budgets: Arc::new(Mutex::new((67108864,16777216))),
             cipher: Aes256Gcm::new_from_slice(&key)
                 .map_err(|_| anyhow!("Invalid encryption key"))?,
             cache: admin_state.cache,
@@ -221,6 +269,7 @@ impl Store {
         .await?;
         store.migrate_legacy(root).await?;
         store.init_accounts().await?;
+        store.init_access_policy().await?;
         store.init_agent_tables().await?;
         store.ensure_default_agent_directory().await?;
         Ok(store)
@@ -232,18 +281,27 @@ impl Store {
         let state = match existing {Some(state)=>state,None=>{
             let mut states=self.user_states.write().await;
             if let Some(state)=states.get(user_id) {state.clone()} else {
+                // INACTIVE-USER-HANDLES: keep at most 64 idle registry entries.
+                // The gate's sole owner is the registry only when no Store clone
+                // can still use this user. Never evict active gates or close their
+                // pools; that would split context invalidation synchronization.
+                if states.len() >= 64 {
+                    states.retain(|id,state| id == "admin"
+                        || Arc::strong_count(&state.context_gate) > 1);
+                }
                 let path=self.root.join("user_data").join(user_id).join(format!("{user_id}.db"));
                 let mut state=UserState::new(open_pool(&path,true,true).await?);
-                let (documents,contexts)=*self.cache_budgets.lock().unwrap();
-                state.cache=Arc::new(Mutex::new(Cache::new(documents)));
-                state.context_cache=Arc::new(Mutex::new(ContextCache::new(contexts)));
+                // Every user shares one retained-cache budget per Store family.
+                // User-qualified context keys prevent cross-account collisions.
+                state.cache=self.cache.clone();
+                state.context_cache=self.context_cache.clone();
                 states.insert(user_id.to_owned(),state.clone()); state
             }
         }};
         Ok(Self {app_pool:self.app_pool.clone(),pool:state.pool,
             agent_pool:self.agent_pool.clone(),root:self.root.clone(),
             user_id:user_id.to_owned(),agent_id:self.agent_id.clone(),
-            user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),cache_budgets:self.cache_budgets.clone(),
+            user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
             cipher:self.cipher.clone(),cache:state.cache,
             context_cache:state.context_cache,context_gate:state.context_gate})
     }
@@ -269,7 +327,7 @@ impl Store {
             agent_pool:pool,root:self.root.clone(),
             user_id:self.user_id.clone(),agent_id:agent_id.to_owned(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
-            cache_budgets:self.cache_budgets.clone(),cipher:self.cipher.clone(),
+            cipher:self.cipher.clone(),
             cache:self.cache.clone(),context_cache:self.context_cache.clone(),
             context_gate:self.context_gate.clone()})
     }
@@ -920,10 +978,14 @@ impl Store {
             .map_err(|_| anyhow!("Storage authentication failed"))?;
         Ok(serde_json::from_slice(&plain)?)
     }
+    /// Reset the shared disposable caches, applying limits to existing and future
+    /// user handles alike. Database pools and active request copies are not covered.
     pub fn configure_cache(&self, documents: usize, contexts: usize) {
-        *self.cache_budgets.lock().unwrap()=(documents,contexts);
         *self.cache.lock().unwrap() = Cache::new(documents);
         *self.context_cache.lock().unwrap() = ContextCache::new(contexts);
+    }
+    fn context_cache_key(&self, sid: &str) -> String {
+        format!("{}:{sid}", self.user_id)
     }
     pub async fn context(&self, sid: &str) -> Result<Vec<Value>> {
         // Checkpoint writers hold the exclusive side of this gate through commit
@@ -934,7 +996,7 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow!("Session not found"))?;
         let through = session["checkpoint_through"].as_i64().unwrap_or(0);
-        let cached = self.context_cache.lock().unwrap().get(sid, through);
+        let cached = self.context_cache.lock().unwrap().get(&self.context_cache_key(sid), through);
         let (mut input, mut cursor) = cached.unwrap_or_else(|| {
             (
                 session["checkpoint_input"]
@@ -958,7 +1020,7 @@ impl Store {
         self.context_cache
             .lock()
             .unwrap()
-            .insert(sid.to_owned(), through, cursor, input.clone());
+            .insert(self.context_cache_key(sid), through, cursor, input.clone());
         Ok(input)
     }
     pub async fn chat_snapshot(&self, sid: &str) -> Result<(Vec<Value>, i64)> {
@@ -1107,6 +1169,105 @@ impl Store {
             .bind(self.seal(content)?).bind(terminal).execute(&mut **tx).await?;
         Ok(())
     }
+    /// Reconstruct a split recovery record under the reader's transaction.
+    /// Legacy records contain input inline and need no migration on read. Missing
+    /// rows or gaps are corruption, never an excuse to resume with partial input.
+    async fn decode_document(&self, connection: &mut sqlx::SqliteConnection, raw: &[u8]) -> Result<Value> {
+        let mut value = self.unseal(raw)?;
+        if let Some(reference) = value.get("_recovery_input").cloned() {
+            if reference["version"] != 1 { return Err(anyhow!("Unsupported recovery input version")); }
+            let rid = value["id"].as_str().ok_or_else(||anyhow!("Recovery record has no run id"))?;
+            let count = reference["count"].as_u64().ok_or_else(||anyhow!("Invalid recovery input count"))?;
+            let rows = sqlx::query("SELECT ordinal,item FROM recovery_input WHERE run_id=? ORDER BY ordinal")
+                .bind(rid).fetch_all(&mut *connection).await?;
+            if rows.len() as u64 != count { return Err(anyhow!("Incomplete recovery input")); }
+            let manifest = recovery_manifest(&reference, rows.len())?;
+            let mut input = Vec::with_capacity(rows.len());
+            for (ordinal,row) in rows.iter().enumerate() {
+                if row.get::<i64,_>("ordinal") != ordinal as i64 { return Err(anyhow!("Recovery input ordinal gap")); }
+                let sealed = row.get::<Vec<u8>,_>("item");
+                let item = self.unseal(&sealed)?;
+                // RECOVERY-MANIFEST-READ: reconstruction verifies both commitments;
+                // save optimization never weakens the authoritative read path.
+                if let Some(pairs) = &manifest {
+                    if pairs[ordinal].1 != recovery_digest(&sealed) ||
+                        pairs[ordinal].0 != recovery_item_digest(&item)? {
+                        return Err(anyhow!("Recovery input manifest mismatch"));
+                    }
+                }
+                input.push(item);
+            }
+            value.as_object_mut().unwrap().remove("_recovery_input");
+            value["input"] = Value::Array(input);
+        }
+        Ok(value)
+    }
+
+    /// Persist a document and its recovery-input delta in one transaction.
+    /// Unchanged items retain their ciphertext; append, replacement, compaction,
+    /// and truncation update only affected rows. A metadata reference is published
+    /// only alongside its complete item set. No transcript rows are deleted.
+    async fn write_document(&self, tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, key: &str, value: &Value) -> Result<()> {
+        let mut metadata;
+        let stored = if key.starts_with("run:") && value["input"].is_array() {
+            let rid = value["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?;
+            if key != format!("run:{rid}") { return Err(anyhow!("Recovery run identity mismatch")); }
+            let input = value["input"].as_array().unwrap();
+            let rows = sqlx::query("SELECT ordinal,item FROM recovery_input WHERE run_id=? ORDER BY ordinal")
+                .bind(rid).fetch_all(&mut **tx).await?;
+            // RECOVERY-MANIFEST-SAVE: verify every previous ciphertext against
+            // sealed metadata before any mutation. Legacy records decrypt once to
+            // establish content hashes; manifest-backed saves skip that decryption.
+            let mut prior_manifest = None;
+            if let Some(raw) = sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
+                .bind(key).fetch_optional(&mut **tx).await? {
+                let previous = self.unseal(&raw)?;
+                if let Some(reference) = previous.get("_recovery_input") {
+                    if reference["version"] != 1 || reference["count"].as_u64() != Some(rows.len() as u64) {
+                        return Err(anyhow!("Incomplete or unsupported recovery input"));
+                    }
+                    prior_manifest = recovery_manifest(reference, rows.len())?;
+                }
+            }
+            let mut previous_hashes = Vec::with_capacity(rows.len());
+            for (ordinal,row) in rows.iter().enumerate() {
+                if row.get::<i64,_>("ordinal") != ordinal as i64 {
+                    return Err(anyhow!("Recovery input ordinal gap"));
+                }
+                let sealed = row.get::<Vec<u8>,_>("item");
+                let sealed_hash = recovery_digest(&sealed);
+                let plain_hash = if let Some(pairs) = &prior_manifest {
+                    if pairs[ordinal].1 != sealed_hash { return Err(anyhow!("Recovery input manifest mismatch")); }
+                    pairs[ordinal].0.clone()
+                } else {
+                    recovery_item_digest(&self.unseal(&sealed)?)?
+                };
+                previous_hashes.push((plain_hash, sealed_hash));
+            }
+            let mut manifest = Vec::with_capacity(input.len());
+            for (ordinal,item) in input.iter().enumerate() {
+                let plain_hash = recovery_item_digest(item)?;
+                if let Some(pair) = previous_hashes.get(ordinal).filter(|pair| pair.0 == plain_hash) {
+                    manifest.push(pair.clone());
+                } else {
+                    let sealed = self.seal(item)?;
+                    manifest.push((plain_hash, recovery_digest(&sealed)));
+                    sqlx::query("INSERT INTO recovery_input(run_id,ordinal,item) VALUES(?,?,?) ON CONFLICT(run_id,ordinal) DO UPDATE SET item=excluded.item")
+                        .bind(rid).bind(ordinal as i64).bind(sealed).execute(&mut **tx).await?;
+                }
+            }
+            sqlx::query("DELETE FROM recovery_input WHERE run_id=? AND ordinal>=?")
+                .bind(rid).bind(input.len() as i64).execute(&mut **tx).await?;
+            metadata = Value::Object(value.as_object().ok_or_else(||anyhow!("Invalid run document"))?
+                .iter().filter(|(key,_)|key.as_str() != "input").map(|(key,value)|(key.clone(),value.clone())).collect());
+            metadata["_recovery_input"] = json!({"version":1,"count":input.len(),"manifest":manifest});
+            &metadata
+        } else { value };
+        sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .bind(key).bind(self.seal(stored)?).execute(&mut **tx).await?;
+        Ok(())
+    }
+
     pub async fn get(&self, key: &str) -> Result<Option<Value>> {
         self.validate_agent_doc_key(key)?;
         // These documents are shared with the independent loop process.
@@ -1120,13 +1281,14 @@ impl Store {
             }
             cache.epoch
         };
+        let mut tx = self.pool_for(key).begin().await?;
         let row = sqlx::query("SELECT value FROM docs WHERE key=?")
-            .bind(key)
-            .fetch_optional(self.pool_for(key))
-            .await?;
-        let result = row
-            .map(|r| self.unseal(r.get::<Vec<u8>, _>("value").as_slice()))
-            .transpose()?;
+            .bind(key).fetch_optional(&mut *tx).await?;
+        let result = match row {
+            Some(row) => Some(self.decode_document(&mut tx, &row.get::<Vec<u8>,_>("value")).await?),
+            None => None,
+        };
+        tx.commit().await?;
         if cacheable {
             if let Some(value) = &result {
                 self.cache
@@ -1146,15 +1308,14 @@ impl Store {
             None
         };
         let mut tx = self.pool_for(key).begin().await?;
-        sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(key).bind(self.seal(value)?).execute(&mut *tx).await?;
+        self.write_document(&mut tx,key,value).await?;
         if key.starts_with("run:") {
             self.index_run(&mut tx, value).await?;
         }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[key.into()]);
         if let Some(sid) = session_id {
-            self.context_cache.lock().unwrap().invalidate(sid);
+            self.context_cache.lock().unwrap().invalidate(&self.context_cache_key(sid));
         }
         Ok(())
     }
@@ -1197,25 +1358,30 @@ impl Store {
         } else {
             None
         };
-        sqlx::query("DELETE FROM docs WHERE key=?")
-            .bind(key)
-            .execute(self.pool_for(key))
-            .await?;
+        // The split input is owned by this recovery record, not the transcript.
+        // Delete both together so recreating a run cannot retain orphaned items.
+        let mut tx = self.pool_for(key).begin().await?;
+        sqlx::query("DELETE FROM docs WHERE key=?").bind(key).execute(&mut *tx).await?;
+        if let Some(rid) = key.strip_prefix("run:") {
+            sqlx::query("DELETE FROM recovery_input WHERE run_id=?")
+                .bind(rid).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[key.into()]);
         if let Some(sid) = session_id {
-            self.context_cache.lock().unwrap().invalidate(sid);
+            self.context_cache.lock().unwrap().invalidate(&self.context_cache_key(sid));
         }
         Ok(())
     }
     pub async fn list(&self, prefix: &str) -> Result<Vec<Value>> {
         self.validate_agent_doc_key(prefix)?;
+        let mut tx = self.pool_for(prefix).begin().await?;
         let rows = sqlx::query("SELECT value FROM docs WHERE key LIKE ? ORDER BY key")
-            .bind(format!("{prefix}%"))
-            .fetch_all(self.pool_for(prefix))
-            .await?;
-        rows.iter()
-            .map(|r| self.unseal(r.get::<Vec<u8>, _>("value").as_slice()))
-            .collect()
+            .bind(format!("{prefix}%")).fetch_all(&mut *tx).await?;
+        let mut values = Vec::with_capacity(rows.len());
+        for row in rows { values.push(self.decode_document(&mut tx,&row.get::<Vec<u8>,_>("value")).await?); }
+        tx.commit().await?;
+        Ok(values)
     }
     pub async fn event(&self, sid: &str, kind: &str, payload: &Value) -> Result<()> {
         let destination = if sid.is_empty() {
@@ -1252,7 +1418,16 @@ impl Store {
         let expected=run["run_revision"].as_u64().unwrap_or(0);
         if let Some(raw)=sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
             .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await? {
-            let previous=self.unseal(&raw)?;
+            // RECOVERY-FENCE-METADATA: active transitions compare only durable
+            // metadata. Do not hydrate history merely to validate ownership.
+            // Terminal idempotency compares the whole document, so retain the
+            // corruption-checking reconstruction on that path. write_document
+            // still verifies retained items before committing any input delta.
+            let metadata = self.unseal(&raw)?;
+            let previous = if matches!(metadata["status"].as_str(),
+                Some("completed" | "cancelled" | "failed")) {
+                self.decode_document(&mut tx, &raw).await?
+            } else { metadata };
             if previous["generation"] != run["generation"]
                 || previous["lease_epoch"] != run["lease_epoch"]
                 || previous["run_revision"].as_u64().unwrap_or(0)!=expected
@@ -1284,8 +1459,7 @@ impl Store {
         }
         let mut persisted=run.clone();
         persisted["run_revision"]=json!(expected+1);
-        sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(format!("run:{}",run["id"].as_str().unwrap())).bind(self.seal(&persisted)?).execute(&mut *tx).await?;
+        self.write_document(&mut tx,&format!("run:{rid}"),&persisted).await?;
         // Large model and tool outputs live in interactions and the run checkpoint.
         if kind != "model_output" && kind != "tool_result" {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
@@ -1306,6 +1480,32 @@ impl Store {
                     .ok_or_else(|| anyhow!("Tool output has no call ID"))?;
                 self.insert_interaction(&mut tx, sid, rid, &format!("tool:{call_id}"), item)
                     .await?;
+            }
+        }
+        if kind == "working_message" {
+            // WORKING-PUBLICATION: a validated private control creates one
+            // nonterminal chat row in the same transaction as its tool result.
+            // The terminal_run_id stays NULL so the final reply keeps its
+            // separate exactly-once uniqueness constraint.
+            let message_id = payload["id"].as_str()
+                .ok_or_else(|| anyhow!("Working message has no ID"))?;
+            let text = payload["text"].as_str()
+                .ok_or_else(|| anyhow!("Working message has no text"))?;
+            if !message_id.starts_with(&format!("working:{rid}:"))
+                || message_id.len() > 256 || text.trim().is_empty() || text.len() > 16384 {
+                return Err(anyhow!("Invalid working message"));
+            }
+            let existing = sqlx::query_scalar::<_, Vec<u8>>(
+                "SELECT content FROM chat WHERE id=?")
+                .bind(message_id).fetch_optional(&mut *tx).await?;
+            if let Some(raw) = existing {
+                if self.unseal(&raw)? != json!(text) {
+                    return Err(anyhow!("Working message ID conflicts with existing text"));
+                }
+            } else {
+                sqlx::query("INSERT INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),NULL)")
+                    .bind(message_id).bind(sid).bind(rid).bind("assistant")
+                    .bind(self.seal(&json!(text))?).execute(&mut *tx).await?;
             }
         }
         if kind == "model_output" {
@@ -1366,7 +1566,8 @@ impl Store {
         if run["status"]=="completed" {
             sqlx::query("INSERT OR IGNORE INTO publication_outbox(run_id,schema_version,payload,created_at) VALUES(?,1,?,strftime('%s','now'))")
                 .bind(rid).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
-                    "generation":run["generation"],"status":"completed"}))?)
+                    "generation":run["generation"],"status":"completed",
+                    "notification_intent":run["closing"]}))?)
                 .execute(&mut *tx).await?;
         }
         tx.commit().await?;
@@ -1375,7 +1576,7 @@ impl Store {
             format!("session:{}", run["session_id"].as_str().unwrap()),
         ]);
         if kind == "context_compacted" {
-            self.context_cache.lock().unwrap().invalidate(sid);
+            self.context_cache.lock().unwrap().invalidate(&self.context_cache_key(sid));
         }
         run["run_revision"]=json!(expected+1);
         Ok(())
@@ -1388,7 +1589,7 @@ impl Store {
         let raw:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?")
             .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await?;
         let Some(raw)=raw else {return Ok(false)};
-        let previous=self.unseal(&raw)?;
+        let previous=self.decode_document(&mut tx,&raw).await?;
         if previous["status"]!="queued" || previous["generation"]!=run["generation"]
             || previous["lease_epoch"]!=run["lease_epoch"]
             || previous["run_revision"]!=run["run_revision"] {return Ok(false);}
@@ -1401,8 +1602,7 @@ impl Store {
         claimed["status"]=json!("running");
         claimed["run_revision"]=json!(previous["run_revision"].as_u64().unwrap_or(0)+1);
         let until=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64+30;
-        sqlx::query("UPDATE docs SET value=? WHERE key=?")
-            .bind(self.seal(&claimed)?).bind(format!("run:{rid}")).execute(&mut *tx).await?;
+        self.write_document(&mut tx,&format!("run:{rid}"),&claimed).await?;
         self.index_run(&mut tx,&claimed).await?;
         sqlx::query("UPDATE run_index SET lease_epoch=?,lease_owner=?,lease_expires_at=? WHERE id=?")
             .bind(epoch+1).bind(owner).bind(until).bind(&rid).execute(&mut *tx).await?;
@@ -1509,7 +1709,7 @@ impl Store {
             let expected=run["run_revision"].as_u64().unwrap_or(0);
             if let Some(raw)=sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
                 .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await? {
-                let previous=self.unseal(&raw)?;
+                let previous=self.decode_document(&mut tx,&raw).await?;
                 if previous["generation"]!=run["generation"]
                     || previous["lease_epoch"]!=run["lease_epoch"]
                     || previous["run_revision"].as_u64().unwrap_or(0)!=expected
@@ -1526,8 +1726,7 @@ impl Store {
         let command_id=docs.iter().find(|(key,_)|key.starts_with("receipt:"))
             .map(|(key,_)|key.clone());
         for (key, value) in docs {
-            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-                .bind(&key).bind(self.seal(&value)?).execute(&mut *tx).await?;
+            self.write_document(&mut tx,&key,&value).await?;
             if key.starts_with("run:") {
                 self.index_run(&mut tx, &value).await?;
             }
@@ -1580,7 +1779,7 @@ impl Store {
             let mut context_cache = self.context_cache.lock().unwrap();
             for key in &touched {
                 if let Some(sid) = key.strip_prefix("session:") {
-                    context_cache.invalidate(sid);
+                    context_cache.invalidate(&self.context_cache_key(sid));
                 }
             }
         }
@@ -1896,7 +2095,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.context("s").await.unwrap()[0]["content"], "first");
-        let first_cursor = store.context_cache.lock().unwrap().get("s", 0).unwrap().1;
+        let first_cursor = store.context_cache.lock().unwrap().get(&store.context_cache_key("s"), 0).unwrap().1;
         store
             .atomic_docs_event(
                 vec![],
@@ -1910,7 +2109,7 @@ mod tests {
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["content"], "first");
         assert_eq!(input[1]["content"], "second");
-        let second_cursor = store.context_cache.lock().unwrap().get("s", 0).unwrap().1;
+        let second_cursor = store.context_cache.lock().unwrap().get(&store.context_cache_key("s"), 0).unwrap().1;
         assert!(second_cursor > first_cursor);
     }
 
@@ -2521,6 +2720,27 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn working_message_is_atomic_nonterminal_and_idempotent() {
+        let root=tempfile::tempdir().unwrap();
+        let store=Store::open(root.path()).await.unwrap();
+        let mut run=json!({"id":"working-run","session_id":"working-session",
+            "status":"running","generation":"generation","lease_epoch":0,
+            "input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}],
+            "turns":1});
+        let payload=json!({"id":"working:working-run:call-1","text":"Progress update"});
+        store.save_run(&mut run,"working_message",&payload).await.unwrap();
+        store.save_run(&mut run,"working_message",&payload).await.unwrap();
+        let rows=sqlx::query("SELECT id,terminal_run_id,content FROM chat WHERE run_id=?")
+            .bind("working-run").fetch_all(&store.pool).await.unwrap();
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0].get::<String,_>("id"),"working:working-run:call-1");
+        assert!(rows[0].get::<Option<String>,_>("terminal_run_id").is_none());
+        assert_eq!(store.unseal(&rows[0].get::<Vec<u8>,_>("content")).unwrap(),
+            json!("Progress update"));
+        let conflict=json!({"id":"working:working-run:call-1","text":"Different"});
+        assert!(store.save_run(&mut run,"working_message",&conflict).await.is_err());
+    }
+    #[tokio::test]
     async fn command_ack_and_lease_takeover_fence_terminal_publication() {
         let root=tempfile::tempdir().unwrap();
         let store=Store::open(root.path()).await.unwrap();
@@ -2577,5 +2797,168 @@ mod tests {
         assert_eq!((chat_count,outbox_count),(1,1));
         let observer=Store::open(root.path()).await.unwrap();
         assert_eq!(observer.get("run:r1").await.unwrap().unwrap()["status"],"completed");
+    }
+    /// Status-only saves must leave large history ciphertext untouched, while
+    /// append and replacement publish complete recovery state atomically.
+    #[tokio::test]
+    async fn recovery_input_deltas_survive_reopen_and_reject_incomplete_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(root.path()).await.unwrap();
+        let mut run = json!({"id":"delta","session_id":"s","status":"queued",
+            "input":[{"role":"user","content":"雪".repeat(1000)}]});
+        store.put("run:delta", &run).await.unwrap();
+        let original: Vec<u8> = sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='delta' AND ordinal=0")
+            .fetch_one(&store.pool).await.unwrap();
+        store.save_run(&mut run,"run_status",&json!({})).await.unwrap();
+        let unchanged: Vec<u8> = sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='delta' AND ordinal=0")
+            .fetch_one(&store.pool).await.unwrap();
+        assert_eq!(original,unchanged);
+        run["input"].as_array_mut().unwrap().push(json!({"type":"function_call_output","call_id":"c","output":"ok"}));
+        store.save_run(&mut run,"tool_result",&json!({})).await.unwrap();
+        let reopened = Store::open(root.path()).await.unwrap();
+        assert_eq!(reopened.get("run:delta").await.unwrap().unwrap(),run);
+        assert_eq!(reopened.list("run:").await.unwrap(),vec![run.clone()]);
+        let raw: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='run:delta'")
+            .fetch_one(&store.pool).await.unwrap();
+        let metadata=store.unseal(&raw).unwrap();
+        assert!(metadata.get("input").is_none());
+        assert_eq!(metadata["_recovery_input"]["count"],2);
+        // A failed terminal save must roll back metadata and any item changes.
+        let before=run.clone();
+        run["status"]=json!("completed"); run["turns"]=json!(1);
+        assert!(store.save_run(&mut run,"model_output",&json!({"output":[],"terminal_text":""})).await.is_err());
+        assert_eq!(store.get("run:delta").await.unwrap().unwrap(),before);
+        run=before; run["input"]=json!([{"role":"user","content":"replacement"}]);
+        store.save_run(&mut run,"run_status",&json!({})).await.unwrap();
+        assert_eq!(store.get("run:delta").await.unwrap().unwrap(),run);
+        sqlx::query("DELETE FROM recovery_input WHERE run_id='delta'").execute(&store.pool).await.unwrap();
+        assert!(store.get("run:delta").await.unwrap_err().to_string().contains("Incomplete recovery"));
+        // RECOVERY-WRITE-REGRESSION: corruption cannot be healed by a status save.
+        assert!(store.save_run(&mut run,"run_status",&json!({})).await.is_err());
+        store.delete("run:delta").await.unwrap();
+        assert!(store.get("run:delta").await.unwrap().is_none());
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM recovery_input WHERE run_id='delta'")
+            .fetch_one(&store.pool).await.unwrap(),0);
+    }
+
+    #[tokio::test]
+    async fn legacy_inline_recovery_remains_readable_and_upgrades_on_save() {
+        let root=tempfile::tempdir().unwrap(); let store=Store::open(root.path()).await.unwrap();
+        let mut run=json!({"id":"legacy-input","session_id":"s","status":"queued","input":[{"role":"user","content":"old"}]});
+        sqlx::query("INSERT INTO docs(key,value) VALUES('run:legacy-input',?)")
+            .bind(store.seal(&run).unwrap()).execute(&store.pool).await.unwrap();
+        assert_eq!(store.get("run:legacy-input").await.unwrap().unwrap(),run);
+        store.save_run(&mut run,"run_status",&json!({})).await.unwrap();
+        assert_eq!(store.get("run:legacy-input").await.unwrap().unwrap(),run);
+    }
+
+    /// RECOVERY-HASH-REGRESSION: streaming and buffered hashes agree for nested
+    /// objects, escapes, Unicode, numeric values, empty input and large results.
+    #[test]
+    fn recovery_streaming_digest_matches_compact_json() {
+        for item in [Value::Null, json!([]), json!({"text":"雪\n\"", "nested":[true,1,1.25]}),
+            json!({"output":"x".repeat(100_000)})] {
+            assert_eq!(recovery_item_digest(&item).unwrap(),
+                recovery_digest(&serde_json::to_vec(&item).unwrap()));
+        }
+    }
+
+    /// RECOVERY-MANIFEST-REGRESSION: exercise old split records, authenticated
+    /// commitments, corruption rejection, and rollback using temporary state only.
+    #[tokio::test]
+    async fn recovery_manifest_upgrades_legacy_split_and_rejects_corruption() {
+        let root=tempfile::tempdir().unwrap(); let store=Store::open(root.path()).await.unwrap();
+        let mut run=json!({"id":"manifest","session_id":"s","status":"queued",
+            "input":[{"role":"user","content":"雪"},{"role":"assistant","content":"reply"}]});
+        store.put("run:manifest",&run).await.unwrap();
+        let raw:Vec<u8>=sqlx::query_scalar("SELECT value FROM docs WHERE key='run:manifest'")
+            .fetch_one(&store.pool).await.unwrap();
+        let mut legacy=store.unseal(&raw).unwrap();
+        legacy["_recovery_input"].as_object_mut().unwrap().remove("manifest");
+        sqlx::query("UPDATE docs SET value=? WHERE key='run:manifest'")
+            .bind(store.seal(&legacy).unwrap()).execute(&store.pool).await.unwrap();
+        let before:Vec<Vec<u8>>=sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='manifest' ORDER BY ordinal")
+            .fetch_all(&store.pool).await.unwrap();
+        assert_eq!(store.get("run:manifest").await.unwrap().unwrap(),run);
+        store.save_run(&mut run,"run_status",&json!({})).await.unwrap();
+        let metadata_raw:Vec<u8>=sqlx::query_scalar("SELECT value FROM docs WHERE key='run:manifest'")
+            .fetch_one(&store.pool).await.unwrap();
+        let metadata=store.unseal(&metadata_raw).unwrap();
+        assert_eq!(metadata["_recovery_input"]["manifest"].as_array().unwrap().len(),2);
+        let after:Vec<Vec<u8>>=sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='manifest' ORDER BY ordinal")
+            .fetch_all(&store.pool).await.unwrap();
+        assert_eq!(before,after);
+        // A valid ciphertext from another ordinal must also fail, not just junk.
+        for damaged in [vec![0u8;10],before[1].clone()] {
+            sqlx::query("UPDATE recovery_input SET item=? WHERE run_id='manifest' AND ordinal=0")
+                .bind(damaged).execute(&store.pool).await.unwrap();
+            assert!(store.get("run:manifest").await.is_err());
+            let revision=run["revision"].clone();
+            assert!(store.save_run(&mut run,"run_status",&json!({})).await.is_err());
+            assert_eq!(run["revision"],revision);
+            let retained:Vec<u8>=sqlx::query_scalar("SELECT value FROM docs WHERE key='run:manifest'")
+                .fetch_one(&store.pool).await.unwrap();
+            assert_eq!(metadata_raw,retained);
+        }
+        sqlx::query("UPDATE recovery_input SET item=? WHERE run_id='manifest' AND ordinal=0")
+            .bind(&before[0]).execute(&store.pool).await.unwrap();
+        let mut malformed=metadata.clone(); malformed["_recovery_input"]["manifest"]=json!([]);
+        sqlx::query("UPDATE docs SET value=? WHERE key='run:manifest'")
+            .bind(store.seal(&malformed).unwrap()).execute(&store.pool).await.unwrap();
+        assert!(store.get("run:manifest").await.is_err());
+        assert!(store.save_run(&mut run,"run_status",&json!({})).await.is_err());
+    }
+
+    /// One retained LRU serves all accounts; identical session IDs remain isolated.
+    #[tokio::test]
+    async fn shared_context_cache_is_account_scoped_and_reconfiguration_is_global() {
+        let root=tempfile::tempdir().unwrap(); let store=Store::open(root.path()).await.unwrap();
+        // Fixture-only account creation; exercise the real lazy user-handle path.
+        sqlx::query("INSERT INTO user_accounts(user_id,username,value) VALUES('other','other',?)")
+            .bind(store.seal(&json!({"user_id":"other","username":"other"})).unwrap())
+            .execute(&store.app_pool).await.unwrap();
+        let other=store.for_user("other").await.unwrap();
+        assert!(Arc::ptr_eq(&store.context_cache,&other.context_cache));
+        assert!(Arc::ptr_eq(&store.cache,&other.cache));
+        for (handle,text) in [(&store,"admin text"),(&other,"other text")] {
+            handle.put("session:s",&json!({"id":"s","checkpoint_input":[{"role":"user","content":text}],"checkpoint_through":0})).await.unwrap();
+            assert_eq!(handle.context("s").await.unwrap()[0]["content"],text);
+        }
+        assert_eq!(store.context("s").await.unwrap()[0]["content"],"admin text");
+        other.put("session:s",&json!({"id":"s","checkpoint_input":[],"checkpoint_through":0})).await.unwrap();
+        assert!(store.context_cache.lock().unwrap().get(&store.context_cache_key("s"),0).is_some());
+        other.configure_cache(0,0);
+        assert!(store.context_cache.lock().unwrap().get(&store.context_cache_key("s"),0).is_none());
+        assert_eq!(store.context("s").await.unwrap()[0]["content"],"admin text");
+        assert!(store.context_cache.lock().unwrap().get(&store.context_cache_key("s"),0).is_none());
+    }
+
+}
+
+#[cfg(test)] mod recovery_measurements {
+    use super::*;
+    // RECOVERY-SAVE-BENCHMARK: opt-in, temporary encrypted state only. Measure
+    // real transactional saves and reopen, not provider latency or total RSS.
+    #[tokio::test]
+    #[ignore = "repeatable recovery timing fixture"]
+    async fn repeated_recovery_save_measurement() {
+        let root=tempfile::tempdir().unwrap();
+        let store=Store::open(root.path()).await.unwrap();
+        let input=(0..512).map(|i|json!({"role":"user","content":format!("{i}:{}","x".repeat(100))})).collect::<Vec<_>>();
+        let mut run=json!({"id":"bench","session_id":"bench-session","status":"queued","input":input});
+        store.put("run:bench",&run).await.unwrap();
+        let original:Vec<Vec<u8>>=sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='bench' ORDER BY ordinal").fetch_all(&store.pool).await.unwrap();
+        let start=std::time::Instant::now();
+        for i in 0..50 {
+            run["updated_at"]=json!(i);
+            store.save_run(&mut run,"run_status",&json!({})).await.unwrap();
+        }
+        let elapsed=start.elapsed();
+        let retained:Vec<Vec<u8>>=sqlx::query_scalar("SELECT item FROM recovery_input WHERE run_id='bench' ORDER BY ordinal").fetch_all(&store.pool).await.unwrap();
+        assert_eq!(original,retained);
+        let start=std::time::Instant::now();
+        let reopened=Store::open(root.path()).await.unwrap();
+        assert_eq!(reopened.get("run:bench").await.unwrap().unwrap(),run);
+        println!("recovery measurement: items=512 status_saves=50 save_total={elapsed:?} reopen_and_read={:?} unchanged_ciphertext_rows=512",start.elapsed());
     }
 }

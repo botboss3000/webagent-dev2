@@ -1,0 +1,18 @@
+{
+  "display_name": "Shopify",
+  "kind": "oauth",
+  "description": "Shopify storefront, product, inventory, and order management.",
+  "tools": [
+    "shopify_list_products",
+    "shopify_get_product",
+    "shopify_create_product",
+    "shopify_update_variant_inventory"
+  ],
+  "icon": "shopping-cart",
+  "color": "#e0af68",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

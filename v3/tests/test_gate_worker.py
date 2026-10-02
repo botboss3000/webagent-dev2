@@ -33,6 +33,21 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason_code"], "publication_size_exceeded")
         self.assertNotIn("text", json.dumps(result))
 
+    async def test_plugin_manifest_is_strict_and_bounded(self):
+        manifest = json.loads(gate.MANIFEST_PATH.read_text())
+        self.assertEqual(gate.publication_limit(manifest), 8192)
+        for change in (
+            {"id": "other"},
+            {"checkpoint": "model_dispatch"},
+            {"config": {"max_text_bytes": True}},
+            {"config": {"max_text_bytes": 262145}},
+            {"config": {"max_text_bytes": 1, "unknown": 2}},
+        ):
+            value = dict(manifest)
+            value.update(change)
+            with self.assertRaises(ValueError):
+                gate.publication_limit(value)
+
     async def test_unknown_or_malformed_fields_rejected(self):
         for change in (
             {"protocol_version": 2},

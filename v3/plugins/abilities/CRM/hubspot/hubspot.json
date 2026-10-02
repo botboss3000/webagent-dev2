@@ -1,0 +1,13 @@
+{
+  "display_name": "HubSpot",
+  "kind": "placeholder",
+  "description": "Contacts, deals, and email.",
+  "tools": [],
+  "icon": "contact",
+  "color": "#bb9af7",
+  "order": 1,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

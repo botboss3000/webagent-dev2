@@ -68,6 +68,17 @@ pub struct LiveAccess {
 }
 
 impl LiveAccess {
+    /// CONTEXT-AUTH-FINGERPRINT: explicit shaping inputs, not Debug formatting.
+    /// This private value is hashed by the run-local cache and never sent to the
+    /// provider or browser. Include grants as well as revisions so malformed
+    /// revision updates cannot retain stale guidance or tool exposure.
+    pub fn context_fingerprint(&self) -> Value {
+        serde_json::json!([self.principal.user_id, self.principal.status,
+            self.principal.role, self.principal.tier_id, self.principal.access_revision,
+            self.tier, self.agent_id, self.relationship, self.agent_enabled,
+            self.revision, self.tool_permissions, self.ability_permissions, self.tool_callers])
+    }
+
     pub fn admitted(&self) -> bool {
         self.principal.status == AccountStatus::Active
             && self.relationship != Relationship::Revoked
@@ -165,6 +176,13 @@ impl Store {
             .ok_or_else(|| anyhow!("Account not found"))?;
         let principal = Principal::from_account(&account)?;
         if principal.user_id != user_id {return Err(anyhow!("Account identity conflict"));}
+        // Guest policy is rechecked by the loop as well as HTTP authentication.
+        if principal.role == access::Role::Guest {
+            let policy=self.read_access_policy()?;
+            if policy["registration"] != "open" {
+                return Err(anyhow!("Guest access is not enabled"));
+            }
+        }
         let tier = self.entitlement_tier(&principal.tier_id).await?
             .ok_or_else(|| anyhow!("Entitlement tier not found"))?;
         if tier.id != principal.tier_id {return Err(anyhow!("Tier identity conflict"));}
@@ -421,6 +439,10 @@ mod tests {
         let store = Store::open(root.path()).await.unwrap();
         store.create_admin_account("admin","hash","generation").await.unwrap();
         let admin = store.live_access("admin","shared_default").await.unwrap();
+        // CONTEXT-FINGERPRINT-REGRESSION: grants invalidate even without revision changes.
+        let mut changed=admin.clone();changed.tool_permissions=serde_json::json!({"file_read":"deny"});
+        assert_ne!(admin.context_fingerprint(),changed.context_fingerprint());
+        assert_eq!(admin.revision,changed.revision);
         assert!(admin.admitted());
         assert!(admin.model_allowed("gpt-6-luna"));
         assert_eq!(admin.tool_decision("file_write",Permission::Ask,

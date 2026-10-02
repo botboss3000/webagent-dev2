@@ -1,0 +1,13 @@
+{
+  "display_name": "Meta",
+  "kind": "oauth",
+  "description": "Facebook and Instagram posting and reading.",
+  "tools": [],
+  "icon": "facebook",
+  "color": "#bb9af7",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

@@ -1,4 +1,4 @@
-<section class="private-access-page" aria-labelledby="private-access-title">
+<section class="private-access-page" aria-label="Private account access">
   <div class="private-access-glow private-access-glow-one" aria-hidden="true"></div>
   <div class="private-access-glow private-access-glow-two" aria-hidden="true"></div>
 
@@ -11,11 +11,8 @@
       </svg>
     </div>
 
-    <p class="private-access-kicker">Private access</p>
-    <h1 id="private-access-title">This app is private</h1>
-    <p class="private-access-intro">
-      Access is limited to people approved by this app's administrator.
-    </p>
+    <button type="button" class="private-access-action" data-private-access-reveal aria-expanded="false" aria-controls="private-login-fields">Sign in</button>
+    <div id="private-login-fields" class="private-access-sign-in" data-private-access-form aria-label="Account sign in" hidden></div>
 
     <div class="private-access-approval" role="note">
       <span class="private-access-approval-icon" aria-hidden="true">
@@ -30,12 +27,6 @@
       </span>
     </div>
 
-    <button type="button" class="private-access-action" data-private-access-sign-in>
-      Sign in or register
-    </button>
 
-    <p class="private-access-footnote">
-      Already approved? Sign in with your existing account.
-    </p>
   </article>
 </section>

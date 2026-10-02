@@ -1,0 +1,18 @@
+{
+  "display_name": "BigCommerce",
+  "kind": "ability",
+  "description": "Query BigCommerce products and orders and create hosted carts and checkout URLs.",
+  "tools": [
+    "bigcommerce_list_products",
+    "bigcommerce_get_product",
+    "bigcommerce_list_orders",
+    "bigcommerce_create_checkout"
+  ],
+  "icon": "store",
+  "color": "#e0af68",
+  "order": 3,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

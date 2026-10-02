@@ -1,0 +1,13 @@
+{
+  "display_name": "Discord",
+  "kind": "placeholder",
+  "description": "Send messages via Discord bot.",
+  "tools": [],
+  "icon": "radio",
+  "color": "#26A5E4",
+  "order": 4,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

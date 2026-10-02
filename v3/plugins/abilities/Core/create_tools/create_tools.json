@@ -1,0 +1,15 @@
+{
+  "display_name": "Create Tools",
+  "kind": "ability",
+  "description": "Lets the agent define brand-new callable tools at runtime (a self-contained Python function stored in the database). No credentials, no filesystem/network access.",
+  "tools": [
+    "create_tool"
+  ],
+  "icon": "wrench",
+  "color": "#7dcfff",
+  "order": 5,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

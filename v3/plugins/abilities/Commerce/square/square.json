@@ -1,0 +1,18 @@
+{
+  "display_name": "Square",
+  "kind": "ability",
+  "description": "Query a Square catalog and orders and create hosted payment links.",
+  "tools": [
+    "square_list_catalog",
+    "square_get_inventory",
+    "square_search_orders",
+    "square_create_payment_link"
+  ],
+  "icon": "square",
+  "color": "#e0af68",
+  "order": 4,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

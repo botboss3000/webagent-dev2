@@ -1,0 +1,21 @@
+{
+  "display_name": "UI Admin",
+  "kind": "ability",
+  "description": "Edits only front-end files (ui/ — CSS & HTML); never backend code or the shell. On by default.",
+  "tools": [
+    "read_source",
+    "write_source",
+    "edit_source",
+    "patch_source",
+    "delete_source",
+    "read_directory",
+    "search_source"
+  ],
+  "icon": "paintbrush",
+  "color": "#7dcfff",
+  "order": 9,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

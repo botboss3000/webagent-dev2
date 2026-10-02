@@ -1,9 +1,9 @@
 {
   "source_commit": "4dc71617005998bb8fa2aa898e27fc9c3adf3f22",
-  "captured_at": "2026-10-01",
+  "captured_at": "2026-10-02",
   "assets": {
-    "ui/shared/css/app1.css": "6c0683d74b6e20e04d014bc5ac13c4941dbb08aca8b6a5c811a5c9b15c92f684",
+    "ui/shared/css/app1.css": "9eeb492f0e6e38b08742cc4de3690c969de907e5ab355808b6205c070f36e50b",
     "ui/shared/css/design-system.css": "75d86a5004a9c13b9e9e1d31592da6169cb486282de5ca11d9777c97b020ee42",
-    "ui/shared/css/index.css": "6dffa2943381414bb60938da3b77c740acbe02ccf4d8dc7e7f3bf5e8214f37df"
+    "ui/shared/css/index.css": "8cf6989ffa9ba80a581ca66c438105bf2f18fe32a7558f80a6019fb4b70863c2"
   }
 }

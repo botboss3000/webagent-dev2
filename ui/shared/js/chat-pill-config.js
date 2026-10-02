@@ -544,6 +544,12 @@ export function applyChatPillLayout(els, rawPill = {}) {
       els.input.removeAttribute('rows');
     }
     if (textareaCfg.max_height) els.input.style.maxHeight = textareaCfg.max_height;
+    els.input.style.lineHeight = typeof textareaCfg.line_height === 'string' && CSS.supports('line-height', textareaCfg.line_height) ? textareaCfg.line_height : '';
+    if (typeof textareaCfg.placeholder === 'string') {
+      els.input.placeholder = textareaCfg.placeholder;
+      els.input.dataset.configPlaceholder = textareaCfg.placeholder;
+    }
+    els.input.dataset.composerEnter = ['auto','send','newline'].includes(textareaCfg.enter_behavior) ? textareaCfg.enter_behavior : (els.input.closest('[data-composer-enter]')?.dataset.composerEnter || 'auto');
     if (textareaCfg.font_size) {
       els.input.style.setProperty('--chat-pill-font-size', textareaCfg.font_size);
     }

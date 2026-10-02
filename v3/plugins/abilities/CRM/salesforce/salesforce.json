@@ -1,0 +1,13 @@
+{
+  "display_name": "Salesforce",
+  "kind": "placeholder",
+  "description": "CRM records and automation.",
+  "tools": [],
+  "icon": "cloud",
+  "color": "#bb9af7",
+  "order": 2,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

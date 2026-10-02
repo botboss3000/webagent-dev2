@@ -1,0 +1,13 @@
+{
+  "display_name": "Pinterest",
+  "kind": "oauth",
+  "description": "Pinterest pin management.",
+  "tools": [],
+  "icon": "pin",
+  "color": "#bb9af7",
+  "order": 5,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

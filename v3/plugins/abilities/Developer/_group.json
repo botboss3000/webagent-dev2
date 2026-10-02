@@ -1,0 +1,10 @@
+{
+  "name": "Developer",
+  "icon": "git-branch",
+  "color": "#7aa2f7",
+  "desc": "Repositories, issues, and CI. Free — connect with an OAuth app or token.",
+  "entitlement_group": "developer_write",
+  "risk_class": "write",
+  "action_class": "mixed",
+  "order": 9
+}

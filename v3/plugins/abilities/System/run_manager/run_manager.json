@@ -1,0 +1,12 @@
+{
+  "display_name": "Run Manager",
+  "kind": "service",
+  "description": "Supervisory checks on agent runs, fired at specific lifecycle triggers. The default path uses bounded one-shot LLM checks for plan, edit, watchdog, and commit review. Opt-in Managed build contracts instead use Agent Orchestration for a tool-free Run Scout, a persistent source-read-only edit reviewer, and two fresh independent close auditors. Contract requests and verdicts are schema-validated, generation-fenced, budgeted, persisted with evidence hashes, and visibly fail open on worker infrastructure errors under the default hybrid policy. Valid blocking edit and close findings retain the existing correction and three-block safe-stop behavior. Both modes require the manager_chk loop node and the run_manager app function; subagent contracts additionally require the Agent Orchestration ability. The mechanical metadata['contract'] remains a separate zero-LLM layer.",
+  "tools": [],
+  "icon": "shield-check",
+  "color": "#7aa2f7",
+  "order": 3,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

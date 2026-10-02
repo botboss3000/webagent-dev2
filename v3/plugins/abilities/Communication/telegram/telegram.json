@@ -1,0 +1,13 @@
+{
+  "display_name": "Telegram",
+  "kind": "channel",
+  "description": "Send and receive messages via Telegram bot.",
+  "tools": [],
+  "icon": "send",
+  "color": "#26A5E4",
+  "order": 1,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

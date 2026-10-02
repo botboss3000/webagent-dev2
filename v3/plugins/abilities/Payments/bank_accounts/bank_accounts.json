@@ -1,0 +1,13 @@
+{
+  "display_name": "Bank Accounts",
+  "kind": "placeholder",
+  "description": "Connect bank accounts via aggregator.",
+  "tools": [],
+  "icon": "landmark",
+  "color": "#9ece6a",
+  "order": 4,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

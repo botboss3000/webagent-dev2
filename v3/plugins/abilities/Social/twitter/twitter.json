@@ -1,0 +1,13 @@
+{
+  "display_name": "Twitter",
+  "kind": "oauth",
+  "description": "X (Twitter) posting and reading.",
+  "tools": [],
+  "icon": "twitter",
+  "color": "#bb9af7",
+  "order": 2,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

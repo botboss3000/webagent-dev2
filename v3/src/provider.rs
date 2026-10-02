@@ -254,23 +254,29 @@ fn decorate(mut tokens: Value) -> Result<Value> {
     Ok(tokens)
 }
 
-fn request_body(
-    model: &str,
-    input: Vec<Value>,
-    tools: Vec<Value>,
-    session: &str,
-    instructions: &str,
-) -> Value {
-    let mut body = json!({
-        "model": model, "input": input, "instructions": instructions,
-        "stream": true, "store": false, "include": ["reasoning.encrypted_content"],
-        "prompt_cache_key": session, "parallel_tool_calls": false
-    });
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
-    body
+// PROVIDER-BORROWED-BODY: serialize borrowed dispatch data directly into the
+// HTTP body, avoiding an additional owned Value tree of history and schemas.
+// Wire fields remain identical to the stateless Responses contract.
+#[derive(serde::Serialize)]
+struct RequestBody<'a> {
+    model: &'a str,
+    input: &'a [Value],
+    instructions: &'a str,
+    stream: bool,
+    store: bool,
+    include: [&'static str; 1],
+    prompt_cache_key: &'a str,
+    parallel_tool_calls: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a [Value]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
+}
+fn request_body<'a>(model: &'a str, input: &'a [Value], tools: &'a [Value], session: &'a str, instructions: &'a str) -> RequestBody<'a> {
+    RequestBody { model, input, instructions, stream: true, store: false,
+        include: ["reasoning.encrypted_content"], prompt_cache_key: session,
+        parallel_tool_calls: true, tools: (!tools.is_empty()).then_some(tools),
+        tool_choice: (!tools.is_empty()).then_some("auto") }
 }
 
 // Parse bytes rather than UTF-8 chunks: a network boundary may split a character.
@@ -535,7 +541,7 @@ impl Provider {
             .header("originator", "webagent")
             .header("session-id", session)
             .header("Accept", "text/event-stream")
-            .json(&request_body(model, input, tools, session, instructions));
+            .json(&request_body(model, &input, &tools, session, instructions));
         for (key, header) in [
             ("account_id", "ChatGPT-Account-Id"),
             ("residency", "x-openai-internal-codex-residency"),
@@ -557,6 +563,9 @@ impl Provider {
         let mut stream = response.bytes_stream();
         let mut frames = Frames::default();
         let mut completed_items = Vec::<Value>::new();
+        // STREAM-RETENTION-BOUND: frame limits alone do not bound a sequence of
+        // completed items. Cap retained fallback output and diagnostic cardinality.
+        let mut completed_bytes = 0usize;
         let mut event_kinds = std::collections::BTreeMap::<String, usize>::new();
         loop {
             let chunk = tokio::select! {
@@ -571,7 +580,9 @@ impl Provider {
             let chunk = chunk.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream interrupted"))?;
             for event in frames.push(&chunk).map_err(|e| typed_failure(crate::model_selection::FailureKind::Protocol, response_started, e.to_string()))? {
                 let event_type = event["type"].as_str().unwrap_or("unknown");
-                *event_kinds.entry(event_type.to_owned()).or_default() += 1;
+                if event_type.len() <= 128 && (event_kinds.contains_key(event_type) || event_kinds.len() < 64) {
+                    *event_kinds.entry(event_type.to_owned()).or_default() += 1;
+                }
                 if event["type"].as_str().is_some_and(|t| t.starts_with("response.")
                     && !matches!(t, "response.failed" | "response.incomplete")) {
                     response_started = true;
@@ -588,6 +599,10 @@ impl Provider {
                     }
                     "response.output_item.done" => {
                         if let Some(item) = event.get("item").filter(|item| item.is_object()) {
+                            completed_bytes = completed_bytes.saturating_add(crate::context_accounting::json_size(item)?);
+                            if completed_items.len() >= 4096 || completed_bytes > MAX_FRAME {
+                                return Err(typed_failure(crate::model_selection::FailureKind::Protocol, response_started, "Provider retained output exceeded limit"));
+                            }
                             completed_items.push(item.clone());
                         }
                     }
@@ -665,13 +680,11 @@ mod tests {
     #[test]
     fn stateless_request_keeps_reasoning_and_tools() {
         let reasoning = json!({"type":"reasoning","encrypted_content":"opaque"});
-        let body = request_body(
-            "test",
-            vec![reasoning.clone()],
-            vec![json!({"type":"function","name":"read"})],
-            "session",
-            DEFAULT_INSTRUCTIONS,
-        );
+        let input = vec![reasoning.clone()];
+        let tools = vec![json!({"type":"function","name":"read"})];
+        let body = serde_json::to_value(request_body(
+            "test", &input, &tools, "session", DEFAULT_INSTRUCTIONS,
+        )).unwrap();
         assert_eq!(body["input"][0], reasoning);
         assert_eq!(body["instructions"], DEFAULT_INSTRUCTIONS);
         assert_eq!(body["prompt_cache_key"], "session");
@@ -679,6 +692,22 @@ mod tests {
         assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert!(body.get("previous_response_id").is_none());
         assert!(body.get("max_output_tokens").is_none());
+    }
+    // PROVIDER-WIRE-PARITY: borrowed serialization must preserve omission rules
+    // and exact values, including escaped Unicode and complete tool arguments.
+    #[test]
+    fn borrowed_request_matches_owned_wire_contract() {
+        for tools in [vec![], vec![json!({"type":"function","name":"read","parameters":{"type":"object"}})]] {
+            let input = vec![json!({"role":"user","content":"é\n\"text\""}),
+                json!({"type":"function_call","call_id":"c","name":"read","arguments":"{\"path\":\"a\"}"})];
+            let mut expected = json!({"model":"test","input":input,"instructions":"guide",
+                "stream":true,"store":false,"include":["reasoning.encrypted_content"],
+                "prompt_cache_key":"session","parallel_tool_calls":true});
+            if !tools.is_empty() { expected["tools"] = json!(tools); expected["tool_choice"] = json!("auto"); }
+            let actual: Value = serde_json::from_slice(&serde_json::to_vec(
+                &request_body("test", &input, &tools, "session", "guide")).unwrap()).unwrap();
+            assert_eq!(actual, expected);
+        }
     }
     #[test]
     fn stream_bounds_and_invalid_events_fail() {

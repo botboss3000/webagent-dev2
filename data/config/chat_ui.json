@@ -144,8 +144,8 @@
     "content_max_width": "1000px",
     "transcript_padding": {
       "description": "Additional transcript edge padding in pixels, preserving existing header and composer clearance.",
-      "top_px": 100,
-      "bottom_px": 100
+      "top_px": 25,
+      "bottom_px": 50
     },
     "message_bubbles": {
       "description": "Bubble text size and internal padding in pixels. Surface and agent profiles may override individual values; agent left padding controls its text inset independently of user bubbles.",
@@ -156,12 +156,16 @@
       "user": {
         "bg_dark": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent))",
         "bg_light": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent))",
-        "border": "var(--border-width) solid var(--user-bubble-border, color-mix(in oklab, currentColor 12%, transparent))"
+        "border": "var(--border-width) solid var(--user-bubble-border, color-mix(in oklab, currentColor 12%, transparent))",
+        "radius_px": 14,
+        "line_height": 1.5
       },
       "agent": {
         "bg_dark": "transparent",
         "bg_light": "transparent",
-        "border": "none"
+        "border": "none",
+        "radius_px": 14,
+        "line_height": 1.5
       }
     },
     "context_composition": {
@@ -450,7 +454,8 @@
             "min_height": "88px",
             "font_size": "16px",
             "max_height": "180px",
-            "padding": "28px 20px 13px 20px"
+            "padding": "20px 20px 0px 20px",
+            "line_height": "22px"
           },
           "stats": {
             "description": "Usage stats shown in the pill. visible = ordered list of stat types: ctx (current context only, e.g. 77.2k), ctx-max (full 'ctx 77.2k / 200k' current/max readout), cost (price, e.g. $0.12). Each entry is a plain string or { type, decimals } \u2014 decimals overrides the default (ctx: 1 below 1M, 2 above; cost: 2, rounded up so the first charge reads $0.01). A stat hides itself while its value is zero.",
@@ -632,7 +637,8 @@
             "min_height": "62px",
             "font_size": "16px",
             "max_height": "62px",
-            "padding": "20px 8px 20px 8px"
+            "padding": "20px 8px 20px 8px",
+            "line_height": "22px"
           },
           "stop": {
             "enabled": true,
@@ -738,7 +744,7 @@
     "pill_fade": {
       "description": "Vertical fade mask on the pill textarea when content overflows. top/bottom are pixel heights for each fade band. bottom_offset shifts the bottom band closer to the edge (same thickness).",
       "top": 8,
-      "bottom": 0,
+      "bottom": 5,
       "bottom_offset": 0
     },
     "show_tool_calls": true,
@@ -758,6 +764,56 @@
       "title": "Chat with us",
       "subtitle": "",
       "greeting": "Hi! How can I help you today?"
+    },
+    "message_headings": {
+      "description": "Sender labels; optional avatar_text is a short initials badge.",
+      "user": {
+        "visible": false,
+        "label": "You",
+        "avatar_text": ""
+      },
+      "agent": {
+        "visible": false,
+        "label": "Agent",
+        "avatar_text": ""
+      }
+    },
+    "message_spacing": {
+      "description": "Message gap and separate turn gap in px; activity_offset_px adjusts the activity line relative to the preceding bubble.",
+      "message_gap_px": 12,
+      "turn_gap_px": 0,
+      "activity_offset_px": -8,
+      "content_to_gutter_px": 4,
+      "gutter_bottom_px": 6
+    },
+    "gutter_presentation": {
+      "description": "reveal: click, engagement, or always. Keyboard focus always reveals controls.",
+      "reveal": "click",
+      "transition_ms": 150,
+      "icon_size_px": 14,
+      "font_size_px": 11,
+      "rest_opacity": 0.65,
+      "engaged_opacity": 1,
+      "control_gap_px": 4
+    },
+    "glimmer": {
+      "user": {
+        "enabled": true,
+        "intensity": 0.12,
+        "radius_px": 240,
+        "transition_ms": 250
+      },
+      "agent": {
+        "enabled": true,
+        "intensity": 0.12,
+        "radius_px": 240,
+        "transition_ms": 250
+      }
+    },
+    "composer": {
+      "description": "Shared input behavior; textarea geometry remains under active_footer/idle_footer.chat_pill.controls.textarea. placeholder null uses messages.pill_placeholder. enter_behavior: auto (desktop send, touch newline), send, or newline; Shift+Enter always inserts a newline; Ctrl/Cmd+Enter sends in newline mode.",
+      "placeholder": "Send a message",
+      "enter_behavior": "auto"
     }
   },
   "chat_desktop": {
@@ -833,7 +889,7 @@
     },
     "pill_fade": {
       "top": 0,
-      "bottom": 0
+      "bottom": 5
     }
   },
   "chat_mobile": {
@@ -882,7 +938,7 @@
     },
     "pill_fade": {
       "top": 8,
-      "bottom": 0,
+      "bottom": 5,
       "bottom_offset": 0
     }
   },
@@ -938,7 +994,7 @@
     },
     "pill_fade": {
       "top": 6,
-      "bottom": 0,
+      "bottom": 5,
       "bottom_offset": 0
     },
     "launcher": {

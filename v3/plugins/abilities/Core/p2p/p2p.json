@@ -1,0 +1,18 @@
+{
+  "display_name": "P2P Mirror",
+  "kind": "ability",
+  "description": "Peer-to-peer data mirroring between WebAgent instances with Ed25519 mutual auth. Agents can add peers and trigger on-demand syncs.",
+  "tools": [
+    "add_peer",
+    "remove_peer",
+    "list_peers",
+    "sync_now"
+  ],
+  "icon": "share-2",
+  "color": "#7dcfff",
+  "order": 20,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

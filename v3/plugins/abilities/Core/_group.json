@@ -1,0 +1,7 @@
+{
+  "name": "Core",
+  "icon": "wrench",
+  "color": "#7dcfff",
+  "desc": "Everyday, non-destructive capabilities — UI edits, tool creation, automation, pages, image generation, orchestration, agent management, and app view control.",
+  "order": 1
+}

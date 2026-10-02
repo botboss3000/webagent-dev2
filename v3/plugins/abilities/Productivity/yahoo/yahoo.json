@@ -1,0 +1,13 @@
+{
+  "display_name": "Yahoo",
+  "kind": "oauth",
+  "description": "Account identity only.",
+  "tools": [],
+  "icon": "at-sign",
+  "color": "#4285F4",
+  "order": 4,
+  "placeholder": false,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

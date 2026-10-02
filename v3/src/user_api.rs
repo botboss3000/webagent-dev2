@@ -138,8 +138,17 @@ async fn approval(Extension(app): Extension<App>, Path(id): Path<String>,
     crate::approval(State(app), Path(id), Json(body)).await.into_response()
 }
 
+// Only caller-owned run summaries; never provider credentials or admin policy.
+async fn user_status(Extension(app): Extension<App>) -> crate::Api {
+    let mut runs=app.store.active_runs().await?;
+    runs.extend(app.store.recent_runs(None).await?);
+    Ok(Json(serde_json::json!({"shutoff":app.shutoff().await?,
+        "runs":runs.iter().map(crate::public_run).collect::<Vec<_>>()})))
+}
+
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route("/user/status", get(user_status))
         .route("/sessions", get(sessions).post(create_session))
         .route("/sessions/{sid}/runs/{rid}/diagnostics", get(diagnostics))
         .route("/sessions/{sid}/runs/{rid}/progress", get(progress))

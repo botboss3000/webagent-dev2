@@ -1015,6 +1015,15 @@ async function _applyOnce() {
     // every re-apply (agent switch, panel-width crossing), not just at boot.
     _applyContentMaxWidth(chatUi);
     applyMessageBubbleConfig(document.getElementById('chat-panel'), profile);
+    // Set on the persistent host so rebuilt composer rows inherit JSON fades.
+    const pillHost = document.getElementById('chat-panel');
+    const pillFade = profile.pill_fade || {};
+    if (pillHost) {
+      for (const [key, fallback] of [['top', 8], ['bottom', 5], ['bottom_offset', 0]]) {
+        const value = Number(pillFade[key] ?? fallback);
+        pillHost.style.setProperty(`--chat-pill-fade-${key.replace('_', '-')}`, `${Number.isFinite(value) ? Math.max(0, value) : fallback}px`);
+      }
+    }
     // The active loader owns transcript fades too; the legacy chat bootstrap
     // is not used by every chat entry path. Reapply on profile/width changes.
     const transcript = document.getElementById('chat-messages');

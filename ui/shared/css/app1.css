@@ -2652,7 +2652,7 @@ body.light-mode .chat-mode-btn:hover { border-color: rgba(var(--brand-rgb), 0.25
     padding: 12px 8px 100px 15px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--chat-message-gap-px, 12px);
   }
 
   /* Pull-to-refresh spinner — sits above the messages, hidden until pulled. */
@@ -3455,7 +3455,7 @@ body.light-mode .chat-bubble.agent.premium {
    Toggled by _applyGrouping in chat-bubble.js; see GROUP_GAP_MS there for the
    time-apart threshold past which bubbles stay separate. */
 .chat-bubble.agent.grouped-cont {
-  margin-top: -8px;                 /* pulls back the 12px flex gap to a tight ~4px */
+  margin-top: var(--chat-activity-offset-px, -8px);                 /* pulls back the 12px flex gap to a tight ~4px */
   border-top-left-radius: 5px;
   border-top-right-radius: 5px;
 }
@@ -5912,7 +5912,7 @@ body.light-mode .chat-continue-btn:hover {
 /* Bring the activity line closer to the preceding bubble's gutter without
    changing the transcript gap between unrelated messages. */
 .chat-bubble:is(.user, .agent):not(.activity-group) + .chat-bubble.agent.activity-group {
-  margin-top: -8px;
+  margin-top: var(--chat-activity-offset-px, -8px);
 }
 .chat-bubble.agent.activity-group {
   /* The run shell sits directly on the transcript backdrop. Its update,
@@ -9970,3 +9970,35 @@ body.light-mode .account-delete-ack { color: var(--fg-2); }
 #chat-sub-header .chat-anchor-nav-btn:hover:not(:disabled) { color: var(--fg-1); background: var(--accent-soft); }
 #chat-sub-header .chat-anchor-nav-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 #chat-sub-header .chat-anchor-nav-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* JSON-backed chat presentation. Controls remain available on keyboard focus. */
+.chat-bubble.user:not(.activity-group) { line-height: var(--chat-user-line-height, 1.5); }
+.chat-bubble.agent:not(.activity-group) { line-height: var(--chat-agent-line-height, 1.5); }
+.chat-bubble.user > .label { display: var(--chat-user-heading-display, none); font-size: 12px; }
+.chat-bubble.agent > .label { display: var(--chat-agent-heading-display, none); font-size: 12px; }
+.chat-bubble.user > .label::before { content: var(--chat-user-avatar-text, ''); font-size: 12px; margin-right: 4px; }
+.chat-bubble.agent > .label::before { content: var(--chat-agent-avatar-text, ''); font-size: 12px; margin-right: 4px; }
+.chat-bubble.user { margin-top: var(--chat-turn-gap-px, 0px); }
+.chat-bubble:is(.user,.agent) :is(.turn-gutter,.bubble-actions) {
+  gap: var(--chat-gutter-control-gap-px, 4px);
+  margin-top: var(--chat-content-to-gutter-px, 4px);
+  margin-bottom: 0;
+  transition: opacity var(--chat-gutter-transition-ms, 150ms) ease;
+}
+.chat-bubble :is(.turn-gutter-time,.turn-gutter-model,.bubble-time,.bubble-model) { font-size: var(--chat-gutter-font-size-px, 11px); }
+.chat-bubble :is(.turn-gutter-btn,.bubble-action-btn) svg { width: var(--chat-gutter-icon-size-px, 14px); height: var(--chat-gutter-icon-size-px, 14px); }
+[data-gutter-reveal='always'] .chat-bubble:is(.user,.agent) .turn-gutter:not([hidden]),
+[data-gutter-reveal='engagement'] .chat-bubble:is(.user,.agent):is(:hover,.spot-active,:focus-within) .turn-gutter:not([hidden]),
+[data-gutter-reveal] .chat-bubble:is(.user,.agent):focus-within .turn-gutter:not([hidden]) { display: flex; opacity: var(--chat-gutter-engaged-opacity,1); pointer-events:auto; }
+[data-gutter-reveal='engagement'] .chat-bubble:not(:hover):not(.spot-active):not(:focus-within) .bubble-actions { opacity:0; pointer-events:none; }
+[data-gutter-reveal='always'] .chat-bubble .bubble-actions { opacity:var(--chat-gutter-rest-opacity,0.65); }
+[data-gutter-reveal] .chat-bubble:is(:hover,.spot-active,:focus-within,.gutters-open) :is(.bubble-actions,.turn-gutter) { opacity:var(--chat-gutter-engaged-opacity,1); }
+
+.chat-bubble:is(.user,.agent) .turn-gutter { margin-bottom: var(--chat-gutter-bottom-px, 6px); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-bubble.spot::before, .chat-bubble :is(.turn-gutter,.bubble-actions) { transition-duration: 0ms !important; }
+}
+
+.chat-bubble.user { border-radius: var(--chat-user-radius,12px); }
+.chat-bubble.agent:not(.activity-group) { border-radius: var(--chat-agent-radius,12px); }
+[data-gutter-reveal='always'] .chat-bubble:is(.user,.agent):not(:hover):not(:focus-within) .turn-gutter:not([hidden]) { opacity:var(--chat-gutter-rest-opacity,0.65); }

@@ -1,0 +1,12 @@
+{
+  "display_name": "Hybrid Database Sync",
+  "kind": "service",
+  "description": "Keeps this machine's local database in step with the shared remote database. Only active in hybrid local-first mode; harmless otherwise. Turn off to pause syncing. Applies after a restart.",
+  "tools": [],
+  "icon": "arrow-left-right",
+  "color": "#e0af68",
+  "order": 14,
+  "readiness": "pending",
+  "config": {},
+  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+}

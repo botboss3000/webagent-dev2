@@ -10,7 +10,7 @@ pub enum AccountStatus { Pending, Active, Suspended, Disabled }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role { User, Administrator }
+pub enum Role { Guest, User, Administrator }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

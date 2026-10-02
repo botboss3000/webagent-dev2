@@ -1,0 +1,13 @@
+{
+  "display_name": "Mailchimp",
+  "kind": "placeholder",
+  "description": "Email campaigns and audiences.",
+  "tools": [],
+  "icon": "mail",
+  "color": "#bb9af7",
+  "order": 3,
+  "placeholder": true,
+  "readiness": "placeholder",
+  "config": {},
+  "migration_note": "Placeholder only; no executable implementation."
+}

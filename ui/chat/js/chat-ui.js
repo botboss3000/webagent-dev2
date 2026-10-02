@@ -1,5 +1,7 @@
 'use strict';
 
+import { shouldSendComposer } from '../../shared/js/chat-surface.js';
+
 // Chat panel wiring — initChat(): binds chat input/keyboard/send, execution-mode
 // toggle, continue/stop buttons (500ms poll), scroll-to-bottom chevron + the
 // top-of-panel jump nav (start of session / last user message), gate +
@@ -403,9 +405,7 @@ export function initChat() {
   // ── Event wiring ──
   app.chatSend.addEventListener('click', sendMessage);
   app.chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      // On touch devices (mobile), let Enter insert a newline; send via the button.
-      if (window.matchMedia?.('(pointer: coarse)').matches) return;
+    if (shouldSendComposer(e, app.chatInput)) {
       e.preventDefault();
       sendMessage();
     }

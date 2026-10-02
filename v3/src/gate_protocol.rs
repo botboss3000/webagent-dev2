@@ -1,5 +1,6 @@
-//! Bounded, versioned advisory gate transport. Rust retains every native check
-//! and is the only component allowed to publish a terminal assistant message.
+//! Speak to the optional Python checker over a small, versioned local message.
+//! It receives reply metadata, not the reply text. Rust still makes the final
+//! decision and is the only process that can publish an assistant message.
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

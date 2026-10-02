@@ -1,4 +1,5 @@
-//! Browser and messaging routes bound to the authenticated user's data plane.
+//! Route each person's chat request to that person's storage. This is the
+//! boundary that keeps one user's conversations out of another user's view.
 use crate::{App, InspectArgs, SessionAbilityBody, SessionModeBody};
 use axum::{extract::{Path, Query, State}, http::HeaderMap, response::{IntoResponse, Response},
     routing::{get, post}, Extension, Json, Router};

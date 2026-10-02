@@ -1,7 +1,8 @@
-"""Unprivileged, separately deployed v3 publication gate.
+"""Optional final-reply checker, isolated from the WebAgent database.
 
-This process receives only bounded checkpoint metadata. It cannot access WebAgent
-state, workspaces, credentials, tools, or the publication database.
+Rust sends bounded metadata including a byte count, run identifiers, and
+digests, never the reply text. This worker can pass or reject, but cannot run
+tools or publish a chat message.
 """
 import asyncio
 import json
@@ -50,6 +51,8 @@ def validate_request(value):
     return value
 
 
+# The first installed module has one rule: reject a reply over 8192 bytes.
+# Keep the response tied to the request ID so Rust cannot mix up decisions.
 def evaluate(value):
     request = validate_request(value)
     exceeds = request["facts"]["text_bytes"] > MAX_PUBLICATION_BYTES

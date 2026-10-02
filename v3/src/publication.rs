@@ -1,4 +1,5 @@
-//! One accepted terminal publication, committed atomically with the completed run.
+//! Publish one final assistant reply. The run status, chat row, and publication
+//! record commit together, so a retry or crash cannot create a second reply.
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

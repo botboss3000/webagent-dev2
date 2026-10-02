@@ -1,4 +1,6 @@
-//! Fixed checkpoint contracts. Configuration cannot reorder or bypass native controls.
+//! A checkpoint is a named stop in a run, such as admission, a tool request, or
+//! final publication. Each has typed facts and a recorded decision. Optional
+//! modules may advise at supported stops, but cannot bypass Rust's controls.
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

@@ -1,3 +1,6 @@
+//! The v3 executable has three roles: API (accepts work), loop (executes it),
+//! and health (checks that the loop is alive). Start with docs/code-tour.md
+//! for a plain-language path from a message to its single published reply.
 mod access;
 mod access_policy;
 mod access_store;
@@ -2638,6 +2641,8 @@ async fn user_apps(app:&App) -> Result<Vec<App>> {
     }
     Ok(views)
 }
+// After a restart, put safe unfinished work back in the queue. An interrupted
+// external write is held for review because its effect may already have happened.
 async fn recover(app: &App, startup: bool) -> Result<()> {
     let _guard = app.gate.lock().await;
     for user_app in user_apps(app).await? {
@@ -2674,6 +2679,8 @@ async fn recover(app: &App, startup: bool) -> Result<()> {
     }
     Ok(())
 }
+// This is the loop container's dispatcher: announce that it is alive, notice
+// queued work, claim a lease, and start at most the configured number of runs.
 async fn scheduler(app: App) {
     let owner = uuid();
     let mut last_heartbeat = 0;
@@ -2773,6 +2780,8 @@ async fn scheduler(app: App) {
         tokio::time::sleep(Duration::from_millis(app.runtime.read().await.scheduler.poll_interval_ms)).await;
     }
 }
+// Follow one claimed run through the fixed workflow. At the relevant
+// checkpoints, reread access and policy so earlier permission cannot linger.
 async fn execute_run(
     app: App,
     id: String,
@@ -3633,6 +3642,8 @@ fn router(app: App) -> Router {
             response
         })).with_state(app)
 }
+// Choose one role for this process. The API serves requests; the loop owns
+// recovery and execution; health only checks a recent loop heartbeat.
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()

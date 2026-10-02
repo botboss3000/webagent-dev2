@@ -3,13 +3,21 @@
 Independent Rust agent runtime, subscription provider adapter, and isolated Python tool worker.
 Source lives here within the primary development checkout; v2 remains independently available.
 
+New to this codebase? Start with the
+[plain-language code tour](docs/code-tour.md), then use the sections below
+for deployment and API details.
+
 ## Run
 
 On the development server:
 
 ```sh
 sh /home/ar/webagent-dev2/v3/deploy.sh build
+sh /home/ar/webagent-dev2/v3/deploy.sh build-loop
+sh /home/ar/webagent-dev2/v3/gate-deploy.sh build
 sh /home/ar/webagent-dev2/v3/deploy.sh start
+sh /home/ar/webagent-dev2/v3/gate-deploy.sh start
+sh /home/ar/webagent-dev2/v3/deploy.sh start-loop
 curl -fsS http://100.112.23.15:8081/health/ready
 ```
 

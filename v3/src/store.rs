@@ -1,3 +1,6 @@
+//! Durable storage for the three owners: application, agent, and user.
+//! A run revision and a time-limited lease stop stale processes from replacing
+//! newer progress. See docs/code-tour.md before following the SQL below.
 use crate::access;
 use crate::cache::{Cache, ContextCache};
 use aes_gcm::{
@@ -1226,6 +1229,9 @@ impl Store {
             .await?;
         Ok(())
     }
+    // Save one checkpoint only if the caller still has the revision and, for
+    // loop execution, the live lease it read. The override below is reserved
+    // for deliberate recovery or access shutdown and still checks revision.
     pub async fn save_run(&self, run: &mut Value, kind: &str, payload: &Value) -> Result<()> {
         self.save_run_inner(run,kind,payload,false).await
     }
@@ -1372,6 +1378,8 @@ impl Store {
         run["run_revision"]=json!(expected+1);
         Ok(())
     }
+    // Take temporary ownership of queued work in one transaction. A new
+    // generation, lease epoch, and revision fence out a previous loop worker.
     pub async fn claim_run(&self, run: &mut Value, owner: &str, generation: &str) -> Result<bool> {
         let rid=run["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?.to_owned();
         let mut tx=self.pool.begin().await?;
@@ -1435,6 +1443,8 @@ impl Store {
             .execute(&self.app_pool).await?;
         Ok(())
     }
+    // Validate and mark accepted commands as seen. The queued run remains the
+    // authority for execution, so acknowledging a command does not erase work.
     pub async fn acknowledge_loop_commands(&self) -> Result<usize> {
         let mut tx=self.pool.begin().await?;
         let rows=sqlx::query("SELECT seq,run_id,schema_version,kind,payload FROM loop_commands WHERE acknowledged_at IS NULL ORDER BY seq LIMIT 128")
@@ -1464,6 +1474,8 @@ impl Store {
             .bind(sid).bind(after).fetch_all(&self.pool).await?;
         rows.iter().map(|r|Ok(json!({"seq":r.get::<i64,_>("seq"),"kind":r.get::<String,_>("kind"),"payload":self.unseal(&r.get::<Vec<u8>,_>("payload"))?}))).collect()
     }
+    // Save related documents and their event together. For message admission,
+    // this includes the queued run and retry receipt: either all exist or none do.
     pub async fn atomic_docs_event(
         &self,
         mut docs: Vec<(String, Value)>,

@@ -1,4 +1,6 @@
-//! Administrative account, entitlement, and membership APIs.
+//! Administrator routes for people, tiers, and agent membership. When access
+//! is reduced, active work is stopped or held for review so an old grant cannot
+//! continue running in the separate loop process.
 use crate::{access::{AccountStatus, Principal, Relationship, Role, Tier}, App, Api, ApiError};
 use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
 use axum::{extract::{Path, Query, State}, http::StatusCode, routing::get, Extension, Json, Router};

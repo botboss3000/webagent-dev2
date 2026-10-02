@@ -1,0 +1,105 @@
+# A plain-language tour of WebAgent v3
+
+This is a map for someone reading v3 code for the first time. The
+[README](../README.md) has deployment commands and the detailed contracts.
+
+A **run** is one attempt to answer a user's message. It can be queued,
+working, waiting for approval, or finished.
+
+## The five actors
+
+| Actor | Everyday meaning | Start reading |
+| --- | --- | --- |
+| Web API | The front desk: sign-in, access checks, message admission, and chat pages. | [main.rs](../src/main.rs), [user_api.rs](../src/user_api.rs) |
+| Rust loop | The worker that picks up accepted messages, calls a model, and decides what happens next. | [main.rs](../src/main.rs): `scheduler` and `execute_run` |
+| Storage | The durable notebook: accepted work, progress, and final replies survive restarts. | [store.rs](../src/store.rs) |
+| Python tool worker | Runs installed low-level tools only after Rust permits them. | [worker.py](../worker.py), [tools.rs](../src/tools.rs) |
+| Python gate worker | Optionally checks a proposed final reply; it cannot publish one. | [gate_worker.py](../gate_worker.py), [gate_protocol.rs](../src/gate_protocol.rs) |
+
+`V3_PROCESS_ROLE=api` and `V3_PROCESS_ROLE=loop` start the same Rust
+executable in separate containers. The `health` role checks the loop heartbeat.
+
+## Follow one message
+
+1. **Sign in and check access.** Account status, role, tier, agent membership,
+   and current permissions decide whether the person may proceed. The rules
+   are in [access.rs](../src/access.rs),
+   [access_policy.rs](../src/access_policy.rs), and
+   [phase3_api.rs](../src/phase3_api.rs).
+2. **Accept and save.** The API writes the user's message, a `queued` run,
+   and a receipt in one transaction. Retrying the same message ID returns the
+   same run. HTTP 202 means accepted, not answered.
+3. **Notice the work.** The loop validates and acknowledges versioned command
+   records, then scans queued runs. Queued storage is the execution authority;
+   commands are a durable trigger ledger.
+4. **Claim a run.** The loop takes a time-limited lease and assigns a new
+   generation and revision. An old worker cannot overwrite a newer attempt.
+   See `claim_run` and `save_run` in [store.rs](../src/store.rs).
+5. **Prepare and call the model.** The loop assembles history, instructions,
+   and available tools. [workflow.rs](../src/workflow.rs) names the fixed
+   checkpoints; [context_assembly.rs](../src/context_assembly.rs) builds the
+   request, and [provider.rs](../src/provider.rs) sends it.
+6. **Handle tool requests, if any.** Rust checks today's access and tool policy
+   again. Some actions need human approval. Only a permitted action reaches
+   the Python tool worker. Showing a tool to the model does not permit its use.
+7. **Check a final reply.** Rust applies its own output rules. If enabled,
+   `publication_size_guard_v1` receives bounded metadata such as the reply's
+   byte count, run identifiers, and digests, never its text. It can pass or
+   reject, but cannot publish.
+8. **Publish once.** Rust commits the completed run, one assistant message,
+   and a publication record together. That record has no separate delivery
+   consumer today. See [publication.rs](../src/publication.rs).
+
+Clients read messages and run status through the API; they do not open database
+files directly.
+
+## Where information belongs
+
+- **Application storage:** accounts, roles, tiers, agent catalog, and audit.
+- **Agent storage:** one agent's settings, abilities, connections, and policies.
+- **User storage:** that person's chats, runs, approvals, and receipts.
+- **Secrets:** keys and credentials stay behind controlled interfaces. The
+  Python gate receives neither.
+- **Transient sockets:** `v3/runtime` connects web and loop;
+  `v3/gate-runtime` connects loop and gate. They are not chat backups.
+
+[store.rs](../src/store.rs), [access_store.rs](../src/access_store.rs), and
+[agent_storage.rs](../src/agent_storage.rs) implement these boundaries.
+
+## Access words
+
+| Word | Plain meaning |
+| --- | --- |
+| Status | Whether an account is pending, active, suspended, or disabled. |
+| Role | Whether the person is an ordinary user or administrator. |
+| Tier | Which models, limits, and capabilities the account receives. |
+| Relationship | Whether the person owns, belongs to, or may call an agent. |
+| Visibility | Whether the model can see or discover a tool. |
+| Permission | Whether an action is denied, needs approval, or can run automatically. |
+| Availability | Whether the tool has an installed implementation. |
+
+These checks are separate. Visible never means permitted. A saved approval is
+rechecked if access or policy changes.
+
+## Restarts and unfamiliar terms
+
+The API returns **503 readiness** when the loop heartbeat is stale. It can
+still save an accepted message while the loop is down. The returning loop
+resumes queued work. It holds an interrupted external write for review when
+the outcome is unknown, and it will not publish a second final reply.
+
+A **lease** is temporary ownership of a run. A **generation** identifies one
+execution attempt. A **revision** changes with each saved run update. Together
+they keep stale processes and API requests from overwriting newer progress.
+An **outbox** is a durable record written with the action it describes.
+A **receipt** remembers the result of a request so a retry cannot make a second
+run. A **transaction** means related records are saved together or not at all.
+A **digest** is a one-way fingerprint used to compare inputs without sending
+raw content to the gate. A **checkpoint** is a named place where the loop
+records what it checked and decided.
+
+## Current limits
+
+The final-reply size guard is the only installed Python gate module.
+Attachments, memory, progress checks, and delegation are later roadmap work.
+An ability catalog entry does not imply that every v2 tool runs in v3.

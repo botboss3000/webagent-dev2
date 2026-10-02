@@ -1,4 +1,5 @@
-//! Application-plane identity, entitlement, and agent membership records.
+//! Application-wide records for who people are, what their tier permits, and
+//! which agents they may use. Conversations themselves belong to user storage.
 use crate::access::{self, AccountStatus, Principal, Relationship, Role, Tier};
 use crate::store::Store;
 use anyhow::{anyhow, bail, Result};

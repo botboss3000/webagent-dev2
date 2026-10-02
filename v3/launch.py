@@ -1,4 +1,9 @@
-"""Container bootstrap; root is used only to establish OS identities."""
+"""Start the web container's three local processes.
+
+A short-lived privileged setup creates protected directories and sockets.
+The broker, tool worker, and API then run under restricted identities. The
+separate Rust loop and Python gate have their own containers.
+"""
 import ctypes
 import os
 import signal

@@ -1,6 +1,7 @@
-//! Live application and agent-plane access checks for admission and dispatch.
-//! A caller must obtain a fresh snapshot at each checkpoint; a prior approval
-//! never acts as a standing capability after one of these revisions changes.
+//! Answer "may this person use this agent or tool right now?" Account status,
+//! tier, agent relationship, and permission all matter. Visibility only decides
+//! what the model sees; it never grants execution. A fresh access snapshot is
+//! required at each checkpoint because an earlier approval can become stale.
 use crate::access::{self, AccountStatus, Permission, Principal, Relationship, Tier,
     ToolDecision, ToolFactors};
 use crate::store::Store;

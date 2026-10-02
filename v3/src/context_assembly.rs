@@ -4,23 +4,9 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use crate::{context_compaction, context_projection, provider};
-
-#[derive(Debug, Clone, Copy)]
-pub struct CallIdentity { pub turn: u64, pub call: u64 }
-
-pub struct Request<'a> {
-    pub history: &'a [Value],
-    pub base: &'a str,
-    pub guidance: &'a str,
-    pub schemas: &'a [Value],
-    /// Only native, trusted producers can supply instruction contributions.
-    pub contributions: &'a [context_projection::Contribution],
-    pub identity: CallIdentity,
-    pub selection: &'a provider::ProviderSelection,
-    pub max_bytes: usize,
-    pub summary_reserve_bytes: usize,
-}
+use crate::{context_compaction, context_input, provider};
+use crate::context_input::{Request, CallIdentity};
+use crate::context_accounting::HistoryReport;
 
 /// Provider-neutral envelope using v3's existing Responses-shaped history.
 /// This is deliberately NOT the final provider-specific HTTP request body.
@@ -32,13 +18,11 @@ pub struct Envelope<'a> {
 }
 pub enum Prepared<'a> { Compact(context_compaction::Plan), Ready(Envelope<'a>) }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Section { pub bytes: usize, pub items: usize }
 #[derive(Debug, Serialize)]
 pub struct Overlay {
     pub id: String,
     pub source: String,
-    pub lifetime: context_projection::Lifetime,
+    pub lifetime: context_input::Lifetime,
     pub disposition: &'static str,
     pub content_bytes: usize,
 }
@@ -68,65 +52,7 @@ pub struct Report {
     pub overlays: Vec<Overlay>,
     pub schemas: Vec<Schema>,
 }
-#[derive(Debug, Clone, Serialize)]
-pub struct HistoryReport {
-    pub messages: Section,
-    pub tool_calls: Section,
-    pub tool_results: Section,
-    pub reasoning: Section,
-    pub other: Section,
-    /// Subfield sizes overlap their parent sections; do not add them to totals.
-    pub argument_content_bytes: usize,
-    pub result_content_bytes: usize,
-}
-fn size<T: Serialize + ?Sized>(value: &T) -> Result<usize> {
-    crate::context_state::json_size(value)
-}
-fn empty_section() -> Section { Section { bytes: 0, items: 0 } }
-pub(crate) fn history_report(history: &[Value]) -> Result<HistoryReport> {
-    let mut report = HistoryReport {
-        messages: empty_section(), tool_calls: empty_section(),
-        tool_results: empty_section(), reasoning: empty_section(), other: empty_section(),
-        argument_content_bytes: 0, result_content_bytes: 0,
-    };
-    for item in history {
-        let section = match item["type"].as_str() {
-            Some("function_call") => {
-                report.argument_content_bytes += item["arguments"].as_str().map_or(0, str::len);
-                &mut report.tool_calls
-            },
-            Some("function_call_output") => {
-                report.result_content_bytes += item["output"].as_str().map_or(0, str::len);
-                &mut report.tool_results
-            },
-            Some("reasoning") => &mut report.reasoning,
-            Some("message") => &mut report.messages,
-            _ if item["role"].is_string() => &mut report.messages,
-            _ => &mut report.other,
-        };
-        section.items += 1;
-        section.bytes += size(item)?;
-    }
-    Ok(report)
-}
-fn overlay_report(items: &[context_projection::Contribution], identity: CallIdentity) -> Vec<Overlay> {
-    use context_projection::Lifetime;
-    let mut seen = std::collections::HashSet::new();
-    items.iter().map(|item| {
-        let active = match item.lifetime {
-            Lifetime::History => false,
-            Lifetime::Run => true,
-            Lifetime::Turn => item.turn == identity.turn,
-            Lifetime::Call => item.turn == identity.turn && item.call == identity.call,
-        };
-        let disposition = if item.lifetime == Lifetime::History { "already_in_history" }
-            else if !active { "expired" }
-            else if !seen.insert(&item.id) { "duplicate" }
-            else { "included" };
-        Overlay { id: item.id.clone(), source: item.source.clone(), lifetime: item.lifetime,
-            disposition, content_bytes: item.content.len() }
-    }).collect()
-}
+fn size<T: Serialize + ?Sized>(value: &T) -> Result<usize> { crate::context_accounting::json_size(value) }
 
 /// Keep existing base/slot ordering and limits when pinning a run's prompt.
 pub fn pinned_instructions(base: &str, slots: &[Value]) -> Result<String> {
@@ -141,32 +67,37 @@ pub fn pinned_instructions(base: &str, slots: &[Value]) -> Result<String> {
     Ok(instructions)
 }
 
-/// Project once, then budget that exact projection, including active overlays.
+/// Select inputs once, combine instructions, then validate the exact logical envelope.
 /// A summary is only planned here; the loop must generate, validate and persist it.
 pub fn prepare<'a>(request: Request<'a>) -> Result<Prepared<'a>> {
-    prepare_incremental(request, &mut crate::context_state::ContextState::default())
+    prepare_incremental(request, &mut crate::context_accounting::ContextAccounting::default())
 }
-pub fn prepare_incremental<'a>(request: Request<'a>, state: &mut crate::context_state::ContextState) -> Result<Prepared<'a>> {
+pub fn prepare_incremental<'a>(request: Request<'a>, state: &mut crate::context_accounting::ContextAccounting) -> Result<Prepared<'a>> {
     state.sync(request.history)?;
-    let projection = context_projection::assemble(&[], request.base,
-        request.guidance, request.contributions, request.identity.turn, request.identity.call)?;
-    if projection.instructions.is_empty() || projection.instructions.len() > 96 * 1024 {
+    // Input selects once; assembly alone combines the selected ingredients in stable order.
+    let selected = context_input::select(request.contributions, request.identity)?;
+    let mut instructions = format!("{}{}", request.base, request.guidance);
+    for decision in &selected {
+        if decision.disposition == "included" { instructions.push('\n'); instructions.push_str(&decision.item.content); }
+    }
+    if instructions.is_empty() || instructions.len() > 96 * 1024 {
         bail!("Invalid assembled provider instructions");
     }
-    let history_budget = context_projection::history_budget(&projection.instructions, "",
-        request.schemas, request.max_bytes)?;
-    if history_budget <= request.summary_reserve_bytes {
-        bail!("Instructions and tool schemas exceed context budget; review required");
-    }
-    if state.bytes() > history_budget {
-        if let Some(plan) = context_compaction::plan(request.history, history_budget, request.summary_reserve_bytes)? {
-            return Ok(Prepared::Compact(plan));
-        }
-    }
-    let instruction_json_bytes = size(&projection.instructions)?;
+    // Keep the existing logical-envelope budget semantics, without allocating JSON buffers.
+    let instruction_json_bytes = size(&instructions)?;
     let schemas_json_bytes = size(request.schemas)?;
-    let history_json_bytes = state.bytes();
     let framing = b"{\"instructions\":,\"tools\":,\"input\":}".len();
+    // Empty history contributes two brackets. No transcript/schema copies are needed.
+    let overhead = framing + instruction_json_bytes + schemas_json_bytes + 2;
+    let history_budget = request.max_bytes.checked_sub(overhead).filter(|remaining| *remaining > 2)
+        .ok_or_else(|| anyhow::anyhow!("Instructions and schemas exceed context budget"))?;
+    // Assembly owns the envelope ceiling; only the compaction module owns folding policy.
+    let reserve = request.compaction.summary_reserve_bytes;
+    if history_budget <= reserve { bail!("Instructions and tool schemas exceed context budget; review required"); }
+    let (sizes, characters) = state.measurements();
+    let plan = context_compaction::plan_cached(request.history, history_budget, request.compaction, sizes, characters)?;
+    if let Some(plan) = plan { return Ok(Prepared::Compact(plan)); }
+    let history_json_bytes = state.bytes();
     let envelope_bytes = framing + instruction_json_bytes + schemas_json_bytes + history_json_bytes;
     if envelope_bytes > request.max_bytes { bail!("Assembled context exceeds budget"); }
     let selection = request.selection.value();
@@ -180,27 +111,31 @@ pub fn prepare_incremental<'a>(request: Request<'a>, state: &mut crate::context_
         },
         turn: request.identity.turn, call: request.identity.call,
         max_bytes: request.max_bytes, history_budget_bytes: history_budget,
-        summary_reserve_bytes: request.summary_reserve_bytes, envelope_bytes,
+        summary_reserve_bytes: reserve, envelope_bytes,
         instruction_json_bytes, base_content_bytes: request.base.len(),
         guidance_content_bytes: request.guidance.len(), schemas_json_bytes, history_json_bytes,
         framing_bytes: envelope_bytes - instruction_json_bytes - schemas_json_bytes - history_json_bytes,
         history: state.report(),
-        overlays: overlay_report(request.contributions, request.identity),
+        overlays: selected.iter().map(|decision| Overlay { id: decision.item.id.clone(), source: decision.item.source.clone(), lifetime: decision.item.lifetime, disposition: decision.disposition, content_bytes: decision.item.content.len() }).collect(),
         schemas: request.schemas.iter().map(|schema| Ok(Schema {
             name: schema["name"].as_str().unwrap_or("").into(), bytes: size(schema)?,
             bootstrap: matches!(schema["name"].as_str(), Some("list_abilities" | "load_ability")),
         })).collect::<Result<Vec<_>>>()?,
     };
-    Ok(Prepared::Ready(Envelope { input: request.history, instructions: projection.instructions,
+    Ok(Prepared::Ready(Envelope { input: request.history, instructions: instructions,
         schemas: request.schemas, report }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context_projection::{Contribution, Lifetime};
+    use crate::context_input::{Contribution, Lifetime};
     fn selection() -> provider::ProviderSelection {
         provider::ProviderSelection::parse(&json!({"provider":"deepseek","model":"deepseek-chat"}), "unused").unwrap()
+    }
+    fn test_config(reserve: usize) -> context_compaction::Config {
+        let mut c = context_compaction::Config::configured().unwrap();
+        c.summary_reserve_bytes=reserve; c
     }
     #[test]
     fn preserves_projection_and_reports_without_content() {
@@ -212,10 +147,11 @@ mod tests {
         let contributions = [c.clone(), c.clone(), Contribution { call: 1, id: "old".into(), ..c }];
         let schemas = [json!({"name":"load_ability","parameters":{"description":"private schema"}})];
         let selection = selection();
+        let config = test_config(100);
         let Prepared::Ready(envelope) = prepare(Request { history: &history, base: "private base",
             guidance: " private skill", schemas: &schemas, contributions: &contributions,
             identity: CallIdentity { turn: 1, call: 2 }, selection: &selection,
-            max_bytes: 4096, summary_reserve_bytes: 100 }).unwrap() else { panic!("unexpected compaction") };
+            max_bytes: 4096, compaction: &config }).unwrap() else { panic!("unexpected compaction") };
         assert_eq!(envelope.instructions, "private base private skill\nprivate overlay");
         assert_eq!(envelope.input, history);
         assert_eq!(envelope.schemas, schemas);
@@ -237,18 +173,33 @@ mod tests {
         let selection = selection();
         let Prepared::Compact(plan) = prepare(Request { history: &history, base: "base", guidance: "",
             schemas: &[], contributions: &[], identity: CallIdentity { turn: 1, call: 1 },
-            selection: &selection, max_bytes: 600, summary_reserve_bytes: 100 }).unwrap()
+            selection: &selection, max_bytes: 600, compaction: &test_config(100) }).unwrap()
             else { panic!("expected compaction") };
         assert_eq!(plan.drop_until, 2);
         let overlay = Contribution { id: "huge".into(), source: "native".into(), lifetime: Lifetime::Run,
             content: "x".repeat(600), turn: 0, call: 0 };
         assert!(prepare(Request { history: &history, base: "base", guidance: "", schemas: &[],
             contributions: &[overlay], identity: CallIdentity { turn: 1, call: 1 },
-            selection: &selection, max_bytes: 600, summary_reserve_bytes: 100 }).is_err());
+            selection: &selection, max_bytes: 600, compaction: &test_config(100) }).is_err());
     }
     #[test]
     fn pinned_prompt_keeps_order_and_ignores_empty_slots() {
         assert_eq!(pinned_instructions("base", &[json!({"content":" a "}),
             json!({"content":" "}), json!({"content":"b"})]).unwrap(), "base\n\na\n\nb");
     }
+    #[test]
+    fn json_policy_triggers_below_request_ceiling() {
+        let mut config = context_compaction::Config::configured().unwrap();
+        config.trigger_tokens = 150; config.tail_tokens = 40; config.summary_tokens = 20;
+        config.summary_reserve_bytes = 300;
+        let history = vec![json!({"role":"user","content":"x".repeat(1000)}),
+            json!({"role":"assistant","content":"done"}), json!({"role":"user","content":"new"})];
+        let selection = selection();
+        let Prepared::Compact(plan) = prepare(Request { history: &history, base: "base", guidance: "",
+            schemas: &[], contributions: &[], identity: CallIdentity {turn:1,call:1},
+            selection: &selection, max_bytes:4096, compaction:&config }).unwrap() else { panic!("expected history trigger") };
+        assert_eq!(plan.reserve_bytes, 300);
+        assert_eq!(plan.drop_until, 2);
+    }
+
 }

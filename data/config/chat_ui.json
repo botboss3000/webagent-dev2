@@ -2,7 +2,7 @@
   "version": 3,
   "description": "Chat presentation defaults. chat_common is the shared base; each chat_* surface overrides only the values it needs.",
   "agents_page_widget": {
-    "description": "Shared Agents-page Ask or Search launcher. It expands in place, forwards live text to whichever Agents sub-view search control is on screen (the Agents/Abilities search, or the embedded Sessions view's footer search — title + content with per-session hit counts), and sends questions through the normal WebAgent widget with current page context. On the Sessions sub-view the pill is search-only (no chat): it advertises a 'Search for a session' label and its trailing control becomes a red clear/collapse button (search_clear_* and search_collapse_* below) — it empties the field, or collapses the pill when the field is already empty, because the filter already runs as the user types.",
+    "description": "Shared Agents-page Ask or Search launcher. It expands in place, forwards live text to whichever Agents sub-view search control is on screen (the Agents/Abilities search, or the embedded Sessions view's footer search \u2014 title + content with per-session hit counts), and sends questions through the normal WebAgent widget with current page context. On the Sessions sub-view the pill is search-only (no chat): it advertises a 'Search for a session' label and its trailing control becomes a red clear/collapse button (search_clear_* and search_collapse_* below) \u2014 it empties the field, or collapses the pill when the field is already empty, because the filter already runs as the user types.",
     "enabled": true,
     "title": "WebAgent",
     "icon": "bot",
@@ -142,6 +142,11 @@
   "chat_common": {
     "description": "Shared configuration for every chat surface. Surface profiles inherit this object at runtime, including its messages.",
     "content_max_width": "1000px",
+    "transcript_padding": {
+      "description": "Additional transcript edge padding in pixels, preserving existing header and composer clearance.",
+      "top_px": 100,
+      "bottom_px": 100
+    },
     "message_bubbles": {
       "description": "Bubble text size and internal padding in pixels. Surface and agent profiles may override individual values; agent left padding controls its text inset independently of user bubbles.",
       "font_size_px": 17,
@@ -149,13 +154,13 @@
       "padding_x_px": 14,
       "agent_padding_left_px": 4,
       "user": {
-        "background": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent))",
-        "background_light": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent))",
+        "bg_dark": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent))",
+        "bg_light": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent))",
         "border": "var(--border-width) solid var(--user-bubble-border, color-mix(in oklab, currentColor 12%, transparent))"
       },
       "agent": {
-        "background": "transparent",
-        "background_light": "transparent",
+        "bg_dark": "transparent",
+        "bg_light": "transparent",
         "border": "none"
       }
     },
@@ -379,6 +384,19 @@
         "close": {
           "container_size": "28px"
         }
+      },
+      "row_sizes": {
+        "description": "Independent header row sizing, shared by desktop and mobile. primary sizes session controls; tabs sizes chat tabs and navigation. primary.border_radius accepts a CSS length (e.g. 14px) or pill for half the control height. Per-control overrides win; reload after editing.",
+        "primary": {
+          "container_size": "40px",
+          "element_size": "28px",
+          "font_size": "18px",
+          "border_radius": "pill"
+        },
+        "tabs": {
+          "container_size": "26px",
+          "font_size": "12px"
+        }
       }
     },
     "component_panel": {
@@ -497,7 +515,7 @@
       },
       "above_pill": {
         "enabled": true,
-        "description": "Rows above the chat pill. Five-row plan: row 0 = activity; rows 1-4 are reserved slots (empty rows render nothing â€” drop controls into a row to activate it).",
+        "description": "Rows above the chat pill. Five-row plan: row 0 = activity; rows 1-4 are reserved slots (empty rows render nothing \u00e2\u20ac\u201d drop controls into a row to activate it).",
         "rows": [
           {
             "left": [],
@@ -786,22 +804,10 @@
         }
       ],
       "controls": {
-        "minimize": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
-        "new_session": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
-        "session_prev": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
-        "session_next": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
+        "minimize": {},
+        "new_session": {},
+        "session_prev": {},
+        "session_next": {},
         "sub_agent_tabs": {
           "enabled": true,
           "square": false
@@ -811,7 +817,8 @@
           "max_width": "200px"
         },
         "session_dropdown": {
-          "min_width": "150px"
+          "min_width": "150px",
+          "square": false
         }
       }
     },
@@ -840,13 +847,13 @@
       "max_width": "100%",
       "rows": [
         {
-          "left": [
-            "new_session"
-          ],
+          "left": [],
           "center": [
             "session_dropdown"
           ],
-          "right": []
+          "right": [
+            "new_session"
+          ]
         },
         {
           "left": [],
@@ -857,25 +864,20 @@
         }
       ],
       "controls": {
-        "changes": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
-        "new_session": {
-          "element_size": "28px",
-          "container_size": "40px"
-        },
+        "changes": {},
+        "new_session": {},
         "sub_agent_tabs": {
           "enabled": true,
           "square": false
         },
         "session_dropdown": {
-          "min_width": "0"
+          "min_width": "0",
+          "square": false
         }
       }
     },
     "fade": {
-      "top": 0,
+      "top": 24,
       "bottom": 120
     },
     "pill_fade": {

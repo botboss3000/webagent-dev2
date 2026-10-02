@@ -2,6 +2,9 @@ FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f
 WORKDIR /build
 COPY v3/Cargo.toml v3/Cargo.lock ./
 COPY v3/src ./src
+# COMPACTION CONFIG: build-time tests read this fixture; runtime uses the single
+# host config directory mounted by deploy.sh, not an embedded configuration.
+COPY v3/config ./config
 # Runtime tests load the installed ability catalog and chat configuration.
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui

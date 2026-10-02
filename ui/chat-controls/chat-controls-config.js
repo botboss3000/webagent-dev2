@@ -274,11 +274,30 @@ export function _sizeControl(el, cfg) {
   }
   if (cs && cs !== 'auto') {
     el.style.setProperty('height', cs, 'important');
+    el.style.setProperty('min-height', cs, 'important');
+    // Keep the inner selector within the padded chip, not a second full-height box.
+    const trigger = el.querySelector('.session-dropdown-trigger');
+    if (trigger) {
+      trigger.style.setProperty('height', '100%', 'important');
+      trigger.style.setProperty('min-height', '0', 'important');
+      trigger.style.setProperty('align-items', 'center', 'important');
+      trigger.style.setProperty('box-sizing', 'border-box', 'important');
+    }
+    if (cfg.font_size) el.style.setProperty('font-size', cfg.font_size, 'important');
+    if (trigger && cfg.font_size) trigger.style.setProperty('font-size', cfg.font_size, 'important');
     if (cfg.square !== false) {
       el.style.setProperty('width', cs, 'important');
       el.style.setProperty('padding', '0', 'important');
       el.style.setProperty('justify-content', 'center', 'important');
     }
+  }
+  // Row defaults are merged before sizing; per-control radii override them.
+  // Half the configured height produces pill chips (including square buttons).
+  if (cfg.border_radius) {
+    const radius = cfg.border_radius === 'pill'
+      ? (cs && cs !== 'auto' ? `calc(${cs} / 2)` : '9999px')
+      : cfg.border_radius;
+    el.style.setProperty('border-radius', radius, 'important');
   }
   if (cfg.min_width) el.style.setProperty('min-width', cfg.min_width, 'important');
   if (cfg.max_width) el.style.setProperty('max-width', cfg.max_width, 'important');
@@ -893,7 +912,7 @@ async function _applyToContainer(containerId, headerCfg) {
 
   // Clear existing rows (dynamic elements are regenerated; static controls with
   // data-header-control are rescued back to the container for re-use).
-  const existingRows = containerEl.querySelectorAll('[data-controls-row]');
+  const existingRows = containerEl.querySelectorAll('[data-controls-row], [data-header-row]');
   for (const r of existingRows) {
     const controls = r.querySelectorAll('[data-header-control], [data-element-origin]');
     for (const c of controls) containerEl.appendChild(c);
@@ -922,7 +941,18 @@ async function _applyToContainer(containerId, headerCfg) {
   const rows = headerCfg.rows;
   if (!Array.isArray(rows)) return;
 
-  const controlsCfg = headerCfg.controls || {};
+  // Row sizing is inherited by all primary controls; explicit control overrides win.
+  const primary = headerCfg.row_sizes?.primary || {};
+  const tabs = headerCfg.row_sizes?.tabs || {};
+  for (const [key, value] of Object.entries({
+    '--chat-tabs-size': tabs.container_size,
+    '--chat-tabs-font-size': tabs.font_size,
+  })) {
+    if (value) containerEl.style.setProperty(key, value);
+    else containerEl.style.removeProperty(key);
+  }
+  const controlsCfg = Object.fromEntries(Object.entries(headerCfg.controls || {})
+    .map(([name, cfg]) => [name, name === 'sub_agent_tabs' ? cfg : { ...primary, ...cfg }]));
 
   for (let i = 0; i < rows.length; i++) {
     const rowCfg = rows[i];
@@ -985,6 +1015,17 @@ async function _applyOnce() {
     // every re-apply (agent switch, panel-width crossing), not just at boot.
     _applyContentMaxWidth(chatUi);
     applyMessageBubbleConfig(document.getElementById('chat-panel'), profile);
+    // The active loader owns transcript fades too; the legacy chat bootstrap
+    // is not used by every chat entry path. Reapply on profile/width changes.
+    const transcript = document.getElementById('chat-messages');
+    if (transcript) {
+      const fade = profile.fade || {};
+      const top = Math.max(0, Number(fade.top) || 0);
+      const bottom = Math.max(0, Number(fade.bottom) || 0);
+      transcript.style.setProperty('--chat-fade-top', `${top}px`);
+      transcript.style.setProperty('--chat-fade-top-stops', top > 0 ? `transparent 0, #000 ${top}px` : '#000 0');
+      transcript.style.setProperty('--chat-fade-bottom', `${bottom}px`);
+    }
 
     // ── Resolve footer profiles (active + idle) ──
     _activeFooterProfile = _resolveFooterProfile(profile, 'active_footer');

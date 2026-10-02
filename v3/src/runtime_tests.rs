@@ -36,8 +36,14 @@ pub(crate) async fn fixture_uninitialized() -> (TempDir, App) {
         .await
         .unwrap();
     let (runtime, runtime_path) = loop_runtime::Config::initialize(root.path(), &store).await.unwrap();
+    // Isolate fixture edits; production imports legacy JSON only if data authority is absent.
+    // COMPACTION FIXTURE: isolate JSON edits per test while exercising the same
+    // Config::read call-boundary path as main.rs. This copy is test-only, not
+    // production bootstrap; deploy.sh mounts the single repository config file.
+    let compaction_config_path = root.path().join("context-compaction.json");
+    std::fs::copy(context_compaction::Config::configured_path(), &compaction_config_path).unwrap();
     let app = App {
-        runtime: Arc::new(RwLock::new(runtime)), runtime_path,
+        runtime: Arc::new(RwLock::new(runtime)), runtime_path, compaction_config_path,
         message_api_token_hash: None,
         browser_login_bridge: None,
         store,
@@ -1435,7 +1441,11 @@ async fn catalog_change_revokes_loaded_ability_before_pending_tool() {
 #[tokio::test]
 async fn long_run_compacts_before_model_and_keeps_full_message_history() {
     use axum::routing::post;
-    let (_root, mut app) = fixture().await;
+    let (root, mut app) = fixture().await;
+    let config_path = app.compaction_config_path.clone();
+    let mut config = context_compaction::Config::read(&config_path).unwrap();
+    config.tail_tokens = 20000;
+    config.persist(&config_path).unwrap();
     let _saved = settings(State(app.clone()), Json(json!({"model":"summary-pinned"})))
         .await
         .unwrap();
@@ -1551,7 +1561,11 @@ async fn long_run_compacts_before_model_and_keeps_full_message_history() {
 #[tokio::test]
 async fn failed_context_summary_keeps_original_input_for_resume() {
     use axum::routing::post;
-    let (_root, mut app) = fixture().await;
+    let (root, mut app) = fixture().await;
+    let config_path = app.compaction_config_path.clone();
+    let mut config = context_compaction::Config::read(&config_path).unwrap();
+    config.tail_tokens = 20000;
+    config.persist(&config_path).unwrap();
     let mock = Router::new().route(
         "/responses",
         post(|| async {
@@ -1592,6 +1606,7 @@ async fn failed_context_summary_keeps_original_input_for_resume() {
     .unwrap();
     let paused = app.run(&id).await.unwrap();
     assert_eq!(paused["status"], "paused");
+    assert_eq!(paused["error"], "Context summary failed validation; resume to retry");
     assert_eq!(paused["input"], json!(original));
     let session = app.store.get(&key("session", &sid)).await.unwrap().unwrap();
     assert_eq!(session["checkpoint_through"], 0);
@@ -3888,6 +3903,90 @@ async fn diagnostics_route_is_authenticated_session_bound_and_redacted() {
 }
 
 #[tokio::test]
+async fn progress_route_is_session_bound_and_tracks_durable_states() {
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let other = conversation(&app).await;
+    let id = queued(&app, &sid).await;
+    let uri = format!("/api/v3/sessions/{sid}/runs/{id}/progress");
+    let request = |cookie: Option<&str>, uri: &str| {
+        let mut builder = Request::builder().uri(uri);
+        if let Some(cookie) = cookie { builder = builder.header("cookie", cookie); }
+        builder.body(Body::empty()).unwrap()
+    };
+    assert_eq!(router(app.clone()).oneshot(request(None, &uri)).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED);
+    let cookie = ability_auth(&app).await;
+    assert_eq!(router(app.clone()).oneshot(request(Some(&cookie),
+        &format!("/api/v3/sessions/{other}/runs/{id}/progress")))
+        .await.unwrap().status(), StatusCode::NOT_FOUND);
+    let queued_response = router(app.clone()).oneshot(request(Some(&cookie), &uri))
+        .await.unwrap();
+    assert_eq!(queued_response.status(), StatusCode::OK);
+    let queued_body = axum::body::to_bytes(queued_response.into_body(), 65536).await.unwrap();
+    let queued_view: Value = serde_json::from_slice(&queued_body).unwrap();
+    assert_eq!(queued_view["status"], "queued");
+    assert_eq!(queued_view["checkpoint_decisions"].as_array().unwrap().len(), 2);
+    assert_eq!(queued_view["compaction_count"], 0);
+    assert_eq!(queued_view["pending_approval"], false);
+
+    let sentinel = "private tool arguments 5917";
+    let mut run = app.run(&id).await.unwrap();
+    run["status"] = json!("waiting_approval");
+    run["phase"] = json!("tools");
+    run["turns"] = json!(1);
+    run["pending"] = json!({"state":"waiting","name":"file_write",
+        "arguments":{"content":sentinel}});
+    workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
+        &checkpoint_pre_tool("file_write"), workflow::Decision::Pass).unwrap();
+    app.save(&mut run).await.unwrap();
+    let waiting_response = router(app.clone()).oneshot(request(Some(&cookie), &uri))
+        .await.unwrap();
+    assert_eq!(waiting_response.status(), StatusCode::OK);
+    let waiting_body = axum::body::to_bytes(waiting_response.into_body(), 65536).await.unwrap();
+    assert!(!String::from_utf8_lossy(&waiting_body).contains(sentinel));
+    assert!(!String::from_utf8_lossy(&waiting_body).contains("file_write"));
+    let waiting_view: Value = serde_json::from_slice(&waiting_body).unwrap();
+    assert_eq!(waiting_view["pending_approval"], true);
+    assert!(waiting_view["checkpoint_decisions"].as_array().unwrap().iter()
+        .any(|receipt| receipt["checkpoint"] == "pre_tool"
+            && receipt["decision"] == "pass"));
+    assert_eq!(waiting_view.as_object().unwrap().len(), 11);
+
+    run["status"] = json!("recovery");
+    run["uncertain"] = json!(true);
+    run["pending"]["state"] = json!("executing");
+    app.save(&mut run).await.unwrap();
+    let recovery_response = router(app.clone()).oneshot(request(Some(&cookie), &uri))
+        .await.unwrap();
+    let recovery_body = axum::body::to_bytes(recovery_response.into_body(), 65536).await.unwrap();
+    let recovery_view: Value = serde_json::from_slice(&recovery_body).unwrap();
+    assert_eq!(recovery_view["status"], "recovery");
+    assert_eq!(recovery_view["uncertain_effect"], true);
+    assert_eq!(recovery_view["pending_approval"], false);
+
+    run["status"] = json!("completed");
+    run["uncertain"] = json!(false);
+    run["compactions"] = json!(1);
+    run["pending"] = Value::Null;
+    workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
+        &workflow::Input::Publication { text_digest:"fixture-digest".into() },
+        workflow::Decision::Pass).unwrap();
+    app.save(&mut run).await.unwrap();
+    let completed_response = router(app.clone()).oneshot(request(Some(&cookie), &uri))
+        .await.unwrap();
+    let completed_body = axum::body::to_bytes(completed_response.into_body(), 65536)
+        .await.unwrap();
+    let completed_view: Value = serde_json::from_slice(&completed_body).unwrap();
+    assert_eq!(completed_view["status"], "completed");
+    assert_eq!(completed_view["compaction_count"], 1);
+    assert!(completed_view["checkpoint_decisions"].as_array().unwrap().iter()
+        .any(|receipt| receipt["checkpoint"] == "publication"
+            && receipt["decision"] == "pass"));
+    assert_eq!(completed_view["pending_approval"], false);
+}
+
+#[tokio::test]
 async fn failed_publication_preserves_the_callers_run() {
     let (_root, app) = fixture().await;
     let mut run = json!({"id":uuid(),"session_id":uuid(),"status":"running",
@@ -4475,4 +4574,53 @@ async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
     assert_ne!(response.status(),StatusCode::OK);
     assert_eq!(router(app).oneshot(request(&user_token,"user-csrf","GET",
         &format!("/api/v3/sessions/{sid}"),Value::Null)).await.unwrap().status(),StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rolling_compaction_uses_normal_model_and_persists_checkpoint() {
+    use axum::routing::post;
+    let (root, mut app) = fixture().await;
+    let config_path = app.compaction_config_path.clone();
+    let mut config = context_compaction::Config::read(&config_path).unwrap();
+    config.trigger_tokens = 500; config.tail_tokens = 100; config.summary_tokens = 100;
+    config.persist(&config_path).unwrap();
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let mock = Router::new().route("/responses", post(move |Json(body): Json<Value>| {
+        let captured = captured.clone();
+        async move {
+            let mut requests = captured.lock().await;
+            requests.push(body);
+            let text = if requests.len() == 1 { "Remember original goal" } else { "continued" };
+            let event = json!({"type":"response.completed","response":{"status":"completed",
+                "output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}]}});
+            ([("content-type","text/event-stream")], format!("data: {event}\n\n"))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap(); });
+    app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid = conversation(&app).await;
+    let id = queued(&app, &sid).await;
+    let mut run = app.run(&id).await.unwrap();
+    run["input"] = json!([{"role":"user","content":"old".repeat(1000)},
+        {"role":"assistant","content":"done"},{"role":"user","content":"latest"}]);
+    app.save(&mut run).await.unwrap();
+    running(&app, &id, "rolling-summary").await;
+    execute_run(app.clone(), id.clone(), "rolling-summary".into(), CancellationToken::new()).await.unwrap();
+    let done = app.run(&id).await.unwrap();
+    assert_eq!(done["status"], "completed");
+    assert_eq!(done["compactions"], 1);
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["model"], requests[1]["model"]);
+    assert!(requests[0]["tools"].as_array().is_none_or(|tools| tools.is_empty()));
+    assert!(requests[0]["input"].to_string().contains("Fold the previous checkpoint"));
+    let events = app.store.events(&sid, 0).await.unwrap();
+    assert_eq!(events.iter().filter(|e| e["kind"] == "context_compacted").count(), 1);
+    let session = app.store.get(&key("session", &sid)).await.unwrap().unwrap();
+    assert!(session["checkpoint_through"].as_u64().unwrap() > 0);
+    assert!(app.store.context(&sid).await.unwrap()[0].to_string().contains("Remember original goal"));
+    server.abort();
 }

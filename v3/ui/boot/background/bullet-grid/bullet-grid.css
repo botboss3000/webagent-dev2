@@ -1,0 +1,28 @@
+/* ============================================================
+   Bullet grid — colour + layout tokens (read by bullet-grid.js)
+   ------------------------------------------------------------
+   Derived from the app palette in design-system.css (so a brand-colour
+   swap flows through) but defined here so the background stays
+   self-contained. bullet-grid.js carries matching fallbacks.
+
+   The cursor highlight tracks the accent and updates LIVE when the admin
+   edits it in the Appearance panel. These tokens are declared on
+   `body:not(.light-mode)` / `body.light-mode` (NOT :root): appearance.js
+   writes its live overrides onto those body selectors, and a
+   `var(--brand-rgb)` reference only re-resolves to a live edit when it is
+   declared on the same element the override lands on (a :root declaration
+   would freeze to the base palette).
+   ============================================================ */
+
+/* Dark theme — cool dots, accent highlight near the cursor */
+body:not(.light-mode) {
+  --bgrid-dot-rgb:    150, 165, 215;             /* resting dot colour */
+  --bgrid-active-rgb: var(--brand-rgb, 125, 207, 255);  /* dot colour at the cursor (accent) */
+  --bgrid-spacing:    34;                        /* grid cell size (px) */
+}
+
+/* Light theme — warm dots, accent highlight */
+body.light-mode {
+  --bgrid-dot-rgb:    150, 110, 80;
+  --bgrid-active-rgb: var(--brand-rgb, 255, 140, 66);
+}

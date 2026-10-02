@@ -329,9 +329,9 @@ body {
     border: var(--border-width) solid color-mix(in oklab, var(--fg-1) 22%, transparent) !important;
     backdrop-filter: blur(12px) saturate(140%) !important;
     -webkit-backdrop-filter: blur(12px) saturate(140%) !important;
-    border-radius: 14px !important;
+    border-radius: 20px !important;
     padding: 2px 10px !important;
-    min-height: 32px !important;
+    min-height: 40px !important;
     box-sizing: border-box !important;
     transition: background 0.15s, border-color 0.15s, color 0.15s !important;
     /* Allow absolutely-positioned children (dropdown menus) to pop out */
@@ -367,18 +367,18 @@ body.light-mode .chat-header-zone > [data-header-control] {
 .chat-header-zone > [data-header-control]:has(> svg:only-child),
 .chat-header-zone > [data-header-control]:has(> i:only-child) {
     padding: 2px !important;
-    width: 32px !important;
-    height: 32px !important;
+    width: 40px !important;
+    height: 40px !important;
     justify-content: center !important;
     flex-shrink: 0 !important;
   }
 /* Size SVGs inside header controls — broad rule that catches ALL controls
    in zones, including ones with badges/labels (changes, abilities, target).
-   The 20px fills a 28px container with 2px padding nicely. Controls that
+   The 28px boot glyph fills the default 40px primary chip. Controls that
    have explicit element_size via JS config override this with !important. */
-.chat-header-zone > [data-header-control] svg {
-    width: 20px !important;
-    height: 20px !important;
+.chat-header-zone > [data-header-control]:not([data-header-control="sub_agent_tabs"]) svg {
+    width: 28px !important;
+    height: 28px !important;
   }
 /* Icon-only controls in the carousel strip — same square treatment.
    Named explicitly because :has(svg:only-child) also matches icon+text
@@ -394,16 +394,16 @@ body.light-mode .chat-header-zone > [data-header-control] {
 .chat-header-carousel-strip > [data-header-control="voice"],
 .chat-header-carousel-strip > [data-header-control="minimize"] {
     padding: 2px !important;
-    width: 32px !important;
-    height: 32px !important;
+    width: 40px !important;
+    height: 40px !important;
     justify-content: center !important;
     flex-shrink: 0 !important;
   }
 /* Size SVGs inside carousel icon-only controls — broad rule that catches
    ALL controls in the carousel strip, including ones with badges. */
-.chat-header-carousel-strip > [data-header-control] svg {
-    width: 20px !important;
-    height: 20px !important;
+.chat-header-carousel-strip > [data-header-control]:not([data-header-control="sub_agent_tabs"]) svg {
+    width: 28px !important;
+    height: 28px !important;
   }
     /* The "more" (⋯) kebab is a wrapper span containing a button + menu, so
    :has(svg:only-child) doesn't match. Give it the same compact icon-only
@@ -411,16 +411,16 @@ body.light-mode .chat-header-zone > [data-header-control] {
 .chat-header-zone > [data-header-control="more"],
 .chat-header-carousel-strip > [data-header-control="more"] {
     padding: 2px !important;
-    width: 32px !important;
-    height: 32px !important;
+    width: 40px !important;
+    height: 40px !important;
     justify-content: center !important;
     flex-shrink: 0 !important;
   }
 /* Size the "more" kebab icon inside the button within the wrapper. */
 .chat-header-zone > [data-header-control="more"] svg,
 .chat-header-carousel-strip > [data-header-control="more"] svg {
-    width: 20px !important;
-    height: 20px !important;
+    width: 28px !important;
+    height: 28px !important;
   }
 /* Session-dropdown inside a chip: the trigger (now a full session-row)
    sits inside the glass chip normally, but the dropdown menu (position: absolute)
@@ -435,9 +435,9 @@ body.light-mode .chat-header-zone > [data-header-control] {
   .chat-header-zone > [data-header-control="session_dropdown"] {
     display: flex !important;
     justify-content: flex-start !important;
-    height: 32px !important;
-    min-height: 32px !important;
-    max-height: 32px !important;
+    /* Height comes from chat_ui.json; do not clamp the mobile title chip. */
+    min-height: 0 !important;
+    max-height: none !important;
     padding: 2px 12px !important;
     margin: 0 4px !important;
   }
@@ -549,7 +549,7 @@ body.light-mode .chat-header-zone > [data-header-control] {
 /* New-session (+) button — sits in the row-1 LEFT cluster, immediately RIGHT of the
    refresh button (more (⋯) · name · refresh · new (+)), so it's no longer pinned to the
    far edge. Shares the compact transparent icon-button look of its neighbours (refresh /
-   more); its 18px glyph matches them. Single-click → new session / agent picker,
+   more); its configured glyph matches them. Single-click → new session / agent picker,
    middle-click → new browser tab, both wired in ui/chat/js/session-init.js. */
 #chat-header .session-new-header-btn {
   background: none;
@@ -644,7 +644,7 @@ body.light-mode .chat-header-zone > [data-header-control] {
   scrollbar-width: none;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 26px;
+  min-height: var(--chat-tabs-size, 26px);
   padding: 0 14px;
   gap: 1px;
   -webkit-overflow-scrolling: touch;
@@ -670,7 +670,7 @@ body.light-mode .chat-header-zone > [data-header-control] {
       align-items: stretch;
       gap: 4px;
       padding: 2px 10px;
-      min-height: 26px;
+      min-height: var(--chat-tabs-size, 26px);
       border-radius: 14px;
       background: var(--chat-pill-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent));
       /* Match the chat composer’s visible pill border on each individual tab. */
@@ -679,7 +679,7 @@ body.light-mode .chat-header-zone > [data-header-control] {
       -webkit-backdrop-filter: blur(12px) saturate(140%);
       color: var(--fg-2);
       font: inherit;
-      font-size: 12px;
+      font-size: var(--chat-tabs-font-size, 12px);
       font-weight: 600;
       cursor: pointer;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -935,6 +935,7 @@ body.light-mode .sub-chip-menu {
    are shown/hidden by .can-scroll-* classes on the wrap. The scroller gets a
    right-edge gradient mask when there's content to scroll toward. */
 .sub-carousel-chev {
+  height: var(--chat-tabs-size, 26px);
   position: relative;
   top: auto;
   bottom: auto;
@@ -2609,6 +2610,9 @@ body.light-mode .chat-mode-btn:hover { border-color: rgba(var(--brand-rgb), 0.25
 
 /* Chat messages container — drop target with overlay */
   #chat-messages {
+    /* Configuration insets the viewport, not history that scrolls away. */
+    margin-top: var(--chat-transcript-padding-top, 0px);
+    margin-bottom: var(--chat-transcript-padding-bottom, 0px);
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -8310,7 +8314,10 @@ body.light-mode .agent-dropdown:not([data-loaded="true"]) #agent-dropdown-label 
     flex: 1 1 auto;
     min-width: 0;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 18px;
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
   }
 /* Kebab / delete buttons inside the trigger — same look as menu rows but
    no extra hover background (the whole row is clickable). */
@@ -9940,7 +9947,7 @@ body.light-mode .account-delete-ack { color: var(--fg-2); }
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
-  min-height: 26px;
+  min-height: var(--chat-tabs-size, 26px);
   margin-left: 4px;
   padding-left: 4px;
   padding-right: 12px;
@@ -9950,8 +9957,8 @@ body.light-mode .account-delete-ack { color: var(--fg-2); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--chat-tabs-size, 26px);
+  height: var(--chat-tabs-size, 26px);
   padding: 0;
   border: 0;
   border-radius: 8px;

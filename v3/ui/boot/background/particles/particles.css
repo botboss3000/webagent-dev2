@@ -1,0 +1,22 @@
+/* ============================================================
+   Floating particles — colour token (read by particles.js)
+   ------------------------------------------------------------
+   One orb colour per theme, wired to the theme accent so the orbs track
+   the theme and update LIVE when the admin edits the accent in the
+   Appearance panel. The literal triple after `var(...)` is the fallback.
+   particles.js carries a matching JS fallback for the pre-CSS flash.
+
+   Declared on `body:not(.light-mode)` / `body.light-mode` (NOT :root) so
+   the `var(--brand-rgb)` reference re-resolves to appearance.js's live
+   overrides, which land on exactly those two body selectors.
+   ============================================================ */
+
+/* Dark theme — cool light orbs */
+body:not(.light-mode) {
+  --particles-rgb: var(--brand-rgb, 180, 200, 255);
+}
+
+/* Light theme — warm amber orbs */
+body.light-mode {
+  --particles-rgb: var(--brand-rgb, 255, 170, 110);
+}

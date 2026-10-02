@@ -78,7 +78,6 @@ pub struct Policy {
     pub max_turns: u64,
     pub max_attempts: u64,
     pub max_context_bytes: usize,
-    pub summary_reserve_bytes: usize,
     pub max_publication_bytes: usize,
     pub modules: BTreeMap<String, Vec<String>>,
 }
@@ -87,7 +86,6 @@ impl Policy {
         let defaults = crate::loop_runtime::Config::default();
         let mut value = json!({"schema_version":1,"max_turns":defaults.workflow.max_turns,
             "max_attempts":defaults.workflow.max_attempts,"max_context_bytes":defaults.context.max_context_bytes,
-            "summary_reserve_bytes":defaults.context.summary_reserve_bytes,
             "max_publication_bytes":defaults.workflow.max_publication_bytes,"modules":defaults.workflow.modules});
         if let Some(overrides) = overrides {
             let fields = overrides.as_object().ok_or_else(|| anyhow::anyhow!("Policy must be an object"))?;
@@ -97,8 +95,6 @@ impl Policy {
         if policy.schema_version != 1 || !(1..=50).contains(&policy.max_turns)
             || !(1..=3).contains(&policy.max_attempts)
             || !(1024..=262144).contains(&policy.max_context_bytes)
-            || policy.summary_reserve_bytes == 0
-            || policy.summary_reserve_bytes >= policy.max_context_bytes
             || !(1..=262144).contains(&policy.max_publication_bytes) {
             bail!("Invalid workflow policy or operator ceiling exceeded");
         }

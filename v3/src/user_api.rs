@@ -75,6 +75,7 @@ no_args!(sessions => sessions);
 json_arg!(create_session => create_session);
 path_arg!(snapshot => snapshot, String);
 path_arg!(diagnostics => run_diagnostics_api, (String, String));
+path_arg!(progress => run_progress_api, (String, String));
 path_arg!(mode_get => session_mode_get, String);
 path_json!(mode_set => session_mode_set, String, SessionModeBody);
 path_arg!(abilities => session_abilities, String);
@@ -141,6 +142,7 @@ pub(crate) fn router() -> Router<App> {
     Router::new()
         .route("/sessions", get(sessions).post(create_session))
         .route("/sessions/{sid}/runs/{rid}/diagnostics", get(diagnostics))
+        .route("/sessions/{sid}/runs/{rid}/progress", get(progress))
         .route("/sessions/{id}", get(snapshot))
         .route("/sessions/{id}/mode", get(mode_get).put(mode_set))
         .route("/sessions/{id}/abilities", get(abilities))

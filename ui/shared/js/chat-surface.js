@@ -191,6 +191,13 @@ function formatCount(value, decimals) {
 // Shared by panel, widget and embed; reset absent overrides on every profile switch.
 export function applyMessageBubbleConfig(root, profile) {
   if (!root) return;
+  // Additional transcript edge space; omitted fields preserve existing layout.
+  const transcriptPadding = profile?.transcript_padding || {};
+  for (const edge of ['top', 'bottom']) {
+    const value = transcriptPadding[`${edge}_px`];
+    root.style.setProperty(`--chat-transcript-padding-${edge}`,
+      `${typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0}px`);
+  }
   const cfg = profile?.message_bubbles || {};
   const settings = [
     ['font_size_px', '--chat-bubble-font-size', 17, 1],
@@ -207,8 +214,8 @@ export function applyMessageBubbleConfig(root, profile) {
   // variables at the bubble rather than freezing palette values on the root.
   for (const role of ['user', 'agent']) {
     const surface = cfg[role] || {};
-    for (const key of ['background', 'background_light', 'border']) {
-      const token = `--chat-${role}-${key.replaceAll('_', '-')}`;
+    for (const [key, suffix] of [['bg_dark', 'background'], ['bg_light', 'background-light'], ['border', 'border']]) {
+      const token = `--chat-${role}-${suffix}`;
       const value = surface[key];
       const property = key === 'border' ? 'border' : 'background-color';
       if (typeof value === 'string' && CSS.supports(property, value)) {

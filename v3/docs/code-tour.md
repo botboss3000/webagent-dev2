@@ -37,8 +37,10 @@ executable in separate containers. The `health` role checks the loop heartbeat.
    See `claim_run` and `save_run` in [store.rs](../src/store.rs).
 5. **Prepare and call the model.** The loop assembles history, instructions,
    and available tools. [workflow.rs](../src/workflow.rs) names the fixed
-   checkpoints; [context_assembly.rs](../src/context_assembly.rs) builds the
-   request, [context_compaction.rs](../src/context_compaction.rs) plans and validates
+   checkpoints; [context_input.rs](../src/context_input.rs) defines borrowed inputs
+   and selects temporary contributions, [context_accounting.rs](../src/context_accounting.rs)
+   measures append-only history, and [context_assembly.rs](../src/context_assembly.rs)
+   combines and validates the request, [context_compaction.rs](../src/context_compaction.rs) plans and validates
    history compaction, and [provider.rs](../src/provider.rs) sends it.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
    again. Some actions need human approval. Only a permitted action reaches
@@ -53,6 +55,13 @@ executable in separate containers. The `health` role checks the loop heartbeat.
 
 Clients read messages and run status through the API; they do not open database
 files directly.
+
+The session-scoped progress endpoint projects saved run state and bounded
+checkpoint decisions. Receipts are shown in fixed name order, not execution
+order. See [task_progress.rs](../src/task_progress.rs). This
+content-free view has no completion percentage or proof of goal fulfillment.
+Its compaction count is the run's saved count of completed summaries; missing
+counts mean zero, while invalid or excessive stored counts appear as unknown.
 
 ## Where information belongs
 
@@ -112,5 +121,5 @@ The authenticated API saves the bounded note in the user plane. At the next
 message admission, Rust freezes the eight newest notes; loop hydration puts
 them beside the newest user turn as labeled source data, never instructions.
 List and delete are session-scoped. Automatic memory extraction, binary files,
-images, progress checks, and delegation remain later roadmap work.
+images, requirement evidence, and delegation remain later roadmap work.
 An ability catalog entry does not imply that every v2 tool runs in v3.

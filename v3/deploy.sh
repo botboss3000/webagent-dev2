@@ -7,16 +7,19 @@ case "${1:-build}" in
     # Explicit allowlist works with both legacy Docker and BuildKit. No runtime data enters context.
     python3 -B -c 'import hashlib,json,pathlib; baseline=json.loads(pathlib.Path("v3/ui-baseline.json").read_text()); assert all(hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected for path,expected in baseline["assets"].items()), "Shared UI baseline changed; review and explicitly update v3/ui-baseline.json"'
     tar -cf - v3/Dockerfile v3/Cargo.toml v3/Cargo.lock v3/.gitignore v3/src v3/ui v3/plugins/abilities v3/worker.py v3/launch.py v3/promote.py \
-      v3/ui-baseline.json v3/tests v3/README.md v3/deploy.sh \
+      v3/ui-baseline.json v3/tests v3/README.md v3/deploy.sh v3/config \
       ui/shared/css/app1.css ui/shared/css/app2.css ui/shared/css/app3.css ui/shared/css/design-system.css ui/shared/css/index.css \
       ui/main-panel/agents/agents.html ui/main-panel/agents/agents.css ui/vendor/fonts ui/vendor/lucide ui/favicon.svg \
       | docker build -f v3/Dockerfile -t webagent-dev-v3:local -
     ;;
   build-loop)
-    tar -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/ui v3/plugins/abilities \
+    tar -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/config v3/ui v3/plugins/abilities \
       | docker build -f v3/Dockerfile.loop -t webagent-dev-v3-loop:local -
     ;;
   start)
+    # COMPACTION CONFIG: this read-only directory supplies first-start migration.
+    # After migration, both processes read /state/config/context-compaction.json.
+    # The shared data-directory mount supports atomic runtime JSON replacement.
     if docker inspect webagent-dev-v3 >/dev/null 2>&1; then
       echo "webagent-dev-v3 already exists; inspect it before a deliberate lifecycle change" >&2
       exit 1
@@ -27,6 +30,8 @@ case "${1:-build}" in
       --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
       --publish 100.112.23.15:8081:8080 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/data,dst=/state \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/config,dst=/opt/v3/config,readonly \
+      --env V3_CONTEXT_COMPACTION_CONFIG_PATH=/opt/v3/config/context-compaction.json \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/runtime,dst=/run/v3 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3,dst=/live-v3 \
@@ -47,6 +52,8 @@ case "${1:-build}" in
       --stop-timeout 15 webagent-dev-v3:local
     ;;
   start-loop)
+    # COMPACTION CONFIG: paired with start above; same legacy migration source
+    # and /state authority. Existing data-root settings always win.
     if docker inspect webagent-dev-v3-loop >/dev/null 2>&1; then
       echo "webagent-dev-v3-loop already exists; inspect it before a deliberate lifecycle change" >&2
       exit 1
@@ -60,6 +67,8 @@ case "${1:-build}" in
     docker run -d --name webagent-dev-v3-loop --restart unless-stopped --read-only \
       --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m --cpus 2 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/data,dst=/state \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/config,dst=/opt/v3/config,readonly \
+      --env V3_CONTEXT_COMPACTION_CONFIG_PATH=/opt/v3/config/context-compaction.json \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/runtime,dst=/run/v3 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/gate-runtime,dst=/run/v3/gate \

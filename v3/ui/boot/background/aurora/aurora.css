@@ -1,0 +1,27 @@
+/* ============================================================
+   Aurora — colour tokens (read by aurora.js)
+   ------------------------------------------------------------
+   Three blob hues per theme, wired to the theme palette (ambient /
+   accent / secondary) so the aurora tracks the theme and updates LIVE
+   when the admin edits a colour in the Appearance panel. The literal
+   triple after each `var(...)` is the fallback if a token is absent.
+   aurora.js carries matching JS fallbacks for the pre-CSS flash.
+
+   Declared on `body:not(.light-mode)` / `body.light-mode` (NOT :root) so
+   the `var(--…)` references re-resolve to appearance.js's live overrides,
+   which land on exactly those two body selectors.
+   ============================================================ */
+
+/* Dark theme — cool blue / violet aurora */
+body:not(.light-mode) {
+  --aurora-1-rgb: var(--ambient-2-rgb, 90, 110, 200);
+  --aurora-2-rgb: var(--brand-rgb, 150, 110, 210);
+  --aurora-3-rgb: var(--purple-rgb, 70, 90, 170);
+}
+
+/* Light theme — warm peach / amber aurora */
+body.light-mode {
+  --aurora-1-rgb: var(--ambient-2-rgb, 255, 190, 130);
+  --aurora-2-rgb: var(--brand-rgb, 255, 150, 90);
+  --aurora-3-rgb: var(--purple-rgb, 255, 210, 170);
+}

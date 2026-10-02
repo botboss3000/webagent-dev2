@@ -15,8 +15,13 @@
 <link rel="stylesheet" href="/v3-ui/chat/chat.css?v=chat-overlay-20260930">
 <script src="/ui/vendor/lucide/lucide.min.js"></script>
 <script type="module" src="/v3-ui/app.js?v=chat-overlay-20260930"></script>
+<link rel="stylesheet" href="/v3-ui/boot/boot.css">
 </head>
-<body>
+<body class="is-booting">
+<div id="boot-curtain" role="status" aria-label="Loading"><div class="boot-grid" aria-hidden="true"></div></div>
+<div id="cursor-glow" aria-hidden="true"></div>
+<script src="/v3-ui/boot/cursor-effects.js"></script>
+<script src="/v3-ui/boot/boot.js"></script>
 <div id="ptr-indicator" hidden aria-live="polite" aria-label="Pull to refresh">
   <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
     <path d="M24,7 A17,17 0 1,1 10.3,15.3 L15.5,10.5" fill="none" stroke="var(--fg-faint, #4a516e)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.06"/>

@@ -337,9 +337,10 @@ mandatory policy. Model selection and base instructions retain run pinning.
 It pins base instructions plus ordered agent prompt slots and prepares an envelope
 from authorized ability/tool guidance, bootstrap and effective tool schemas,
 durable transcript items, and native lifetime-scoped contributions. It delegates
-projection to `context_projection` and safe complete-turn planning to `context`;
+input definitions and lifetime selection to `context_input`, measurements to
+`context_accounting`, and safe complete-turn planning to `context_compaction`;
 it returns either a compaction plan or the budget-checked envelope. The loop still
-owns summary generation/validation/persistence, approvals, credentials, cancellation,
+owns summary dispatch and persistence, approvals, credentials, cancellation,
 failover and dispatch. Provider adapters retain their transport-specific serialization.
 
 Each ready normal model call saves `context_assembly_report` in its encrypted run
@@ -417,7 +418,7 @@ read by runtime policy resolution.
 Default JSON (created by the application, not by the development tools):
 
 ```json
-{"schema_version":1,"scheduler":{"max_active_runs":1,"max_unresolved_runs":200,"poll_interval_ms":300,"recovery_interval_ms":10000},"context":{"max_context_bytes":262144,"summary_reserve_bytes":16384},"cache":{"document_budget_bytes":67108864,"context_budget_bytes":16777216},"workflow":{"max_turns":50,"max_attempts":3,"max_publication_bytes":262144,"modules":{}}}
+{"schema_version":2,"scheduler":{"max_active_runs":1,"max_unresolved_runs":200,"poll_interval_ms":300,"recovery_interval_ms":10000},"context":{"max_context_bytes":262144},"cache":{"document_budget_bytes":67108864,"context_budget_bytes":16777216},"workflow":{"max_turns":50,"max_attempts":3,"max_publication_bytes":262144,"modules":{}}}
 ```
 
 Resource settings are startup-applied. The existing authorized workflow-policy API keeps
@@ -436,7 +437,7 @@ and message receipt but defer history hydration until acquiring a slot. Legacy r
 their existing input. `run_index.enqueue_seq` preserves admission order across status updates
 and requeues; legacy indices initialize from their existing row order.
 
-`context_state.rs` belongs to an executing task. It measures committed append-only run
+`context_accounting.rs` belongs to an executing task. It measures committed append-only run
 snapshots once per new item, uses a counting serializer, and resets on compaction or restart.
 Logical request reports remain byte-based, not provider-token or RSS limits. Assembly borrows
 history/schemas; the existing provider interface still takes one owned dispatch snapshot.
@@ -445,7 +446,7 @@ concurrent multi-user storage work requires aggregate cache/handle budgeting bef
 a process-wide memory ceiling.
 
 Verification: run `cargo test --locked` from `v3/`; the
-`context_state::measurements::repeated_accounting_measurement` test prints repeated-accounting
+`context_accounting::measurements::repeated_accounting_measurement` test prints repeated-accounting
 CPU time and avoided temporary JSON bytes. This is an accounting microbenchmark, not a
 provider-throughput or peak-server-memory benchmark.
 
@@ -517,3 +518,32 @@ through Rust's native publication checks. An explicit module rejection always
 blocks publication in either mode. Unknown modules or checkpoints are
 rejected. Gate failure never grants a tool permission, overrides a native
 denial, or permits a second terminal publication.
+
+## Context compaction
+
+`src/context_compaction.rs` owns rolling checkpoint policy and validation.
+`<V3_STATE_ROOT>/config/context-compaction.json` is the single operational authority.
+On first startup only, a validated legacy/operator file (`V3_CONTEXT_COMPACTION_CONFIG_PATH`,
+or the package `config/context-compaction.json`) is copied into the data root. Existing data
+always wins and invalid JSON fails explicitly. The legacy file remains a migration template;
+editing it after migration does not change runtime behavior. Both API and loop use `/state`.
+Model/provider/fallback fields are not accepted.
+Settings are read at each model-call boundary and held immutable through the summary call.
+
+Defaults are a 40,000 estimated-token history trigger, 10,000-token verbatim tail,
+and 2,000-token summary prompt target, using four characters per estimated token.
+Estimates count serialized history characters, including the previous checkpoint, not instructions
+or tool schemas. The independent full-request byte ceiling remains in loop-runtime.json and
+can trigger compaction earlier. Safe complete boundaries may retain less than the tail target.
+Each fold replaces the previous checkpoint plus aged history with one summary; original
+interactions remain intact. Summary generation uses only the normal run-selected agent model,
+with no separate routing. The summary token target is a prompt allowance, not exact tokenizer
+measurement; configured reserve and validation limits remain hard byte constraints.
+
+Loop-runtime schema 2 removes the duplicate summary reserve. Schema 1 data is migrated
+with a backup; legacy workflow storage imports discard the redundant reserve. Workflow API
+writes reject compaction settings: use the compaction JSON instead. Cached per-item byte and
+Unicode character measurements feed compaction planning without reserializing unchanged history.
+No settings UI, recall tools, or failure-policy changes are added. Rust changes require rebuilding;
+data JSON edits apply at the next call boundary without restart. Back up configuration and state
+before rollout. Original interactions and checkpoint representation remain compatible.

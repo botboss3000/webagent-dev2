@@ -1,0 +1,6 @@
+/* Initial-paint boot scene; app cannot paint until synchronous cleanup. */
+body.is-booting > :not(#boot-curtain):not(#cursor-glow):not(script) {visibility:hidden !important}
+#boot-curtain {position:fixed;inset:0;z-index:2147483600;background:var(--bg-0);overflow:hidden}
+.boot-grid {position:absolute;inset:0;background-image:radial-gradient(circle, var(--fg-3) 1.3px, transparent 1.5px);background-size:34px 34px;opacity:.35}
+
+#boot-curtain ~ #cursor-glow {z-index:2147483601}

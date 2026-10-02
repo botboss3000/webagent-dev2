@@ -3,3 +3,5 @@
 /workspaces/
 /.cache/
 /deployment-secrets/
+/runtime/
+/gate-runtime/

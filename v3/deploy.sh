@@ -12,18 +12,23 @@ case "${1:-build}" in
       ui/main-panel/agents/agents.html ui/main-panel/agents/agents.css ui/vendor/fonts ui/vendor/lucide ui/favicon.svg \
       | docker build -f v3/Dockerfile -t webagent-dev-v3:local -
     ;;
+  build-loop)
+    tar -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/ui v3/plugins/abilities \
+      | docker build -f v3/Dockerfile.loop -t webagent-dev-v3-loop:local -
+    ;;
   start)
     if docker inspect webagent-dev-v3 >/dev/null 2>&1; then
       echo "webagent-dev-v3 already exists; inspect it before a deliberate lifecycle change" >&2
       exit 1
     fi
-    mkdir -p v3/data v3/workspaces
+    mkdir -p v3/data v3/workspaces v3/runtime
     docker run -d --name webagent-dev-v3 --restart unless-stopped --read-only \
       --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID \
       --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
       --publish 100.112.23.15:8081:8080 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/data,dst=/state \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/runtime,dst=/run/v3 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3,dst=/live-v3 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/ui,dst=/opt/v3/ui,readonly \
       --mount type=bind,src=/home/ar/webagent-dev2/data/config/chat_ui.json,dst=/opt/v3/chat_ui.json,readonly \
@@ -31,6 +36,7 @@ case "${1:-build}" in
       --env V3_MESSAGE_API_TOKEN \
       --env V3_BROWSER_LOGIN_TOKEN \
       --env V3_BROWSER_LOGIN_CALLER_ID \
+      --env V3_PROCESS_ROLE=api \
       --env V3_ABILITIES_ROOT=/live-v3/plugins/abilities \
       --mount type=bind,src=/home/ar/webagent-dev2/ui/shared/css,dst=/opt/v3/shared-ui/shared/css,readonly \
       --mount type=bind,src=/home/ar/webagent-dev2/ui/main-panel/agents,dst=/opt/v3/shared-ui/main-panel/agents,readonly \
@@ -40,5 +46,27 @@ case "${1:-build}" in
       --tmpfs /run:rw,nosuid,nodev,size=16m --tmpfs /tmp:rw,nosuid,nodev,size=32m \
       --stop-timeout 15 webagent-dev-v3:local
     ;;
-  *) echo "Usage: sh v3/deploy.sh build|start" >&2; exit 2 ;;
+  start-loop)
+    if docker inspect webagent-dev-v3-loop >/dev/null 2>&1; then
+      echo "webagent-dev-v3-loop already exists; inspect it before a deliberate lifecycle change" >&2
+      exit 1
+    fi
+    docker exec --user 1100:1100 webagent-dev-v3 test -S /run/v3/worker/tools.sock && \
+      docker exec --user 1100:1100 webagent-dev-v3 test -S /run/v3/promote/promote.sock || {
+      echo "start the v3 API and worker container first" >&2
+      exit 1
+    }
+    mkdir -p v3/gate-runtime
+    docker run -d --name webagent-dev-v3-loop --restart unless-stopped --read-only \
+      --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m --cpus 2 \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/data,dst=/state \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/runtime,dst=/run/v3 \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/gate-runtime,dst=/run/v3/gate \
+      --mount type=bind,src=/home/ar/webagent-dev2/v3/plugins/abilities,dst=/opt/v3/plugins/abilities,readonly \
+      --env V3_ABILITIES_ROOT=/opt/v3/plugins/abilities \
+      --tmpfs /run:rw,nosuid,nodev,size=16m --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+      --stop-timeout 30 webagent-dev-v3-loop:local
+    ;;
+  *) echo "Usage: sh v3/deploy.sh build|start|build-loop|start-loop" >&2; exit 2 ;;
 esac

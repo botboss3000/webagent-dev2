@@ -5,7 +5,7 @@ COPY v3/src ./src
 # Runtime tests load the installed ability catalog and chat configuration.
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
-ENV CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
 RUN cargo test --locked
 RUN cargo build --release --locked
 

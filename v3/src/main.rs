@@ -1,11 +1,21 @@
+mod access;
+mod access_policy;
+mod access_store;
+mod agent_storage;
+mod phase3_api;
+mod user_api;
+mod context_state;
+mod loop_runtime;
 mod abilities;
 mod browser_login;
 mod accounts;
 mod cache;
 mod context;
+mod context_assembly;
 mod context_projection;
 mod workflow;
 mod publication;
+mod gate_protocol;
 mod promotion;
 mod provider;
 mod model_selection;
@@ -58,6 +68,8 @@ const DEFAULT_AGENT_MODEL: &str = "gpt-6-luna";
 
 #[derive(Clone)]
 struct App {
+    runtime: Arc<RwLock<loop_runtime::Config>>,
+    runtime_path: PathBuf,
     store: Store,
     abilities: Arc<abilities::Catalog>,
     gate: Arc<Mutex<()>>,
@@ -125,6 +137,43 @@ fn public_run(run: &Value) -> Value {
     json!({"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
         "pending":run["pending"],"uncertain":run["uncertain"],"turns":run["turns"]})
 }
+fn run_diagnostics(run: &Value) -> Value {
+    const CHECKPOINTS: [&str; 8] = ["admission", "attachment_preparation", "context_assembly",
+        "model_dispatch", "model_output", "pre_tool", "tool_result", "publication"];
+    let checkpoints = CHECKPOINTS.iter().filter_map(|name| {
+        let receipt = run.pointer(&format!("/workflow/receipts/{name}"))?;
+        let decision = receipt["result"]["decision"].as_str()?;
+        if !matches!(decision, "pass" | "reject") { return None; }
+        let reason_code = if decision == "reject" {
+            match receipt["result"]["reason"].as_str() {
+                Some("Publication exceeds configured limit") => "publication_limit",
+                Some("Tool invocation denied") |
+                Some("Tool invocation denied by policy or invalid arguments") => "tool_denied",
+                _ => "rejected",
+            }
+        } else { "" };
+        Some(json!({"checkpoint":name,"decision":decision,"reason_code":reason_code,
+            "policy_revision":receipt["policy_revision"],"turn":receipt["turn"],
+            "call_index":receipt["call_index"]}))
+    }).collect::<Vec<_>>();
+    json!({"run_id":run["id"],"session_id":run["session_id"],"status":run["status"],
+        "uncertain":run["uncertain"],"checkpoints":checkpoints})
+}
+async fn run_diagnostics_api(
+    State(app): State<App>,
+    Path((sid, rid)): Path<(String, String)>,
+) -> Api {
+    let _guard = app.gate.lock().await;
+    if app.store.get(&key("session", &sid)).await?.is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
+    }
+    let run = app.run(&rid).await
+        .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Run not found".into()))?;
+    if run["session_id"] != sid {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Run not found".into()));
+    }
+    Ok(Json(run_diagnostics(&run)))
+}
 fn required<'a>(body: &'a Value, name: &str, max: usize) -> std::result::Result<&'a str, ApiError> {
     let s = body[name]
         .as_str()
@@ -138,20 +187,8 @@ async fn assembled_instructions(store: &Store) -> Result<String> {
     assembled_agent_instructions(store, "shared_default").await
 }
 async fn assembled_agent_instructions(store: &Store, agent_id: &str) -> Result<String> {
-    let mut instructions = provider::DEFAULT_INSTRUCTIONS.to_owned();
-    for slot in store.list_agent_prompt_slots(agent_id).await? {
-        if let Some(content) = slot["content"]
-            .as_str()
-            .filter(|value| !value.trim().is_empty())
-        {
-            instructions.push_str("\n\n");
-            instructions.push_str(content.trim());
-        }
-    }
-    if instructions.len() > 96 * 1024 {
-        return Err(anyhow!("Agent instructions exceed provider limit"));
-    }
-    Ok(instructions)
+    context_assembly::pinned_instructions(provider::DEFAULT_INSTRUCTIONS,
+        &store.list_agent_prompt_slots(agent_id).await?)
 }
 /// Advance a pinned cursor only for a typed, safe pre-response failure.
 fn model_failure(run: &mut Value, error: &anyhow::Error) -> Result<()> {
@@ -188,10 +225,38 @@ fn model_failure(run: &mut Value, error: &anyhow::Error) -> Result<()> {
     Ok(())
 }
 fn policy_default() -> Value {
-    json!({"version":1,"rules":{"file_list":"allow","file_read":"allow","file_search":"allow","state_inspect":"allow","prompt_slot_read":"allow","prompt_slot_write":"require_approval","file_write":"require_approval","file_edit":"require_approval","workspace_seed":"require_approval","source_review":"allow","source_patch":"require_approval","promotion_propose":"allow","shell":"require_approval","python":"require_approval"}})
+    json!({"version":1,"rules":{"list_abilities":"allow","load_ability":"allow","file_list":"allow","file_read":"allow","file_search":"allow","state_inspect":"allow","prompt_slot_read":"allow","prompt_slot_write":"require_approval","file_write":"require_approval","file_edit":"require_approval","workspace_seed":"require_approval","source_review":"allow","source_patch":"require_approval","promotion_propose":"allow","shell":"require_approval","python":"require_approval"}})
 }
 fn policy_decision<'a>(policy: &'a Value, name: &str) -> &'a str {
     policy["rules"][name].as_str().unwrap_or("deny")
+}
+fn live_tool_decision(app:&App, access:&access_policy::LiveAccess, name:&str,
+    policy:&Value, visibility:&Value, state:&Value, loaded:&Value,
+    read_only:bool) -> access::ToolDecision {
+    let installation=access::Permission::from_policy(policy_decision(policy,name))
+        .unwrap_or(access::Permission::Deny);
+    let (available,visible)=app.abilities.tool_gate(name,visibility,state,loaded);
+    let ability_ids=app.abilities.tool_abilities(name,visibility,state,loaded);
+    access.tool_decision_for_abilities(name,&ability_ids,installation,
+        available,visible,read_only,tools::is_read(name))
+}
+fn filter_ability_entry(app:&App, access:&access_policy::LiveAccess, entry:&mut Value,
+    policy:&Value, visibility:&Value, state:&Value, loaded:&Value,
+    read_only:bool) -> bool {
+    let id=entry["id"].as_str().unwrap_or("");
+    if access.ability_permission(id)==access::Permission::Deny {return false;}
+    let Some(tools)=entry["tools"].as_array_mut() else {return false;};
+    tools.retain(|tool| {
+        let name=tool["name"].as_str().unwrap_or("");
+        let installation=access::Permission::from_policy(policy_decision(policy,name))
+            .unwrap_or(access::Permission::Deny);
+        let (available,_)=app.abilities.tool_gate(name,visibility,state,loaded);
+        let ability_ids=app.abilities.tool_abilities(name,visibility,state,loaded);
+        access.tool_decision_for_abilities(name,&ability_ids,installation,
+            available,true,read_only,tools::is_read(name))
+            .permission!=access::Permission::Deny
+    });
+    !tools.is_empty()
 }
 fn default_session_mode() -> Value {
     json!({"mode":"write","revision":0})
@@ -205,7 +270,8 @@ async fn session_agent_id(app: &App, sid: &str) -> Result<String> {
     Ok(session["agent_id"].as_str().unwrap_or("shared_default").to_owned())
 }
 async fn session_agent_abilities(app: &App, sid: &str) -> Result<Value> {
-    app.store.agent_abilities_for(&session_agent_id(app, sid).await?).await
+    let agent_id=session_agent_id(app,sid).await?;
+    app.store.for_agent(&agent_id).await?.agent_abilities_for(&agent_id).await
 }
 fn default_session_abilities() -> Value {
     json!({"revision":0,"active":[],"suppressed":[]})
@@ -260,11 +326,6 @@ async fn effective_policy(app: &App, sid: &str) -> Result<(Value, u64)> {
         .get("policy")
         .await?
         .unwrap_or_else(policy_default);
-    let agent_id = session_agent_id(app, sid).await?;
-    if agent_id != "shared_default" {
-        policy["rules"]["prompt_slot_read"] = json!("deny");
-        policy["rules"]["prompt_slot_write"] = json!("deny");
-    }
     let mode = session_mode(app, sid).await?;
     if mode["mode"] == "read_only" {
         for schema in tools::schemas() {
@@ -309,9 +370,15 @@ impl App {
     }
     async fn save(&self, run: &mut Value) -> Result<()> {
         run["updated_at"] = json!(now());
+        let public=public_run(run);
         self.store
-            .save_run(run, "run_status", &public_run(run))
+            .save_run(run, "run_status", &public)
             .await
+    }
+    async fn save_override(&self, run:&mut Value) -> Result<()> {
+        run["updated_at"]=json!(now());
+        let public=public_run(run);
+        self.store.save_run_override(run,"run_status",&public).await
     }
     async fn selection(&self) -> Result<provider::ProviderSelection> {
         let value = self.store.agent_model().await?;
@@ -385,11 +452,23 @@ fn message_api_authorized(expected: Option<&[u8; 32]>, headers: &HeaderMap) -> b
     // Compare fixed-length digests without early exit; never store/log the raw token.
     expected.iter().zip(actual.iter()).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
 }
-async fn message_api_auth(State(app): State<App>, request: Request, next: Next) -> Response {
+async fn message_api_auth(State(app): State<App>, mut request: Request, next: Next) -> Response {
     if !message_api_authorized(app.message_api_token_hash.as_ref(), request.headers()) {
         return ApiError(StatusCode::UNAUTHORIZED, "Messaging API authentication required".into())
             .into_response();
     }
+    let authorized = app.store.account_by_id("admin").await.ok().flatten()
+        .and_then(|account| access::Principal::from_account(&account).ok()
+            .map(|principal| principal.active() && principal.administrator()
+                && account["is_approved"] == true))
+        .unwrap_or(false);
+    if !authorized { return ApiError(StatusCode::UNAUTHORIZED, "Messaging API unavailable".into()).into_response(); }
+    let mut caller = app.clone();
+    caller.store = match app.store.for_user("admin").await {
+        Ok(store) => store,
+        Err(_) => return ApiError(StatusCode::UNAUTHORIZED, "Messaging API unavailable".into()).into_response(),
+    };
+    request.extensions_mut().insert(caller);
     let mut response = next.run(request).await;
     response.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
     response
@@ -412,24 +491,16 @@ async fn auth(State(app): State<App>, mut request: Request, next: Next) -> Respo
         Ok(Some(v)) if v["expires"].as_u64().unwrap_or(0) > now() => v,
         _ => return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response(),
     };
-    let admin = match app.store.account_by_id("admin").await {
+    let user_id = doc["user_id"].as_str().unwrap_or("admin").to_owned();
+    let account = match app.store.account_by_id(&user_id).await {
         Ok(Some(value)) => value,
-        Ok(None) => match app.store.get("admin").await {
-            Ok(Some(value)) => value,
-            _ => {
-                return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into())
-                    .into_response()
-            }
-        },
-        Err(_) => {
-            return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response()
-        }
+        _ => return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response(),
     };
-    let user_id = admin["user_id"].as_str().unwrap_or("admin");
-    if admin["is_approved"] == false
-        || doc["generation"] != admin["generation"]
-        || doc["user_id"].as_str().is_some_and(|id| id != user_id)
-    {
+    let principal = match access::Principal::from_account(&account) {
+        Ok(value) if value.active() && account["is_approved"] == true => value,
+        _ => return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response(),
+    };
+    if doc["generation"] != account["generation"] {
         return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response();
     }
     if !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS") {
@@ -461,7 +532,25 @@ async fn auth(State(app): State<App>, mut request: Request, next: Next) -> Respo
     }
     doc["_auth_key"] = json!(auth_key);
     doc["_user_id"] = json!(user_id);
+    doc["_role"] = json!(principal.role);
+    doc["_tier_id"] = json!(principal.tier_id);
+    doc["_access_revision"] = json!(principal.access_revision);
+    let mut caller = app.clone();
+    caller.store = match app.store.for_user(&user_id).await {
+        Ok(store) => store,
+        Err(_) => return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response(),
+    };
+    request.extensions_mut().insert(caller);
     request.extensions_mut().insert(doc);
+    next.run(request).await
+}
+async fn admin_auth(State(app): State<App>, request: Request, next: Next) -> Response {
+    let Some(identity) = request.extensions().get::<Value>() else {
+        return ApiError(StatusCode::UNAUTHORIZED, "Sign in required".into()).into_response();
+    };
+    if let Err(error) = phase3_api::administrator(&app, identity).await {
+        return error.into_response();
+    }
     next.run(request).await
 }
 async fn login(
@@ -517,6 +606,8 @@ async fn login(
     .map_err(|_| bad("Sign in unavailable"))?;
     if username != credential["username"].as_str().unwrap_or("admin")
         || credential["is_approved"] == false
+        || (account_exists && !access::Principal::from_account(&credential)
+            .map(|principal| principal.active()).unwrap_or(false))
         || !valid
     {
         return Err(ApiError(StatusCode::UNAUTHORIZED, "Invalid login".into()));
@@ -611,11 +702,14 @@ async fn setup_admin(
 async fn me(State(app): State<App>, axum::Extension(doc): axum::Extension<Value>) -> Api {
     let user_id = doc["_user_id"].as_str().unwrap_or("admin");
     let profile = app.store.user_profile(user_id).await?;
-    let account = app.store.account_by_id(user_id).await?;
+    let account = app.store.account_by_id(user_id).await?
+        .ok_or_else(||ApiError(StatusCode::UNAUTHORIZED,"Sign in required".into()))?;
+    let principal = access::Principal::from_account(&account).map_err(|_|bad("Account unavailable"))?;
     Ok(Json(
-        json!({"user":account.as_ref().map(|a| &a["username"]).unwrap_or(&doc["user"]),"user_id":user_id,
+        json!({"user":account["username"],"user_id":user_id,
         "display_name":profile.as_ref().map(|p| &p["display_name"]),
-        "is_admin":profile.as_ref().map(|p| &p["is_admin"]),
+        "is_admin":principal.administrator(),"role":account["role"],"status":account["status"],
+        "tier_id":account["tier_id"],
         "csrf_token":doc["csrf"]}),
     ))
 }
@@ -632,15 +726,10 @@ async fn update_profile(
     if username.is_empty() || username.chars().any(char::is_control) {
         return Err(bad("Invalid username"));
     }
-    if doc["_user_id"] != "admin" {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Account unavailable".into(),
-        ));
-    }
+    let user_id=doc["_user_id"].as_str().ok_or_else(||bad("Account unavailable"))?;
     let profile = app
         .store
-        .update_admin_profile(username, display_name)
+        .update_user_profile(user_id, username, display_name)
         .await?;
     Ok(Json(profile))
 }
@@ -725,12 +814,6 @@ async fn change_password(
         return Err(bad("New password must be at least 6 characters"));
     }
     let user_id = doc["_user_id"].as_str().unwrap_or("admin");
-    if user_id != "admin" {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Account unavailable".into(),
-        ));
-    }
     let account = app
         .store
         .account_by_id(user_id)
@@ -762,7 +845,7 @@ async fn change_password(
         .to_string();
     let _guard = app.gate.lock().await;
     app.store
-        .replace_admin_password(generation, &next_hash, &uuid())
+        .replace_user_password(user_id, generation, &next_hash, &uuid())
         .await
         .map_err(|_| conflict("Account changed; sign in again"))?;
     Ok(Json(json!({"ok":true,"sign_in_required":true})))
@@ -827,11 +910,20 @@ async fn settings(State(app): State<App>, Json(body): Json<Value>) -> Api {
     app.store.save_agent_model(&value).await?;
     Ok(Json(value))
 }
+async fn admin_agent_view(app:&App,id:&str) -> std::result::Result<App,ApiError> {
+    let mut scoped=app.clone();
+    scoped.store=app.store.for_agent(id).await
+        .map_err(|_|ApiError(StatusCode::NOT_FOUND,"Agent not found".into()))?;
+    let exists:Option<String>=sqlx::query_scalar("SELECT id FROM agents WHERE id=?")
+        .bind(id).fetch_optional(&scoped.store.agent_pool).await.map_err(anyhow::Error::from)?;
+    if exists.is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND,"Agent not found".into()));
+    }
+    Ok(scoped)
+}
 // Model-only persisted settings retain the original subscription default.
 async fn agent_model(State(app): State<App>, Path(id): Path<String>) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let mut value = app.selection().await?.value();
     value["id"] = json!(id);
     Ok(Json(value))
@@ -841,9 +933,7 @@ async fn agent_model_set(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let selection = requested_selection(&body)?;
     let _guard = app.gate.lock().await;
     let value = selection.value();
@@ -905,9 +995,7 @@ async fn ability_catalog(State(app): State<App>) -> Api {
         "abilities":app.abilities.catalog_with(&policy, &visibility, &Value::Null)})))
 }
 async fn agent_ability_catalog(State(app): State<App>, Path(id): Path<String>) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let visibility = agent_abilities(&app).await?;
     let policy = app
         .store
@@ -926,9 +1014,7 @@ fn estimated_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(4)
 }
 async fn agent_context_composition(State(app): State<App>, Path(id): Path<String>) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let slots = app.store.list_prompt_slots().await?;
     let visibility = agent_abilities(&app).await?;
     let policy = app.store.get("policy").await?.unwrap_or_else(policy_default);
@@ -977,9 +1063,7 @@ async fn agent_ability_visibility_set(
     Path((id, ability_id)): Path<(String, String)>,
     Json(body): Json<AbilityVisibilityBody>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     if !app.abilities.known(&ability_id) {
         return Err(bad("Unknown ability ID"));
     }
@@ -1000,13 +1084,7 @@ async fn agent_ability_visibility_set(
     value["revision"] = json!(body.expected_revision + 1);
     value["visibility"][&ability_id] = json!(body.visibility);
     app.store.save_agent_abilities(&value, body.expected_revision).await?;
-    for view in app.store.active_runs().await? {
-        if view["status"] != "waiting_approval" {
-            continue;
-        }
-        let mut run = invalidate_waiting_run(app.run(view["id"].as_str().unwrap()).await?);
-        app.save(&mut run).await?;
-    }
+    phase3_api::quiesce_agent(&app,&id).await?;
     Ok(Json(value))
 }
 async fn agent_ability_skill_visibility_set(
@@ -1014,9 +1092,7 @@ async fn agent_ability_skill_visibility_set(
     Path((id, ability_id)): Path<(String, String)>,
     Json(body): Json<AbilityVisibilityBody>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     if !app.abilities.known(&ability_id) {
         return Err(bad("Unknown ability ID"));
     }
@@ -1035,11 +1111,7 @@ async fn agent_ability_skill_visibility_set(
     value["revision"] = json!(body.expected_revision + 1);
     value["skill_visibility"][&ability_id] = json!(body.visibility);
     app.store.save_agent_abilities(&value, body.expected_revision).await?;
-    for view in app.store.active_runs().await? {
-        if view["status"] != "waiting_approval" { continue; }
-        let mut run = invalidate_waiting_run(app.run(view["id"].as_str().unwrap()).await?);
-        app.save(&mut run).await?;
-    }
+    phase3_api::quiesce_agent(&app,&id).await?;
     Ok(Json(value))
 }
 async fn agent_tool_mode_set(
@@ -1047,9 +1119,7 @@ async fn agent_tool_mode_set(
     Path((id, ability_id, tool_name)): Path<(String, String, String)>,
     Json(body): Json<AbilityVisibilityBody>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     if !app.abilities.has_tool(&ability_id, &tool_name) {
         return Err(bad("Unknown ability tool"));
     }
@@ -1067,11 +1137,7 @@ async fn agent_tool_mode_set(
     value["revision"] = json!(body.expected_revision + 1);
     value["tool_modes"][&tool_name] = json!(body.visibility);
     app.store.save_agent_abilities(&value, body.expected_revision).await?;
-    for view in app.store.active_runs().await? {
-        if view["status"] != "waiting_approval" { continue; }
-        let mut run = invalidate_waiting_run(app.run(view["id"].as_str().unwrap()).await?);
-        app.save(&mut run).await?;
-    }
+    phase3_api::quiesce_agent(&app,&id).await?;
     Ok(Json(value))
 }
 async fn policy_set(State(app): State<App>, Json(body): Json<Value>) -> Api {
@@ -1209,8 +1275,16 @@ async fn create_session(State(app): State<App>, Json(body): Json<Value>) -> Api 
     }
     let agent_id = body.get("agent_id").map(|v| v.as_str().ok_or_else(|| bad("Invalid agent ID")))
         .transpose()?.unwrap_or("shared_default");
+    let access=app.store.live_access(app.store.current_user_id(),agent_id).await
+        .map_err(|_|ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into()))?;
+    if !access.admitted() { return Err(ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into())); }
+    if app.store.list("session:").await?.len() >= access.max_sessions() as usize {
+        return Err(conflict("Session limit reached"));
+    }
+    let agent_store=app.store.for_agent(agent_id).await
+        .map_err(|_|bad("Agent not found"))?;
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM agents WHERE id=?")
-        .bind(agent_id).fetch_optional(&app.store.agent_pool).await.map_err(anyhow::Error::from)?;
+        .bind(agent_id).fetch_optional(&agent_store.agent_pool).await.map_err(anyhow::Error::from)?;
     if exists.is_none() { return Err(bad("Agent not found")); }
     let id = uuid();
     let value = json!({"id":id,"agent_id":agent_id,"title":title,"checkpoint_input":[],"checkpoint_through":0,"created_at":now()});
@@ -1448,18 +1522,17 @@ async fn execute_prompt_slot(app: &App, name: &str, args: &Value) -> Result<Valu
     }
 }
 async fn prompt_slots_api(State(app): State<App>, Path(id): Path<String>) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     Ok(Json(json!({"slots":app.store.list_prompt_slots().await?})))
 }
 async fn prompt_slot_api(State(app): State<App>, Path((id, name)): Path<(String, String)>) -> Api {
-    if id != "shared_default" || !valid_slot_name(&name) {
+    if !valid_slot_name(&name) {
         return Err(ApiError(
             StatusCode::NOT_FOUND,
             "Prompt slot not found".into(),
         ));
     }
+    let app=admin_agent_view(&app,&id).await?;
     let slot = app
         .store
         .get_prompt_slot(&name)
@@ -1472,9 +1545,7 @@ async fn prompt_slot_put_api(
     Path((id, name)): Path<(String, String)>,
     Json(body): Json<PromptSlotPutBody>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let command = PromptWriteArgs {
         action: "put".into(),
         slot_name: name,
@@ -1506,9 +1577,7 @@ async fn prompt_slot_delete_api(
     Path((id, name)): Path<(String, String)>,
     Json(body): Json<PromptSlotDeleteBody>,
 ) -> Api {
-    if id != "shared_default" {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Agent not found".into()));
-    }
+    let app=admin_agent_view(&app,&id).await?;
     let command = PromptWriteArgs {
         action: "delete".into(),
         slot_name: name,
@@ -1691,10 +1760,16 @@ async fn session_abilities(State(app): State<App>, Path(id): Path<String>) -> Ap
     let (policy, _) = effective_policy(&app, &id).await?;
     let visibility = session_agent_abilities(&app, &id).await?;
     let state = session_ability_state(&app, &id).await?;
-    Ok(Json(json!({"mode":session_mode(&app,&id).await?,
+    let mode=session_mode(&app,&id).await?;
+    let agent_id=session_agent_id(&app,&id).await?;
+    let access=app.store.live_access(app.store.current_user_id(),&agent_id).await?;
+    let mut abilities=app.abilities.catalog_with(&policy,&visibility,&state);
+    abilities.retain_mut(|entry|filter_ability_entry(&app,&access,entry,
+        &policy,&visibility,&state,&json!([]),mode["mode"]=="read_only"));
+    Ok(Json(json!({"mode":mode,
         "catalog_version":app.abilities.version(),
         "visibility_revision":visibility["revision"],"state":state,
-        "abilities":app.abilities.catalog_with(&policy, &visibility, &state)})))
+        "abilities":abilities})))
 }
 async fn source_review(State(app): State<App>, Path(id): Path<String>) -> Api {
     let _guard = app.gate.lock().await;
@@ -2091,21 +2166,21 @@ async fn recover_promotions(app: &App) -> Result<()> {
     Ok(())
 }
 async fn workflow_policy_get(State(app): State<App>) -> Api {
-    let overrides = app.store.get("workflow_policy").await?;
-    let policy = workflow::Policy::resolve(overrides.as_ref())?;
+    let policy = current_workflow_policy(&app).await?;
     Ok(Json(json!({"policy":policy,"revision":policy.revision()?})))
 }
 async fn workflow_policy_set(State(app): State<App>, Json(body): Json<Value>) -> Api {
     let _guard = app.gate.lock().await;
     let policy = workflow::Policy::resolve(Some(&body))
         .map_err(|_| bad("Invalid workflow policy, unsupported module, or ceiling exceeded"))?;
-    let value = serde_json::to_value(&policy).map_err(anyhow::Error::from)?;
-    app.store.put("workflow_policy", &value).await?;
+    let mut snapshot = app.runtime.write().await;
+    let mut next = loop_runtime::Config::read(&app.runtime_path)?; next.apply_policy(&policy);
+    next.persist(&app.runtime_path)?;
+    *snapshot = next;
     Ok(Json(json!({"policy":policy,"revision":policy.revision()?})))
 }
 async fn current_workflow_policy(app: &App) -> Result<workflow::Policy> {
-    let overrides = app.store.get("workflow_policy").await?;
-    workflow::Policy::resolve(overrides.as_ref())
+    loop_runtime::Config::read(&app.runtime_path)?.policy()
 }
 
 async fn send(
@@ -2129,9 +2204,16 @@ async fn send(
     if app.store.get(&key("session", &id)).await?.is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
     }
+    let agent_id = session_agent_id(&app, &id).await?;
+    let access=app.store.live_access(app.store.current_user_id(),&agent_id).await
+        .map_err(|_|ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into()))?;
+    if !access.admitted() { return Err(ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into())); }
     let active = app.store.active_runs().await?;
-    if active.len() >= 200 {
+    if active.len() >= app.runtime.read().await.scheduler.max_unresolved_runs {
         return Err(conflict("Run queue is full"));
+    }
+    if active.len() >= access.max_active_runs() as usize {
+        return Err(conflict("Account run limit reached"));
     }
     if active
         .iter()
@@ -2143,11 +2225,10 @@ async fn send(
     if body.get("attachments").is_some_and(|v| v != &json!([])) {
         return Err(bad("Attachments are not supported by this runtime"));
     }
-    let mut input = app.store.context(&id).await?;
-    input.push(json!({"role":"user","content":text}));
+    let input: Vec<Value> = Vec::new();
     let run_id = uuid();
     let message = json!({"role":"user","content":text,"run_id":run_id});
-    let agent_id = session_agent_id(&app, &id).await?;
+    let agent_store=app.store.for_agent(&agent_id).await?;
     let catalog = app.store.model_catalog().await?;
     let plan = if catalog.assignments.contains_key(&agent_id) {
         Some(catalog.resolve(&agent_id).map_err(|_| conflict("Agent model assignment is invalid or unauthorized"))?)
@@ -2157,14 +2238,21 @@ async fn send(
     let selection = match &plan {
         Some(plan) => provider::ProviderSelection { provider: plan.candidates[0].transport.provider_id(),
             model: plan.candidates[0].upstream_model.clone() },
-        None => app.selection().await?,
+        None => {
+            let mut agent_app=app.clone();
+            agent_app.store=agent_store.clone();
+            agent_app.selection().await?
+        },
     };
+    if !access.model_allowed(&selection.model) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"Model unavailable".into()));
+    }
     let credential_ref = plan.as_ref().map(|p| p.candidates[0].credential_ref.as_str()).unwrap_or("provider_tokens");
     if app.store.get(credential_ref).await?.is_none() {
         return Err(conflict("Assigned provider connection is not authorized"));
     }
-    let instructions = assembled_agent_instructions(&app.store, &agent_id).await?;
-    let mut run = json!({"agent_id":agent_id,"selection_plan":plan,"failover_state":model_selection::FailoverState::default(),"instructions":instructions,"provider_selection":selection.value(),"id":run_id,"session_id":id,"status":"queued","phase":"model","input":input,"calls":[],"call_index":0,"loaded_abilities":[],"ability_catalog_version":app.abilities.version(),
+    let instructions = assembled_agent_instructions(&agent_store, &agent_id).await?;
+    let mut run = json!({"agent_id":agent_id,"selection_plan":plan,"failover_state":model_selection::FailoverState::default(),"instructions":instructions,"provider_selection":selection.value(),"id":run_id,"session_id":id,"status":"queued","phase":"model","context_hydration_pending":true,"input":input,"calls":[],"call_index":0,"loaded_abilities":[],"ability_catalog_version":app.abilities.version(),
         "turns":0,"attempt":0,"pending":null,"generation":"","uncertain":false,"error":null,"created_at":now(),"updated_at":now()});
     workflow::record(&mut run, &workflow_policy,
         &workflow::Input::Admission { request_digest:digest(&body) }, workflow::Decision::Pass)?;
@@ -2211,6 +2299,11 @@ async fn events(
         );
     let auth_key = auth_doc["_auth_key"].as_str().unwrap_or("").to_owned();
     let expires = auth_doc["expires"].as_u64().unwrap_or(0);
+    let user_id=auth_doc["_user_id"].as_str().unwrap_or("admin").to_owned();
+    let generation=auth_doc["generation"].clone();
+    let agent_id=session_agent_id(&app,&id).await?;
+    let access_revision=app.store.live_access(&user_id,&agent_id).await
+        .map_err(|_|ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into()))?.revision;
     let stream = futures_util::stream::unfold(
         (
             app,
@@ -2221,14 +2314,28 @@ async fn events(
             auth_key,
             expires,
             0u64,
+            user_id, generation, agent_id, access_revision,
         ),
-        |(app, id, mut cursor, mut queue, start, auth_key, expires, mut checked)| async move {
+        |(app, id, mut cursor, mut queue, start, auth_key, expires, mut checked,
+            user_id, generation, agent_id, access_revision)| async move {
             loop {
                 if now() - start > 3600 || app.stop.is_cancelled() || now() >= expires {
                     return None;
                 }
                 if now() - checked >= 15 {
-                    if !matches!(app.store.get(&auth_key).await, Ok(Some(_))) {
+                    let doc=app.store.get(&auth_key).await.ok().flatten();
+                    let account=app.store.account_by_id(&user_id).await.ok().flatten();
+                    let access=app.store.live_access(&user_id,&agent_id).await.ok();
+                    let valid=doc.as_ref().is_some_and(|doc|doc["generation"]==generation
+                            && doc["expires"].as_u64().unwrap_or(0)>now())
+                        && account.as_ref().is_some_and(|account|
+                            account["generation"]==generation
+                            && account["is_approved"]==true
+                            && access::Principal::from_account(account)
+                                .is_ok_and(|principal|principal.active()))
+                        && access.as_ref().is_some_and(|access|
+                            access.admitted() && access.revision==access_revision);
+                    if !valid {
                         return None;
                     }
                     checked = now();
@@ -2241,7 +2348,8 @@ async fn events(
                         .data(item.to_string());
                     return Some((
                         Ok(event),
-                        (app, id, cursor, queue, start, auth_key, expires, checked),
+                        (app, id, cursor, queue, start, auth_key, expires, checked,
+                            user_id, generation, agent_id, access_revision),
                     ));
                 }
                 queue = match app.store.chat_events(&id, cursor).await {
@@ -2291,17 +2399,19 @@ async fn control(State(app): State<App>, Json(body): Json<Value>) -> Api {
         for token in app.active.lock().await.values() {
             token.cancel();
         }
-        for view in app.store.active_runs().await? {
-            if matches!(status(&view), "queued" | "running") {
-                let mut run = app.run(view["id"].as_str().unwrap()).await?;
-                run["status"] = json!("stopped");
-                run["error"] = json!("Stopped by global shutoff");
-                if run["pending"]["state"] == "executing"
-                    && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
-                {
-                    run["uncertain"] = json!(true);
+        for user_app in user_apps(&app).await? {
+            for view in user_app.store.active_runs().await? {
+                if matches!(status(&view), "queued" | "running") {
+                    let mut run = user_app.run(view["id"].as_str().unwrap()).await?;
+                    run["status"] = json!("stopped");
+                    run["error"] = json!("Stopped by global shutoff");
+                    if run["pending"]["state"] == "executing"
+                        && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+                    {
+                        run["uncertain"] = json!(true);
+                    }
+                    user_app.save_override(&mut run).await?;
                 }
-                app.save(&mut run).await?;
             }
         }
     }
@@ -2438,10 +2548,21 @@ async fn approval(State(app): State<App>, Path(id): Path<String>, Json(body): Js
         return Err(conflict("Approval is no longer pending"));
     }
     let sid = run["session_id"].as_str().unwrap();
+    let agent_id=run["agent_id"].as_str().unwrap_or("shared_default");
+    let access=app.store.live_access(app.store.current_user_id(),agent_id).await
+        .map_err(|_|conflict("Access changed; approval is invalid"))?;
+    let model=run["provider_selection"]["model"].as_str().unwrap_or("");
+    if !access.admitted() || (!model.is_empty() && !access.model_allowed(model)) {
+        run["status"]=json!("stopped");
+        run["pending"]["decision"]=Value::Null;
+        app.save(&mut run).await?;
+        return Err(conflict("Access changed; approval is invalid"));
+    }
     let (policy, mode_revision) = effective_policy(&app, sid).await?;
     let visibility = session_agent_abilities(&app, sid).await?;
     let ability_state = session_ability_state(&app, sid).await?;
     if run["pending"]["policy_version"] != policy["version"]
+        || run["pending"]["access_revision"] != json!(access.revision)
         || run["pending"]["mode_revision"].as_u64().unwrap_or(0) != mode_revision
         || run["pending"]["visibility_revision"].as_u64().unwrap_or(0)
             != visibility["revision"].as_u64().unwrap()
@@ -2489,14 +2610,43 @@ fn append_tool(run: &mut Value, result: &Value) -> Result<()> {
     run["pending"] = Value::Null;
     Ok(())
 }
+fn reconcile_late_tool_result(run: &mut Value, result: Result<Value>) -> Result<bool> {
+    if run["uncertain"] != true { return Ok(false); }
+    let value = match result {
+        Ok(value) if !matches!(value["status"].as_str(),
+            Some("cancelled" | "timeout" | "uncertain")) => value,
+        _ => return Ok(false),
+    };
+    append_tool(run, &value)?;
+    run["uncertain"] = json!(false);
+    if status(run) == "recovery" {
+        run["status"] = json!(if run["error"] == "Cancelled by user" {
+            "cancelled"
+        } else {
+            "stopped"
+        });
+    }
+    Ok(true)
+}
+
+async fn user_apps(app:&App) -> Result<Vec<App>> {
+    let mut views=Vec::new();
+    for user_id in app.store.all_user_ids().await? {
+        let mut view=app.clone();
+        view.store=app.store.for_user(&user_id).await?;
+        views.push(view);
+    }
+    Ok(views)
+}
 async fn recover(app: &App, startup: bool) -> Result<()> {
     let _guard = app.gate.lock().await;
-    for view in app.store.active_runs().await? {
+    for user_app in user_apps(app).await? {
+    for view in user_app.store.active_runs().await? {
         let id = view["id"].as_str().unwrap();
         if status(&view) != "running" || (!startup && app.active.lock().await.contains_key(id)) {
             continue;
         }
-        let mut run = app.run(id).await?;
+        let mut run = user_app.run(id).await?;
         if run["pending"]["state"] == "executing"
             && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
         {
@@ -2504,7 +2654,12 @@ async fn recover(app: &App, startup: bool) -> Result<()> {
             run["uncertain"] = json!(true);
             run["error"] = json!("Tool outcome is uncertain after interruption");
         } else {
-            run["status"] = json!(if app.shutoff().await? {
+            let agent_id=run["agent_id"].as_str().unwrap_or("shared_default");
+            let model=run["provider_selection"]["model"].as_str().unwrap_or("");
+            let allowed=user_app.store.live_access(user_app.store.current_user_id(),agent_id).await
+                .is_ok_and(|access|access.admitted()
+                    && (model.is_empty() || access.model_allowed(model)));
+            run["status"] = json!(if app.shutoff().await? || !allowed {
                 "stopped"
             } else {
                 "queued"
@@ -2514,17 +2669,26 @@ async fn recover(app: &App, startup: bool) -> Result<()> {
             }
             run["error"] = json!("Recovered after interruption");
         }
-        app.save(&mut run).await?;
+        user_app.save_override(&mut run).await?;
+    }
     }
     Ok(())
 }
 async fn scheduler(app: App) {
+    let owner = uuid();
+    let mut last_heartbeat = 0;
     let mut last_recovery = 0;
     loop {
-        if app.stop.is_cancelled() {
+        if app.stop.is_cancelled() || !app.ready.load(Ordering::Acquire) {
             break;
         }
-        if now() - last_recovery >= 10 {
+        if now().saturating_sub(last_heartbeat)>=2 {
+            if let Err(error)=app.store.write_loop_heartbeat(&owner).await {
+                tracing::error!("Loop heartbeat failed: {error}");
+            }
+            last_heartbeat=now();
+        }
+        if now() - last_recovery >= app.runtime.read().await.scheduler.recovery_interval_ms.div_ceil(1000) {
             if recover(&app, false).await.is_err() {
                 tracing::error!("Recovery scan failed");
             }
@@ -2532,13 +2696,22 @@ async fn scheduler(app: App) {
         }
         let _guard = app.gate.lock().await;
         if let Ok(false) = app.shutoff().await {
-            if let Ok(runs) = app.store.active_runs().await {
+            let users=match user_apps(&app).await {
+                Ok(users)=>users,
+                Err(error)=>{tracing::error!("User queue scan failed: {}",error);Vec::new()}
+            };
+            for user_app in users {
+            if let Err(error)=user_app.store.acknowledge_loop_commands().await {
+                tracing::error!("Loop command validation failed: {error}");
+                continue;
+            }
+            if let Ok(runs) = user_app.store.active_runs().await {
                 for view in runs {
                     if status(&view) != "queued" {
                         continue;
                     }
                     let id = view["id"].as_str().unwrap().to_owned();
-                    let mut run = match app.run(&id).await {
+                    let mut run = match user_app.run(&id).await {
                         Ok(r) => r,
                         Err(_) => continue,
                     };
@@ -2553,28 +2726,51 @@ async fn scheduler(app: App) {
                     let cancel = app.stop.child_token();
                     active.insert(id.clone(), cancel.clone());
                     drop(active);
-                    run["status"] = json!("running");
-                    run["generation"] = json!(uuid());
-                    if app.save(&mut run).await.is_err() {
+                    if run["context_hydration_pending"] == true {
+                        match user_app.store.context(run["session_id"].as_str().unwrap()).await {
+                            Ok(input) => {run["input"] = json!(input);run["context_hydration_pending"] = json!(false);},
+                            Err(error) => {tracing::warn!(run_id=%id,"Context hydration failed: {}",error);app.active.lock().await.remove(&id);continue;}
+                        }
+                    }
+                    let generation=uuid();
+                    if !matches!(user_app.store.claim_run(&mut run,&owner,&generation).await,Ok(true)) {
                         app.active.lock().await.remove(&id);
                         continue;
                     }
-                    let cloned = app.clone();
+                    let cloned = user_app.clone();
+                    let lease_owner=owner.clone();
                     tokio::spawn(async move {
-                        let generation = run["generation"].as_str().unwrap().to_owned();
+                        let epoch=run["lease_epoch"].as_i64().unwrap_or(0);
+                        let watcher_store=cloned.store.clone();
+                        let watcher_id=id.clone();
+                        let watcher_generation=generation.clone();
+                        let watcher_cancel=cancel.clone();
+                        let watcher=tokio::spawn(async move {
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                                if watcher_cancel.is_cancelled() {break;}
+                                let renewed=watcher_store.renew_run_lease(
+                                    &watcher_id,&watcher_generation,&lease_owner,epoch).await
+                                    .unwrap_or(false);
+                                if !renewed {watcher_cancel.cancel();break;}
+                            }
+                        });
                         if let Err(error) =
-                            execute_run(cloned.clone(), id.clone(), generation, cancel).await
+                            execute_run(cloned.clone(), id.clone(), generation, cancel.clone()).await
                         {
                             tracing::warn!(run_id=%id,"Run interrupted: {}",error);
                         }
+                        cancel.cancel();
+                        watcher.abort();
                         cloned.active.lock().await.remove(&id);
                         drop(permit);
                     });
                 }
             }
+            }
         }
         drop(_guard);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(app.runtime.read().await.scheduler.poll_interval_ms)).await;
     }
 }
 async fn execute_run(
@@ -2583,12 +2779,34 @@ async fn execute_run(
     generation: String,
     cancel: CancellationToken,
 ) -> Result<()> {
+    let mut context_state = context_state::ContextState::default();
     loop {
         let _guard = app.gate.lock().await;
         let mut run = app.run(&id).await?;
         if run["generation"] != generation || status(&run) != "running" || cancel.is_cancelled() {
             return Ok(());
         }
+        let agent_id=run["agent_id"].as_str().unwrap_or("shared_default").to_owned();
+        let access=app.store.live_access(app.store.current_user_id(),&agent_id).await;
+        let model=run["provider_selection"]["model"].as_str().unwrap_or("");
+        if access.as_ref().map_or(true, |access| !access.admitted()
+            || (!model.is_empty() && !access.model_allowed(model))) {
+            run["status"]=json!("stopped");
+            run["error"]=json!("Access changed; run stopped");
+            app.save(&mut run).await?;
+            return Ok(());
+        }
+        let access=access.unwrap();
+        let mut app=app.clone();
+        app.store=match app.store.for_agent(&agent_id).await {
+            Ok(store)=>store,
+            Err(_)=>{
+                run["status"]=json!("paused");
+                run["error"]=json!("Agent storage unavailable; review required");
+                app.save(&mut run).await?;
+                return Ok(());
+            }
+        };
         if app.shutoff().await? {
             run["status"] = json!("stopped");
             app.save(&mut run).await?;
@@ -2645,31 +2863,57 @@ async fn execute_run(
                 return Ok(());
             }
             let (policy, _, visibility, ability_state) = ability_controls(&app, &sid).await?;
-            let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state);
-            let guidance = app.abilities.visible_guidance(&policy, &visibility, &ability_state);
-            let history_budget = match context_projection::history_budget(
-                &instructions, &guidance, &schemas, workflow_policy.max_context_bytes) {
-                Ok(bytes) if bytes > workflow_policy.summary_reserve_bytes => bytes,
-                _ => {
-                    run["status"] = json!("paused");
-                    run["error"] = json!("Instructions and tool schemas exceed context budget; review required");
-                    app.save(&mut run).await?;
-                    return Ok(());
-                }
+            let mode = session_mode(&app, &sid).await?;
+            let read_only=mode["mode"]=="read_only";
+            let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state)
+                .into_iter().filter(|schema| {
+                    let name=schema["name"].as_str().unwrap_or("");
+                    if abilities::is_discovery(name) {
+                        let installation=access::Permission::from_policy(policy_decision(&policy,name))
+                            .unwrap_or(access::Permission::Deny);
+                        access.tool_decision(name,installation,true,true,read_only,true)
+                            .permission!=access::Permission::Deny
+                    } else {
+                        live_tool_decision(&app,&access,name,&policy,&visibility,
+                            &ability_state,&run["loaded_abilities"],read_only)
+                            .permission!=access::Permission::Deny
+                    }
+                }).collect::<Vec<_>>();
+            let guidance = app.abilities.visible_guidance_filtered(&policy,&visibility,
+                &ability_state,
+                |id|access.ability_permission(id)!=access::Permission::Deny,
+                |name|live_tool_decision(&app,&access,name,&policy,&visibility,
+                    &ability_state,&run["loaded_abilities"],read_only)
+                    .permission!=access::Permission::Deny);
+            let mode_content = format!("Current session capability mode: {} (revision {}). Recheck authorization before every tool call.",
+                mode["mode"].as_str().unwrap(), mode["revision"].as_u64().unwrap());
+            let mode_contribution = context_projection::Contribution {
+                id: "session_mode".into(), source: "native_session_mode".into(),
+                lifetime: context_projection::Lifetime::Call, content: mode_content.clone(),
+                turn: run["turns"].as_u64().unwrap_or(0),
+                call: run["attempt"].as_u64().unwrap_or(0) + 1,
             };
-            // Summarize complete older turns before the normal model request.
-            // The original messages and events stay in durable storage.
-            let plan = match context::plan(run["input"].as_array().unwrap(), history_budget, workflow_policy.summary_reserve_bytes)
-            {
-                Ok(plan) => plan,
+            let contributions = [mode_contribution];
+            let assembled = match context_assembly::prepare_incremental(context_assembly::Request {
+                history: run["input"].as_array().unwrap(), base: &instructions,
+                guidance: &guidance, schemas: &schemas, contributions: &contributions,
+                identity: context_assembly::CallIdentity {
+                    turn: run["turns"].as_u64().unwrap_or(0),
+                    call: run["attempt"].as_u64().unwrap_or(0) + 1,
+                },
+                selection: &selection, max_bytes: workflow_policy.max_context_bytes,
+                summary_reserve_bytes: workflow_policy.summary_reserve_bytes,
+            }, &mut context_state) {
+                Ok(prepared) => prepared,
                 Err(_) => {
                     run["status"] = json!("paused");
-                    run["error"] = json!("Context cannot be compacted safely; review this run");
+                    run["error"] = json!("Context assembly failed budget or safe compaction validation; review this run");
                     app.save(&mut run).await?;
                     return Ok(());
                 }
             };
-            if let Some(plan) = plan {
+            // The assembler only plans; the loop owns summarization and persistence.
+            if let context_assembly::Prepared::Compact(plan) = assembled {
                 let source = plan
                     .source
                     .iter()
@@ -2702,7 +2946,17 @@ async fn execute_run(
                 let drain = tokio::spawn(async move { while receiver.recv().await.is_some() {} });
                 // Preserve the same shutoff/dispatch ordering as normal model calls.
                 let dispatch_guard = app.gate.lock().await;
-                let current = app.run(&id).await?;
+                let mut current = app.run(&id).await?;
+                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                    current["status"]=json!("stopped");
+                    current["error"]=json!("Access changed before model dispatch");
+                    app.save(&mut current).await?;
+                    drop(sender);
+                    drop(dispatch_guard);
+                    let _=drain.await;
+                    return Ok(());
+                }
                 app.run_candidate(&current).await?;
                 if current["generation"] != generation
                     || status(&current) != "running"
@@ -2749,6 +3003,13 @@ async fn execute_run(
                 if run["generation"] != generation || status(&run) != "running" {
                     return Ok(());
                 }
+                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                    run["status"]=json!("stopped");
+                    run["error"]=json!("Access changed during context summary");
+                    app.save(&mut run).await?;
+                    return Ok(());
+                }
                 if app.shutoff().await? || cancel.is_cancelled() {
                     run["status"] = json!("stopped");
                     run["error"] = json!("Context summary interrupted");
@@ -2781,12 +3042,13 @@ async fn execute_run(
                     return Ok(());
                 };
                 run["input"] = json!(compacted);
+                context_state.reset();
                 run["compactions"] = json!(run["compactions"].as_u64().unwrap_or(0) + 1);
                 run["updated_at"] = json!(now());
                 run["error"] = Value::Null;
                 app.store
                     .save_run(
-                        &run,
+                        &mut run,
                         "context_compacted",
                         &json!({"run_id":id,"source_digest":plan.source_digest,
                             "dropped_items":plan.drop_until,"summary_bytes":summary.unwrap().len()}),
@@ -2794,16 +3056,17 @@ async fn execute_run(
                     .await?;
                 continue;
             }
+            let context_assembly::Prepared::Ready(envelope) = assembled else {
+                unreachable!("compaction path continues before model dispatch")
+            };
+            let report = serde_json::to_value(&envelope.report)?;
+            let instructions = envelope.instructions;
+            // Existing provider API owns the dispatch snapshot; assembly itself borrows.
+            let input = envelope.input.to_vec();
+            let schemas = envelope.schemas.to_vec();
             run["attempt"] = json!(run["attempt"].as_u64().unwrap() + 1);
+            run["context_assembly_report"] = report;
             app.save(&mut run).await?;
-
-            // Context producers own contributions. Nothing from client/model output
-            // is implicitly promoted to a trusted instruction here.
-            let projection = context_projection::assemble(
-                run["input"].as_array().unwrap(), &instructions, &guidance, &[],
-                run["turns"].as_u64().unwrap_or(0), run["attempt"].as_u64().unwrap_or(0))?;
-            let instructions = projection.instructions;
-            let input = projection.input;
             let snapshot = workflow::ModelSnapshot {
                 input_digest:digest(&json!(&input)),
                 instructions_digest:digest(&json!(&instructions)),
@@ -2834,6 +3097,16 @@ async fn execute_run(
             // First poll initiates local dispatch while holding the same gate as shutoff.
             let dispatch_guard = app.gate.lock().await;
             let mut current = app.run(&id).await?;
+            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                current["status"]=json!("stopped");
+                current["error"]=json!("Access changed before model dispatch");
+                app.save(&mut current).await?;
+                drop(sender);
+                drop(dispatch_guard);
+                let _=collector.await;
+                return Ok(());
+            }
             app.run_candidate(&current).await?;
             if current["generation"] != generation
                 || status(&current) != "running"
@@ -2890,6 +3163,13 @@ async fn execute_run(
             if run["generation"] != generation || status(&run) != "running" {
                 return Ok(());
             }
+            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                run["status"]=json!("stopped");
+                run["error"]=json!("Access changed during model call");
+                app.save(&mut run).await?;
+                return Ok(());
+            }
             if cancel.is_cancelled() || app.shutoff().await? {
                 run["status"] = json!("stopped");
                 run["error"] = json!("Provider response discarded after cancellation or shutoff");
@@ -2904,8 +3184,9 @@ async fn execute_run(
                     } else {
                         model_failure(&mut run, &error)?;
                     }
-                    app.store.save_run(&run, "model_selection_failure", &json!({
-                        "run_id":id,"failover_state":run["failover_state"],"error":run["error"]})).await?;
+                    let payload=json!({"run_id":id,
+                        "failover_state":run["failover_state"],"error":run["error"]});
+                    app.store.save_run(&mut run, "model_selection_failure", &payload).await?;
                     drop(_guard);
                     if !cancel.is_cancelled() {
                         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -2951,7 +3232,7 @@ async fn execute_run(
                             if reasoning_only && continuations < 2 {
                                 run["reasoning_only_completions"] = json!(continuations + 1);
                                 run["phase"] = json!("model");
-                                app.store.save_run(&run, "model_output", &json!({"output":output})).await?;
+                                app.store.save_run(&mut run, "model_output", &json!({"output":output})).await?;
                                 continue;
                             }
                             let kinds = output.iter().map(|item| item["type"].as_str().unwrap_or("unknown"))
@@ -2961,7 +3242,7 @@ async fn execute_run(
                             run["status"] = json!("failed");
                             run["error"] = json!("Provider completed without a final reply; verify the selected model");
                             app.store
-                                .save_run(&run, "model_output", &json!({"output":output}))
+                                .save_run(&mut run, "model_output", &json!({"output":output}))
                                 .await?;
                             return Ok(());
                         }
@@ -2971,14 +3252,45 @@ async fn execute_run(
                                 workflow::Decision::Reject { reason: "Publication exceeds configured limit".into() })?;
                             run["status"] = json!("paused");
                             run["error"] = json!("Publication exceeds configured limit; review required");
-                            app.store.save_run(&run, "model_output", &json!({"output":output})).await?;
+                            app.store.save_run(&mut run, "model_output", &json!({"output":output})).await?;
                             return Ok(());
+                        }
+                        let gate_input=gate_protocol::PublicationGateInput {
+                            run_id:id.clone(),
+                            generation:generation.clone(),
+                            policy_revision:publication_policy.revision()?,
+                            input_digest:workflow::digest_input(&workflow::Input::Publication {
+                                text_digest:digest(&json!(text)) })?,
+                            turn:run["turns"].as_u64().unwrap_or(0),
+                            call_index:run["call_index"].as_u64().unwrap_or(0),
+                            text_bytes:text.len(),
+                        };
+                        let gate_socket=PathBuf::from(std::env::var("V3_GATE_SOCKET")
+                            .unwrap_or_else(|_|gate_protocol::SOCKET_PATH.into()));
+                        match gate_protocol::evaluate_publication(
+                            &gate_socket,&publication_policy,&gate_input).await? {
+                            gate_protocol::GateOutcome::Pass=>{},
+                            gate_protocol::GateOutcome::Reject{reason_code}=>{
+                                workflow::record(&mut run,&publication_policy,
+                                    &workflow::Input::Publication {
+                                        text_digest:digest(&json!(text)) },
+                                    workflow::Decision::Reject {
+                                        reason:format!("Publication module rejected: {reason_code}") })?;
+                                run["status"]=json!("paused");
+                                run["error"]=json!("Publication rejected by configured gate");
+                                app.store.save_run(&mut run,"model_output",&json!({"output":output})).await?;
+                                return Ok(());
+                            },
+                            gate_protocol::GateOutcome::Skipped{reason_code}=>{
+                                run["workflow"]["module_skips"]["publication"]=
+                                    json!({"module_id":gate_protocol::MODULE_ID,"reason_code":reason_code});
+                            },
                         }
                         publication::terminal(&app.store, &mut run, output, &text, &publication_policy).await?;
                         return Ok(());
                     }
                     app.store
-                        .save_run(&run, "model_output", &json!({"output":output}))
+                        .save_run(&mut run, "model_output", &json!({"output":output}))
                         .await?;
                 }
             }
@@ -3001,7 +3313,15 @@ async fn execute_run(
             };
             let (policy, mode_revision, visibility, mut ability_state) =
                 ability_controls(&app, &sid).await?;
-            let decision = policy_decision(&policy, &name).to_owned();
+            let read_only=session_mode(&app,&sid).await?["mode"]=="read_only";
+            let effective=if abilities::is_discovery(&name) {
+                let installation=access::Permission::from_policy(policy_decision(&policy,&name))
+                    .unwrap_or(access::Permission::Deny);
+                access.tool_decision(&name,installation,true,true,read_only,true)
+            } else {
+                live_tool_decision(&app,&access,&name,&policy,&visibility,
+                    &ability_state,&run["loaded_abilities"],read_only)
+            };
             workflow::record(&mut run, &workflow_policy,
                 &workflow::Input::PreTool(workflow::PreToolInput {
                     name:name.clone(), arguments_digest:digest(&args),
@@ -3014,9 +3334,11 @@ async fn execute_run(
                     "policy_version":policy["version"],"mode_revision":mode_revision,
                     "visibility_revision":visibility["revision"],
                     "ability_state_revision":ability_state["revision"],
+                    "access_revision":access.revision.clone(),
                     "state":"requested","decision":null});
             }
             if run["pending"]["policy_version"] != policy["version"]
+                || run["pending"]["access_revision"] != json!(access.revision)
                 || run["pending"]["mode_revision"].as_u64().unwrap_or(0) != mode_revision
                 || run["pending"]["visibility_revision"].as_u64().unwrap_or(0)
                     != visibility["revision"].as_u64().unwrap()
@@ -3027,13 +3349,30 @@ async fn execute_run(
             {
                 run["pending"]["id"] = json!(uuid());
                 run["pending"]["decision"] = Value::Null;
+                run["pending"]["access_revision"] = json!(access.revision.clone());
                 run["pending"]["policy_version"] = policy["version"].clone();
                 run["pending"]["mode_revision"] = json!(mode_revision);
                 run["pending"]["visibility_revision"] = visibility["revision"].clone();
                 run["pending"]["ability_state_revision"] = ability_state["revision"].clone();
             }
             if abilities::is_discovery(&name) {
-                let result = app.abilities.discover_with(
+                if effective.permission == access::Permission::Deny {
+                    let result=json!({"status":"denied","output":"Ability discovery unavailable"});
+                    append_tool(&mut run,&result)?;
+                    app.store.save_run(&mut run,"tool_result",
+                        &json!({"run_id":id,"name":name,"result":result})).await?;
+                    continue;
+                }
+                if effective.permission == access::Permission::Ask
+                    && run["pending"]["decision"] != "approve" {
+                    run["status"]=json!("waiting_approval");
+                    run["pending"]["state"]=json!("waiting");
+                    let mut payload=run["pending"].clone();
+                    payload["run_id"]=json!(id);
+                    app.store.save_run(&mut run,"approval_required",&payload).await?;
+                    return Ok(());
+                }
+                let mut result = app.abilities.discover_with(
                     &name,
                     &args,
                     &mut run,
@@ -3041,6 +3380,30 @@ async fn execute_run(
                     &visibility,
                     &ability_state,
                 );
+                if name=="list_abilities" {
+                    if let Some(entries)=result["abilities"].as_array_mut() {
+                        entries.retain_mut(|entry|filter_ability_entry(&app,&access,entry,
+                            &policy,&visibility,&ability_state,&run["loaded_abilities"],read_only));
+                    }
+                } else if result["status"]=="ok" {
+                    let allowed=filter_ability_entry(&app,&access,&mut result["ability"],
+                        &policy,&visibility,&ability_state,&run["loaded_abilities"],read_only);
+                    if !allowed {
+                        if let Some(loaded)=run["loaded_abilities"].as_array_mut() {
+                            loaded.retain(|item|item!=&args["ability_id"]);
+                        }
+                        result=json!({"status":"denied","output":"Ability unavailable under current access"});
+                    } else {
+                        let names=result["ability"]["tools"].as_array().unwrap().iter()
+                            .filter_map(|tool|tool["name"].as_str().map(str::to_owned))
+                            .collect::<std::collections::BTreeSet<_>>();
+                        let skills=result["tool_skills"].as_object().map(|map|map.iter()
+                            .filter(|(name,_)|names.contains(*name))
+                            .map(|(name,value)|(name.clone(),value.clone()))
+                            .collect::<serde_json::Map<String,Value>>());
+                        if let Some(skills)=skills {result["tool_skills"]=Value::Object(skills);}
+                    }
+                }
                 if name == "load_ability" && result["status"] == "ok" {
                     let ability_id = args["ability_id"].as_str().unwrap();
                     if !ability_state["active"]
@@ -3063,20 +3426,14 @@ async fn execute_run(
                 append_tool(&mut run, &result)?;
                 app.store
                     .save_run(
-                        &run,
+                        &mut run,
                         "tool_result",
                         &json!({"run_id":id,"name":name,"result":result}),
                     )
                     .await?;
                 continue;
             }
-            if decision == "deny"
-                || !app.abilities.tool_available(
-                    &name,
-                    &visibility,
-                    &ability_state,
-                    &run["loaded_abilities"],
-                )
+            if effective.permission == access::Permission::Deny
                 || run["pending"]["decision"] == "deny"
                 || args.get("invalid_arguments").is_some()
             {
@@ -3088,20 +3445,20 @@ async fn execute_run(
                 append_tool(&mut run, &result)?;
                 app.store
                     .save_run(
-                        &run,
+                        &mut run,
                         "tool_result",
                         &json!({"run_id":id,"name":name,"result":result}),
                     )
                     .await?;
                 continue;
             }
-            if decision == "require_approval" && run["pending"]["decision"] != "approve" {
+            if effective.permission == access::Permission::Ask && run["pending"]["decision"] != "approve" {
                 run["status"] = json!("waiting_approval");
                 run["pending"]["state"] = json!("waiting");
                 let mut payload = run["pending"].clone();
                 payload["run_id"] = json!(id);
                 app.store
-                    .save_run(&run, "approval_required", &payload)
+                    .save_run(&mut run, "approval_required", &payload)
                     .await?;
                 return Ok(());
             }
@@ -3110,6 +3467,19 @@ async fn execute_run(
             }
             run["pending"]["state"] = json!("executing");
             run["pending"]["decision"] = json!("consumed");
+            let model=run["provider_selection"]["model"].as_str().unwrap_or("");
+            let valid=app.store.live_access(app.store.current_user_id(),&agent_id).await
+                .is_ok_and(|current|current.admitted()
+                    && (model.is_empty() || current.model_allowed(model))
+                    && json!(current.revision)==run["pending"]["access_revision"]);
+            if !valid {
+                run["pending"]["state"]=json!("requested");
+                run["pending"]["decision"]=Value::Null;
+                run["status"]=json!("stopped");
+                run["error"]=json!("Access changed before tool dispatch");
+                app.save(&mut run).await?;
+                return Ok(());
+            }
             app.save(&mut run).await?;
             drop(_guard);
             let result = if name == "promotion_propose" {
@@ -3149,17 +3519,8 @@ async fn execute_run(
             }
             if status(&run) != "running" {
                 // An already committed result can resolve uncertainty without restarting the run.
-                if run["uncertain"] == true {
-                    if let Ok(value) = result {
-                        if !matches!(
-                            value["status"].as_str(),
-                            Some("cancelled" | "timeout" | "uncertain")
-                        ) {
-                            append_tool(&mut run, &value)?;
-                            run["uncertain"] = json!(false);
-                            app.save(&mut run).await?;
-                        }
-                    }
+                if reconcile_late_tool_result(&mut run, result)? {
+                    app.save(&mut run).await?;
                 }
                 return Ok(());
             }
@@ -3179,7 +3540,7 @@ async fn execute_run(
                     append_tool(&mut run, &value)?;
                     app.store
                         .save_run(
-                            &run,
+                            &mut run,
                             "tool_result",
                             &json!({"run_id":id,"name":name,"result":value}),
                         )
@@ -3203,85 +3564,42 @@ async fn execute_run(
     }
 }
 fn router(app: App) -> Router {
-    let messaging = Router::new()
-        .route("/sessions", post(create_session))
-        .route("/sessions/{id}", get(snapshot))
-        .route("/sessions/{id}/messages", post(send))
+    let messaging = user_api::messaging_router()
         .route_layer(middleware::from_fn_with_state(app.clone(), message_api_auth));
-    let api = Router::new()
-        .route("/auth/me", get(me))
-        .route("/auth/ui-config", get(chat_ui_config))
-        .route("/auth/profile", put(update_profile))
-        .route(
-            "/auth/session-policy",
-            get(session_policy).put(update_session_policy),
-        )
-        .route("/auth/sessions", get(list_auth_sessions))
-        .route(
-            "/auth/sessions/{id}",
-            axum::routing::delete(revoke_auth_session),
-        )
-        .route("/auth/change-password", post(change_password))
-        .route("/auth/logout", post(logout))
+    let admin_api = Router::new()
         .route("/status", get(overview))
         .route("/settings", put(settings))
         .nest("/models", model_selection_api::router())
+        .nest("/admin/access", phase3_api::router())
         .route("/workflow/policy", get(workflow_policy_get).put(workflow_policy_set))
         .route("/agents/{id}/model", get(agent_model).put(agent_model_set))
         .route("/agents/{id}/abilities", get(agent_ability_catalog))
         .route("/agents/{id}/context-composition", get(agent_context_composition))
-        .route(
-            "/agents/{id}/abilities/{ability_id}/visibility",
-            put(agent_ability_visibility_set),
-        )
-        .route(
-            "/agents/{id}/abilities/{ability_id}/skill-visibility",
-            put(agent_ability_skill_visibility_set),
-        )
+        .route("/agents/{id}/abilities/{ability_id}/visibility", put(agent_ability_visibility_set))
+        .route("/agents/{id}/abilities/{ability_id}/skill-visibility",
+            put(agent_ability_skill_visibility_set))
         .route("/agents/{id}/abilities/{ability_id}/tools/{tool_name}/mode",
             put(agent_tool_mode_set))
         .route("/agents/{id}/slots", get(prompt_slots_api))
-        .route(
-            "/agents/{id}/slots/{name}",
-            get(prompt_slot_api)
-                .put(prompt_slot_put_api)
-                .delete(prompt_slot_delete_api),
-        )
+        .route("/agents/{id}/slots/{name}",
+            get(prompt_slot_api).put(prompt_slot_put_api).delete(prompt_slot_delete_api))
         .route("/policy", put(policy_set))
         .route("/abilities", get(ability_catalog))
         .route("/provider/login", post(provider_start))
         .route("/provider/logout", post(provider_logout))
-        .route("/sessions", get(sessions).post(create_session))
-        .route("/sessions/{id}", get(snapshot))
-        .route(
-            "/sessions/{id}/mode",
-            get(session_mode_get).put(session_mode_set),
-        )
-        .route("/sessions/{id}/abilities", get(session_abilities))
-        .route(
-            "/sessions/{id}/abilities/{ability_id}",
-            put(session_ability_set),
-        )
-        .route("/sessions/{id}/state-inspect", get(state_inspect_api))
-        .route("/sessions/{id}/source-review", get(source_review))
-        .route("/sessions/{id}/promotions", get(promotions).post(promote))
-        .route(
-            "/sessions/{id}/promotions/{request_id}/review",
-            get(promotion_review),
-        )
-        .route(
-            "/sessions/{id}/promotions/{request_id}",
-            get(promotion_receipt),
-        )
-        .route(
-            "/sessions/{id}/promotions/{request_id}/reject",
-            post(promotion_reject),
-        )
-        .route("/sessions/{id}/messages", post(send))
-        .route("/sessions/{id}/events", get(events))
-        .route("/runs/{id}/{action}", post(command))
-        .route("/approvals/{id}/decision", post(approval))
         .route("/control", put(control))
+        .route_layer(middleware::from_fn_with_state(app.clone(), admin_auth));
+    let api = Router::new()
+        .route("/auth/me", get(me))
+        .route("/auth/ui-config", get(chat_ui_config))
+        .route("/auth/profile", put(update_profile))
+        .route("/auth/session-policy", get(session_policy).put(update_session_policy))
+        .route("/auth/sessions", get(list_auth_sessions))
+        .route("/auth/sessions/{id}", axum::routing::delete(revoke_auth_session))
+        .route("/auth/change-password", post(change_password))
+        .route("/auth/logout", post(logout))
+        .merge(user_api::router())
+        .merge(admin_api)
         .route_layer(middleware::from_fn_with_state(app.clone(), auth));
     let ui = std::env::var("V3_UI_ROOT").unwrap_or_else(|_| "/opt/v3/ui".into());
     let shared = std::env::var("V3_SHARED_UI_ROOT").unwrap_or_else(|_| "/opt/v3/shared-ui".into());
@@ -3297,7 +3615,8 @@ fn router(app: App) -> Router {
             let healthy=app.ready.load(Ordering::Acquire)
                 && sqlx::query("SELECT 1").execute(&app.store.app_pool).await.is_ok()
                 && sqlx::query("SELECT 1").execute(&app.store.pool).await.is_ok()
-                && sqlx::query("SELECT 1").execute(&app.store.agent_pool).await.is_ok();
+                && sqlx::query("SELECT 1").execute(&app.store.agent_pool).await.is_ok()
+                && app.store.loop_fresh(10).await.unwrap_or(false);
             (if healthy{StatusCode::OK}else{StatusCode::SERVICE_UNAVAILABLE},Json(json!({"ready":healthy})))
         }))
         .route_service("/setup.html",ServeFile::new(format!("{ui}/setup.html")))
@@ -3323,15 +3642,32 @@ async fn main() -> Result<()> {
         )
         .init();
     let root = PathBuf::from(std::env::var("V3_STATE_ROOT").unwrap_or_else(|_| "/state".into()));
+    let role=std::env::var("V3_PROCESS_ROLE").unwrap_or_else(|_|"api".into());
+    if role=="health" {
+        let url=format!("sqlite://{}?mode=ro",root.join("db/app.db").display());
+        let pool=sqlx::SqlitePool::connect(&url).await?;
+        let age:Option<i64>=sqlx::query_scalar(
+            "SELECT CAST(strftime('%s','now') AS INTEGER)-updated_at FROM loop_heartbeat WHERE singleton=1 AND protocol_version=1")
+            .fetch_optional(&pool).await?;
+        pool.close().await;
+        return if age.is_some_and(|age|age>=0 && age<=10) {Ok(())}
+            else {Err(anyhow!("V3 loop heartbeat is stale"))};
+    }
+    if !matches!(role.as_str(),"api"|"loop") {
+        return Err(anyhow!("Invalid v3 process role"));
+    }
     std::fs::create_dir_all(&root)?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(root.join("runtime.lock"))?;
-    lock.try_lock_exclusive()
-        .map_err(|_| anyhow!("Another v3 application owns this state"))?;
+    let lock=if role=="loop" {
+        let lock=OpenOptions::new().create(true).truncate(false).write(true)
+            .open(root.join("runtime.lock"))?;
+        lock.try_lock_exclusive()
+            .map_err(|_|anyhow!("Another v3 loop owns this state"))?;
+        Some(lock)
+    } else {None};
     let store = Store::open(&root).await?;
+    store.migrate_agent_storage(&root).await?;
+    let (runtime, runtime_path) = loop_runtime::Config::initialize(&root, &store).await?;
+    store.configure_cache(runtime.cache.document_budget_bytes, runtime.cache.context_budget_bytes);
     // The temporary development bootstrap credential had no generation. Retire it
     // once so this installation follows the same first-run setup flow as v2.
     if store
@@ -3357,7 +3693,9 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "/opt/v3/plugins/abilities".to_owned());
     let catalog = abilities::Catalog::load(&PathBuf::from(abilities_root))?;
     store.ensure_agent_connections(&catalog.ids()).await?;
+    let max_active_runs = runtime.scheduler.max_active_runs;
     let app = App {
+        runtime: Arc::new(RwLock::new(runtime)), runtime_path,
         browser_login_bridge: browser_login::Bridge::configure(
             &std::env::var("V3_BROWSER_LOGIN_TOKEN").unwrap_or_default(),
             &std::env::var("V3_BROWSER_LOGIN_CALLER_ID").unwrap_or_default(),
@@ -3370,7 +3708,7 @@ async fn main() -> Result<()> {
         refresh: Arc::new(Mutex::new(())),
         login: Arc::new(RwLock::new(None)),
         active: Arc::new(Mutex::new(HashMap::new())),
-        slots: Arc::new(Semaphore::new(2)),
+        slots: Arc::new(Semaphore::new(max_active_runs)),
         ready: Arc::new(AtomicBool::new(false)),
         stop: CancellationToken::new(),
         login_attempts: Arc::new(Mutex::new(Vec::new())),
@@ -3390,16 +3728,37 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "/opt/v3/chat_ui.json".into()),
         ),
     };
-    marker(&app, app.shutoff().await?)?;
-    recover(&app, true).await?;
+    if role=="loop" {
+        marker(&app, app.shutoff().await?)?;
+        recover(&app, true).await?;
+        app.ready.store(true, Ordering::Release);
+        let scheduler=tokio::spawn(scheduler(app.clone()));
+        let mut signal=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {_=signal.recv()=>{},_=tokio::signal::ctrl_c()=>{}}
+        app.ready.store(false, Ordering::Release);
+        let _=scheduler.await;
+        let deadline=tokio::time::Instant::now()+Duration::from_secs(12);
+        while !app.active.lock().await.is_empty() && tokio::time::Instant::now()<deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let _=marker(&app,true);
+        app.stop.cancel();
+        for token in app.active.lock().await.values() {token.cancel();}
+        let _=app.store.clear_loop_heartbeat().await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        app.store.pool.close().await;
+        app.store.agent_pool.close().await;
+        app.store.app_pool.close().await;
+        drop(lock);
+        return Ok(());
+    }
     recover_promotions(&app).await?;
     app.ready.store(true, Ordering::Release);
-    let scheduler = tokio::spawn(scheduler(app.clone()));
     let listener = tokio::net::TcpListener::bind(
         std::env::var("V3_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".into()),
     )
     .await?;
-    tracing::info!("WebAgent v3 ready");
+    tracing::info!("WebAgent v3 API ready");
     let shutdown = app.clone();
     axum::serve(listener, router(app.clone()))
         .with_graceful_shutdown(async move {
@@ -3408,22 +3767,11 @@ async fn main() -> Result<()> {
                     .expect("signal handler");
             tokio::select! {_=signal.recv()=>{},_=tokio::signal::ctrl_c()=>{}}
             shutdown.ready.store(false, Ordering::Release);
-            {
-                let _guard = shutdown.gate.lock().await;
-                let _ = marker(&shutdown, true);
-                shutdown.stop.cancel();
-                for c in shutdown.active.lock().await.values() {
-                    c.cancel();
-                }
-            }
         })
         .await?;
-    let _ = scheduler.await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
     app.store.pool.close().await;
     app.store.agent_pool.close().await;
     app.store.app_pool.close().await;
-    drop(lock);
     Ok(())
 }
 #[cfg(test)]

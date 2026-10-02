@@ -1,3 +1,4 @@
+use crate::access;
 use crate::cache::{Cache, ContextCache};
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -10,7 +11,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous},
     Row, SqlitePool,
 };
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 use std::{
     fs::{File, OpenOptions},
     io::Write,
@@ -30,10 +31,31 @@ pub struct Store {
     pub app_pool: SqlitePool,
     pub pool: SqlitePool,
     pub agent_pool: SqlitePool,
+    pub(crate) root: PathBuf,
+    user_id: String,
+    agent_id: String,
+    user_states: Arc<RwLock<HashMap<String, UserState>>>,
+    agent_states: Arc<RwLock<HashMap<String, SqlitePool>>>,
+    cache_budgets: Arc<Mutex<(usize,usize)>>,
     cipher: Aes256Gcm,
     cache: Arc<Mutex<Cache>>,
     context_cache: Arc<Mutex<ContextCache>>,
     context_gate: Arc<RwLock<()>>,
+}
+
+#[derive(Clone)]
+struct UserState {
+    pool: SqlitePool,
+    cache: Arc<Mutex<Cache>>,
+    context_cache: Arc<Mutex<ContextCache>>,
+    context_gate: Arc<RwLock<()>>,
+}
+impl UserState {
+    fn new(pool: SqlitePool) -> Self {
+        Self {pool, cache:Arc::new(Mutex::new(Cache::new(64*1024*1024))),
+            context_cache:Arc::new(Mutex::new(ContextCache::new(16*1024*1024))),
+            context_gate:Arc::new(RwLock::new(()))}
+    }
 }
 
 fn load_or_create_key(root: &Path) -> Result<Vec<u8>> {
@@ -92,7 +114,7 @@ fn load_or_create_key(root: &Path) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<SqlitePool> {
+pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<SqlitePool> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("Database path has no parent"))?;
@@ -118,6 +140,12 @@ async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<SqlitePool> 
             CREATE TABLE IF NOT EXISTS legacy_event_map(legacy_seq INTEGER PRIMARY KEY,new_seq INTEGER NOT NULL UNIQUE);")
             .execute(&pool).await?;
     }
+    if events && !runs {
+        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS loop_heartbeat(
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),owner TEXT NOT NULL,
+            protocol_version INTEGER NOT NULL CHECK(protocol_version=1),updated_at INTEGER NOT NULL)")
+            .execute(&pool).await?;
+    }
     if runs {
         sqlx::raw_sql("CREATE TABLE IF NOT EXISTS run_index(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS runs_status ON run_index(status,updated_at);
@@ -125,8 +153,27 @@ async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<SqlitePool> 
             CREATE TABLE IF NOT EXISTS interactions(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,run_id TEXT NOT NULL,step TEXT NOT NULL,item BLOB NOT NULL,created_at INTEGER NOT NULL,UNIQUE(run_id,step));
             CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,seq);
             CREATE TABLE IF NOT EXISTS chat(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,session_id TEXT NOT NULL,run_id TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN (\'user\',\'assistant\')),content BLOB NOT NULL,created_at INTEGER NOT NULL,terminal_run_id TEXT UNIQUE);
-            CREATE INDEX IF NOT EXISTS chat_session ON chat(session_id,seq);")
+            CREATE INDEX IF NOT EXISTS chat_session ON chat(session_id,seq);
+            CREATE TABLE IF NOT EXISTS loop_commands(seq INTEGER PRIMARY KEY AUTOINCREMENT,command_id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL,schema_version INTEGER NOT NULL CHECK(schema_version=1),kind TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL,acknowledged_at INTEGER);
+            CREATE INDEX IF NOT EXISTS loop_commands_run ON loop_commands(run_id,seq);
+            CREATE TABLE IF NOT EXISTS loop_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,schema_version INTEGER NOT NULL CHECK(schema_version=1),kind TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS loop_events_run ON loop_events(run_id,seq);
+            CREATE TABLE IF NOT EXISTS publication_outbox(run_id TEXT PRIMARY KEY,schema_version INTEGER NOT NULL CHECK(schema_version=1),payload BLOB NOT NULL,created_at INTEGER NOT NULL);")
             .execute(&pool).await?;
+        let columns = sqlx::query("PRAGMA table_info(run_index)").fetch_all(&pool).await?;
+        if !columns.iter().any(|r| r.get::<String,_>("name") == "enqueue_seq") {
+            sqlx::query("ALTER TABLE run_index ADD COLUMN enqueue_seq INTEGER").execute(&pool).await?;
+        }
+        sqlx::query("UPDATE run_index SET enqueue_seq=rowid WHERE enqueue_seq IS NULL").execute(&pool).await?;
+        for (name, declaration) in [
+            ("lease_epoch", "INTEGER NOT NULL DEFAULT 0"),
+            ("lease_owner", "TEXT"),
+            ("lease_expires_at", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !columns.iter().any(|r| r.get::<String,_>("name") == name) {
+                sqlx::query(&format!("ALTER TABLE run_index ADD COLUMN {name} {declaration}")).execute(&pool).await?;
+            }
+        }
     }
     Ok(pool)
 }
@@ -135,22 +182,28 @@ impl Store {
     pub async fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         let key = load_or_create_key(root)?;
-        // V3 currently supports one administrator and one agent. These stable IDs
-        // are independent of the administrator's editable login name.
+        // Keep the administrator's original data path during migration.
+        let admin_state = UserState::new(open_pool(&root.join("user_data/admin/admin.db"),true,true).await?);
+        let mut user_states = HashMap::new();
+        user_states.insert("admin".to_owned(),admin_state.clone());
+        let shared_agent_pool = open_pool(&root.join("agent_data/shared_default/shared_default.db"),false,false).await?;
+        let mut agent_states = HashMap::new();
+        agent_states.insert("shared_default".to_owned(),shared_agent_pool.clone());
         let store = Self {
             app_pool: open_pool(&root.join("db/app.db"), true, false).await?,
-            pool: open_pool(&root.join("user_data/admin/admin.db"), true, true).await?,
-            agent_pool: open_pool(
-                &root.join("agent_data/shared_default/shared_default.db"),
-                false,
-                false,
-            )
-            .await?,
+            pool: admin_state.pool.clone(),
+            agent_pool: shared_agent_pool,
+            root: root.to_owned(),
+            user_id: "admin".to_owned(),
+            agent_id: "shared_default".to_owned(),
+            user_states: Arc::new(RwLock::new(user_states)),
+            agent_states: Arc::new(RwLock::new(agent_states)),
+            cache_budgets: Arc::new(Mutex::new((67108864,16777216))),
             cipher: Aes256Gcm::new_from_slice(&key)
                 .map_err(|_| anyhow!("Invalid encryption key"))?,
-            cache: Arc::new(Mutex::new(Cache::new(64 * 1024 * 1024))),
-            context_cache: Arc::new(Mutex::new(ContextCache::new(16 * 1024 * 1024))),
-            context_gate: Arc::new(RwLock::new(())),
+            cache: admin_state.cache,
+            context_cache: admin_state.context_cache,
+            context_gate: admin_state.context_gate,
         };
         sqlx::raw_sql(
             "CREATE TABLE IF NOT EXISTS prompt_slots (
@@ -166,8 +219,59 @@ impl Store {
         store.migrate_legacy(root).await?;
         store.init_accounts().await?;
         store.init_agent_tables().await?;
+        store.ensure_default_agent_directory().await?;
         Ok(store)
     }
+    pub async fn for_user(&self, user_id:&str) -> Result<Self> {
+        if !access::valid_id(user_id) {return Err(anyhow!("Invalid account identity"));}
+        if self.account_by_id(user_id).await?.is_none() {return Err(anyhow!("Account not found"));}
+        let existing = self.user_states.read().await.get(user_id).cloned();
+        let state = match existing {Some(state)=>state,None=>{
+            let mut states=self.user_states.write().await;
+            if let Some(state)=states.get(user_id) {state.clone()} else {
+                let path=self.root.join("user_data").join(user_id).join(format!("{user_id}.db"));
+                let mut state=UserState::new(open_pool(&path,true,true).await?);
+                let (documents,contexts)=*self.cache_budgets.lock().unwrap();
+                state.cache=Arc::new(Mutex::new(Cache::new(documents)));
+                state.context_cache=Arc::new(Mutex::new(ContextCache::new(contexts)));
+                states.insert(user_id.to_owned(),state.clone()); state
+            }
+        }};
+        Ok(Self {app_pool:self.app_pool.clone(),pool:state.pool,
+            agent_pool:self.agent_pool.clone(),root:self.root.clone(),
+            user_id:user_id.to_owned(),agent_id:self.agent_id.clone(),
+            user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),cache_budgets:self.cache_budgets.clone(),
+            cipher:self.cipher.clone(),cache:state.cache,
+            context_cache:state.context_cache,context_gate:state.context_gate})
+    }
+    pub async fn for_agent(&self, agent_id:&str) -> Result<Self> {
+        if !access::valid_agent_id(agent_id) {
+            return Err(anyhow!("Invalid agent identity"));
+        }
+        if agent_id!="shared_default" {
+            let found:Option<String>=sqlx::query_scalar(
+                "SELECT id FROM agent_directory WHERE id=?")
+                .bind(agent_id).fetch_optional(&self.app_pool).await?;
+            if found.is_none() {return Err(anyhow!("Agent not found"));}
+        }
+        let existing=self.agent_states.read().await.get(agent_id).cloned();
+        let pool=match existing {Some(pool)=>pool,None=>{
+            let mut states=self.agent_states.write().await;
+            if let Some(pool)=states.get(agent_id) {pool.clone()} else {
+                let pool=crate::agent_storage::open_agent_pool(&self.root,agent_id).await?;
+                states.insert(agent_id.to_owned(),pool.clone()); pool
+            }
+        }};
+        Ok(Self {app_pool:self.app_pool.clone(),pool:self.pool.clone(),
+            agent_pool:pool,root:self.root.clone(),
+            user_id:self.user_id.clone(),agent_id:agent_id.to_owned(),
+            user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
+            cache_budgets:self.cache_budgets.clone(),cipher:self.cipher.clone(),
+            cache:self.cache.clone(),context_cache:self.context_cache.clone(),
+            context_gate:self.context_gate.clone()})
+    }
+    pub fn current_agent_id(&self)->&str {&self.agent_id}
+    pub fn current_user_id(&self)->&str {&self.user_id}
     async fn init_agent_tables(&self) -> Result<()> {
         sqlx::raw_sql("CREATE TABLE IF NOT EXISTS agents(
             id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL,
@@ -238,28 +342,30 @@ impl Store {
             sqlx::query("INSERT OR IGNORE INTO agent_connections(
                 id,agent_id,connection_type,section,enabled,config,revision,created_at,updated_at)
                 VALUES(?,?,?,?,1,?,1,strftime('%s','now'),strftime('%s','now'))")
-                .bind(format!("ability:{id}")).bind("shared_default").bind(id).bind("ability")
+                .bind(format!("ability:{id}")).bind(&self.agent_id).bind(id).bind("ability")
                 .bind(self.seal(&json!({}))?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
     }
     pub async fn agent_model(&self) -> Result<Value> {
-        let row = sqlx::query("SELECT provider,model FROM agents WHERE id='shared_default'")
-            .fetch_one(&self.agent_pool).await?;
+        let row = sqlx::query("SELECT provider,model FROM agents WHERE id=?")
+            .bind(&self.agent_id).fetch_one(&self.agent_pool).await?;
         Ok(json!({"provider":row.get::<String,_>("provider"),"model":row.get::<String,_>("model")}))
     }
     pub async fn save_agent_model(&self, value: &Value) -> Result<()> {
-        sqlx::query("UPDATE agents SET provider=?,model=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id='shared_default'")
+        sqlx::query("UPDATE agents SET provider=?,model=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id=?")
             .bind(value["provider"].as_str().ok_or_else(||anyhow!("Missing provider"))?)
             .bind(value["model"].as_str().ok_or_else(||anyhow!("Missing model"))?)
+            .bind(&self.agent_id)
             .execute(&self.agent_pool).await?;
         Ok(())
     }
     pub async fn agent_abilities(&self) -> Result<Value> {
-        self.agent_abilities_for("shared_default").await
+        self.agent_abilities_for(&self.agent_id).await
     }
     pub async fn agent_abilities_for(&self, agent_id: &str) -> Result<Value> {
+        if agent_id != self.agent_id {return Err(anyhow!("Agent view mismatch"));}
         let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id=?")
             .bind(agent_id).fetch_one(&self.agent_pool).await?;
         let metadata = self.unseal(&row.get::<Vec<u8>,_>("metadata"))?;
@@ -276,8 +382,8 @@ impl Store {
     }
     pub async fn save_agent_abilities(&self, value: &Value, expected_revision: u64) -> Result<()> {
         let mut tx = self.agent_pool.begin().await?;
-        let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id='shared_default'")
-            .fetch_one(&mut *tx).await?;
+        let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id=?")
+            .bind(&self.agent_id).fetch_one(&mut *tx).await?;
         let mut metadata = self.unseal(&row.get::<Vec<u8>,_>("metadata"))?;
         if metadata["ability_revision"].as_u64().unwrap_or(0) != expected_revision {
             return Err(anyhow!("Agent ability revision changed"));
@@ -289,7 +395,7 @@ impl Store {
             sqlx::query("INSERT INTO agent_connections(id,agent_id,connection_type,section,enabled,config,revision,created_at,updated_at)
                 VALUES(?,?,?,?,?,?,1,strftime('%s','now'),strftime('%s','now'))
                 ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,revision=agent_connections.revision+1,updated_at=excluded.updated_at")
-                .bind(format!("ability:{id}")).bind("shared_default").bind(id).bind("ability")
+                .bind(format!("ability:{id}")).bind(&self.agent_id).bind(id).bind("ability")
                 .bind((mode != "off") as i64).bind(self.seal(&json!({}))?)
                 .execute(&mut *tx).await?;
         }
@@ -297,10 +403,24 @@ impl Store {
         metadata["skill_modes"]=value["skill_visibility"].clone();
         metadata["tool_modes"]=value["tool_modes"].clone();
         metadata["ability_revision"]=json!(expected_revision + 1);
-        sqlx::query("UPDATE agents SET metadata=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id='shared_default' AND revision=?")
-            .bind(self.seal(&metadata)?).bind(row.get::<i64,_>("revision"))
+        sqlx::query("UPDATE agents SET metadata=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id=? AND revision=?")
+            .bind(self.seal(&metadata)?).bind(&self.agent_id)
+            .bind(row.get::<i64,_>("revision"))
             .execute(&mut *tx).await?;
         tx.commit().await?;
+        Ok(())
+    }
+    fn validate_agent_doc_key(&self,key:&str) -> Result<()> {
+        if let Some(rest)=key.strip_prefix("agent:") {
+            if rest!=self.agent_id && !rest.starts_with(&format!("{}:",self.agent_id)) {
+                return Err(anyhow!("Agent view mismatch"));
+            }
+        }
+        if let Some(rest)=key.strip_prefix("agent_abilities:") {
+            if rest!=self.agent_id {
+                return Err(anyhow!("Agent view mismatch"));
+            }
+        }
         Ok(())
     }
     fn pool_for(&self, key: &str) -> &SqlitePool {
@@ -349,9 +469,10 @@ impl Store {
         }))
     }
     pub async fn list_prompt_slots(&self) -> Result<Vec<Value>> {
-        self.list_agent_prompt_slots("shared_default").await
+        self.list_agent_prompt_slots(&self.agent_id).await
     }
     pub async fn list_agent_prompt_slots(&self, agent_id: &str) -> Result<Vec<Value>> {
+        if agent_id != self.agent_id {return Err(anyhow!("Agent view mismatch"));}
         let rows = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
              FROM agent_prompts WHERE agent_id=? ORDER BY order_index,slot_name",
@@ -384,9 +505,9 @@ impl Store {
         Self::validate_prompt_slot_name(name)?;
         let row = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
-             FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=?",
+             FROM agent_prompts WHERE agent_id=? AND slot_name=?",
         )
-        .bind(name)
+        .bind(&self.agent_id).bind(name)
         .fetch_optional(&self.agent_pool)
         .await?;
         row.as_ref()
@@ -423,9 +544,9 @@ impl Store {
             .await?;
         let rows = sqlx::query(
             "SELECT slot_name,order_index,lock AS locked,merge_mode,content,revision,updated_at
-             FROM agent_prompts WHERE agent_id='shared_default'",
+             FROM agent_prompts WHERE agent_id=?",
         )
-        .fetch_all(&mut *tx)
+        .bind(&self.agent_id).fetch_all(&mut *tx)
         .await?;
         let existing = rows
             .iter()
@@ -489,10 +610,10 @@ impl Store {
         if existing.is_some() {
             let changed = sqlx::query(
                 "UPDATE agent_prompts SET order_index=?,lock=?,merge_mode=?,content=?,revision=?,updated_at=?
-                 WHERE agent_id='shared_default' AND slot_name=? AND revision=?",
+                 WHERE agent_id=? AND slot_name=? AND revision=?",
             )
             .bind(order).bind(locked as i64).bind(&mode).bind(sealed)
-            .bind(revision).bind(now).bind(name).bind(expected_revision)
+            .bind(revision).bind(now).bind(&self.agent_id).bind(name).bind(expected_revision)
             .execute(&mut *tx).await?.rows_affected();
             if changed != 1 {
                 return Err(anyhow!("Prompt slot revision mismatch"));
@@ -500,9 +621,9 @@ impl Store {
         } else {
             sqlx::query(
                 "INSERT INTO agent_prompts(id,agent_id,slot_name,order_index,lock,merge_mode,content,revision,updated_at)
-                 VALUES('shared_default:' || ?, 'shared_default', ?,?,?,?,?,?,?)",
+                 VALUES(?,?,?,?,?,?,?,?,?)",
             )
-            .bind(name).bind(name).bind(order).bind(locked as i64).bind(&mode).bind(sealed)
+            .bind(format!("{}:{name}",self.agent_id)).bind(&self.agent_id).bind(name).bind(order).bind(locked as i64).bind(&mode).bind(sealed)
             .bind(revision).bind(now).execute(&mut *tx).await?;
         }
         tx.commit().await?;
@@ -516,8 +637,8 @@ impl Store {
         }
         let mut tx = self.agent_pool.begin().await?;
         let actual: Option<i64> =
-            sqlx::query_scalar("SELECT revision FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=?")
-                .bind(name)
+            sqlx::query_scalar("SELECT revision FROM agent_prompts WHERE agent_id=? AND slot_name=?")
+                .bind(&self.agent_id).bind(name)
                 .fetch_optional(&mut *tx)
                 .await?;
         match actual {
@@ -527,8 +648,8 @@ impl Store {
             }
             Some(_) => {}
         }
-        let changed = sqlx::query("DELETE FROM agent_prompts WHERE agent_id='shared_default' AND slot_name=? AND revision=?")
-            .bind(name)
+        let changed = sqlx::query("DELETE FROM agent_prompts WHERE agent_id=? AND slot_name=? AND revision=?")
+            .bind(&self.agent_id).bind(name)
             .bind(expected_revision)
             .execute(&mut *tx)
             .await?
@@ -794,6 +915,11 @@ impl Store {
             .map_err(|_| anyhow!("Storage authentication failed"))?;
         Ok(serde_json::from_slice(&plain)?)
     }
+    pub fn configure_cache(&self, documents: usize, contexts: usize) {
+        *self.cache_budgets.lock().unwrap()=(documents,contexts);
+        *self.cache.lock().unwrap() = Cache::new(documents);
+        *self.context_cache.lock().unwrap() = ContextCache::new(contexts);
+    }
     pub async fn context(&self, sid: &str) -> Result<Vec<Value>> {
         // Checkpoint writers hold the exclusive side of this gate through commit
         // and cache invalidation, so a reader never combines two checkpoints.
@@ -977,7 +1103,9 @@ impl Store {
         Ok(())
     }
     pub async fn get(&self, key: &str) -> Result<Option<Value>> {
-        let cacheable = key.starts_with("run:") || key.starts_with("session:");
+        self.validate_agent_doc_key(key)?;
+        // These documents are shared with the independent loop process.
+        let cacheable = false;
         let epoch = {
             let mut cache = self.cache.lock().unwrap();
             if cacheable {
@@ -1005,6 +1133,7 @@ impl Store {
         Ok(result)
     }
     pub async fn put(&self, key: &str, value: &Value) -> Result<()> {
+        self.validate_agent_doc_key(key)?;
         let session_id = key.strip_prefix("session:");
         let _context_guard = if session_id.is_some() {
             Some(self.context_gate.write().await)
@@ -1029,7 +1158,7 @@ impl Store {
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         run: &Value,
     ) -> Result<()> {
-        sqlx::query("INSERT INTO run_index(id,session_id,status,updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at")
+        sqlx::query("INSERT INTO run_index(id,session_id,status,updated_at,enqueue_seq) VALUES(?,?,?,?,(SELECT COALESCE(MAX(enqueue_seq),0)+1 FROM run_index)) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,enqueue_seq=COALESCE(run_index.enqueue_seq,excluded.enqueue_seq)")
             .bind(run["id"].as_str().ok_or_else(||anyhow!("Invalid run"))?).bind(run["session_id"].as_str().unwrap_or(""))
             .bind(run["status"].as_str().unwrap_or("failed")).bind(run["updated_at"].as_i64().unwrap_or(0)).execute(&mut **tx).await?;
         let view = serde_json::json!({"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
@@ -1039,7 +1168,7 @@ impl Store {
         Ok(())
     }
     pub async fn active_runs(&self) -> Result<Vec<Value>> {
-        let rows=sqlx::query("SELECT d.value FROM run_index r JOIN docs d ON d.key='run_view:'||r.id WHERE r.status NOT IN ('completed','cancelled','failed') ORDER BY r.updated_at LIMIT 200")
+        let rows=sqlx::query("SELECT d.value FROM run_index r JOIN docs d ON d.key='run_view:'||r.id WHERE r.status NOT IN ('completed','cancelled','failed') ORDER BY COALESCE(r.enqueue_seq,r.rowid) LIMIT 200")
             .fetch_all(&self.pool).await?;
         rows.iter()
             .map(|r| self.unseal(&r.get::<Vec<u8>, _>("value")))
@@ -1056,6 +1185,7 @@ impl Store {
             .collect()
     }
     pub async fn delete(&self, key: &str) -> Result<()> {
+        self.validate_agent_doc_key(key)?;
         let session_id = key.strip_prefix("session:");
         let _context_guard = if session_id.is_some() {
             Some(self.context_gate.write().await)
@@ -1073,6 +1203,7 @@ impl Store {
         Ok(())
     }
     pub async fn list(&self, prefix: &str) -> Result<Vec<Value>> {
+        self.validate_agent_doc_key(prefix)?;
         let rows = sqlx::query("SELECT value FROM docs WHERE key LIKE ? ORDER BY key")
             .bind(format!("{prefix}%"))
             .fetch_all(self.pool_for(prefix))
@@ -1095,15 +1226,58 @@ impl Store {
             .await?;
         Ok(())
     }
-    pub async fn save_run(&self, run: &Value, kind: &str, payload: &Value) -> Result<()> {
+    pub async fn save_run(&self, run: &mut Value, kind: &str, payload: &Value) -> Result<()> {
+        self.save_run_inner(run,kind,payload,false).await
+    }
+    pub async fn save_run_override(&self, run:&mut Value, kind:&str, payload:&Value) -> Result<()> {
+        self.save_run_inner(run,kind,payload,true).await
+    }
+    async fn save_run_inner(&self, run:&mut Value, kind:&str, payload:&Value,
+        allow_expired:bool) -> Result<()> {
+        let rid = run["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?.to_owned();
         let _context_guard = if kind == "context_compacted" {
             Some(self.context_gate.write().await)
         } else {
             None
         };
         let mut tx = self.pool.begin().await?;
+        let expected=run["run_revision"].as_u64().unwrap_or(0);
+        if let Some(raw)=sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
+            .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await? {
+            let previous=self.unseal(&raw)?;
+            if previous["generation"] != run["generation"]
+                || previous["lease_epoch"] != run["lease_epoch"]
+                || previous["run_revision"].as_u64().unwrap_or(0)!=expected
+                || (matches!(previous["status"].as_str(),Some("completed"|"cancelled"|"failed"))
+                    && previous!=*run)
+                || (previous["status"]!="running" && run["status"]=="running"
+                    && previous["lease_epoch"].as_i64().unwrap_or(0)>0)
+            {
+                return Err(anyhow!("Run fence rejected stale transition"));
+            }
+            if previous==*run && run["status"]=="completed" {
+                return Ok(());
+            }
+            if !allow_expired && previous["status"]=="running"
+                && previous["lease_epoch"].as_i64().unwrap_or(0)>0 {
+                let lease=sqlx::query("SELECT lease_epoch,lease_owner,lease_expires_at FROM run_index WHERE id=?")
+                    .bind(&rid).fetch_one(&mut *tx).await?;
+                let until:i64=lease.get("lease_expires_at");
+                let lease_epoch:i64=lease.get("lease_epoch");
+                let lease_owner:Option<String>=lease.get("lease_owner");
+                let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+                if until<now || lease_epoch!=run["lease_epoch"].as_i64().unwrap_or(0)
+                    || lease_owner.as_deref()!=run["lease_owner"].as_str() {
+                    return Err(anyhow!("Run lease expired or changed"));
+                }
+            }
+        } else if expected!=0 {
+            return Err(anyhow!("Run revision missing"));
+        }
+        let mut persisted=run.clone();
+        persisted["run_revision"]=json!(expected+1);
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(format!("run:{}",run["id"].as_str().unwrap())).bind(self.seal(run)?).execute(&mut *tx).await?;
+            .bind(format!("run:{}",run["id"].as_str().unwrap())).bind(self.seal(&persisted)?).execute(&mut *tx).await?;
         // Large model and tool outputs live in interactions and the run checkpoint.
         if kind != "model_output" && kind != "tool_result" {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
@@ -1175,7 +1349,18 @@ impl Store {
                 .execute(&mut *tx)
                 .await?;
         }
-        self.index_run(&mut tx, run).await?;
+        self.index_run(&mut tx, &persisted).await?;
+        sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,?,?,strftime('%s','now'))")
+            .bind(rid).bind(kind).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+                "generation":run["generation"],"lease_epoch":run["lease_epoch"],
+                "status":run["status"],"kind":kind}))?)
+            .execute(&mut *tx).await?;
+        if run["status"]=="completed" {
+            sqlx::query("INSERT OR IGNORE INTO publication_outbox(run_id,schema_version,payload,created_at) VALUES(?,1,?,strftime('%s','now'))")
+                .bind(rid).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+                    "generation":run["generation"],"status":"completed"}))?)
+                .execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[
             format!("run:{}", run["id"].as_str().unwrap()),
@@ -1184,7 +1369,95 @@ impl Store {
         if kind == "context_compacted" {
             self.context_cache.lock().unwrap().invalidate(sid);
         }
+        run["run_revision"]=json!(expected+1);
         Ok(())
+    }
+    pub async fn claim_run(&self, run: &mut Value, owner: &str, generation: &str) -> Result<bool> {
+        let rid=run["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?.to_owned();
+        let mut tx=self.pool.begin().await?;
+        let raw:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?")
+            .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await?;
+        let Some(raw)=raw else {return Ok(false)};
+        let previous=self.unseal(&raw)?;
+        if previous["status"]!="queued" || previous["generation"]!=run["generation"]
+            || previous["lease_epoch"]!=run["lease_epoch"]
+            || previous["run_revision"]!=run["run_revision"] {return Ok(false);}
+        let epoch:i64=sqlx::query_scalar("SELECT lease_epoch FROM run_index WHERE id=?")
+            .bind(&rid).fetch_one(&mut *tx).await?;
+        let mut claimed=run.clone();
+        claimed["lease_epoch"]=json!(epoch+1);
+        claimed["lease_owner"]=json!(owner);
+        claimed["generation"]=json!(generation);
+        claimed["status"]=json!("running");
+        claimed["run_revision"]=json!(previous["run_revision"].as_u64().unwrap_or(0)+1);
+        let until=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64+30;
+        sqlx::query("UPDATE docs SET value=? WHERE key=?")
+            .bind(self.seal(&claimed)?).bind(format!("run:{rid}")).execute(&mut *tx).await?;
+        self.index_run(&mut tx,&claimed).await?;
+        sqlx::query("UPDATE run_index SET lease_epoch=?,lease_owner=?,lease_expires_at=? WHERE id=?")
+            .bind(epoch+1).bind(owner).bind(until).bind(&rid).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,'claimed',?,strftime('%s','now'))")
+            .bind(&rid).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+                "generation":generation,"lease_epoch":epoch+1,"kind":"claimed"}))?)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        *run=claimed;
+        self.cache.lock().unwrap().invalidate(&[format!("run:{rid}")]);
+        Ok(true)
+    }
+    pub async fn renew_run_lease(&self, rid:&str, generation:&str, owner:&str, epoch:i64) -> Result<bool> {
+        let mut tx=self.pool.begin().await?;
+        let raw:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?")
+            .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await?;
+        let Some(raw)=raw else {return Ok(false)};
+        let run=self.unseal(&raw)?;
+        if run["generation"]!=generation || run["status"]!="running"
+            || run["lease_epoch"]!=epoch {return Ok(false);}
+        let changed=sqlx::query("UPDATE run_index SET lease_expires_at=? WHERE id=? AND lease_owner=? AND lease_epoch=?")
+            .bind(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64+30).bind(rid).bind(owner).bind(epoch)
+            .execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+        Ok(changed==1)
+    }
+    pub async fn write_loop_heartbeat(&self, owner:&str) -> Result<()> {
+        sqlx::query("INSERT INTO loop_heartbeat(singleton,owner,protocol_version,updated_at) VALUES(1,?,1,strftime('%s','now')) ON CONFLICT(singleton) DO UPDATE SET owner=excluded.owner,protocol_version=1,updated_at=excluded.updated_at")
+            .bind(owner).execute(&self.app_pool).await?;
+        Ok(())
+    }
+    pub async fn loop_fresh(&self, seconds:i64) -> Result<bool> {
+        let age:Option<i64>=sqlx::query_scalar(
+            "SELECT CAST(strftime('%s','now') AS INTEGER)-updated_at FROM loop_heartbeat WHERE singleton=1 AND protocol_version=1")
+            .fetch_optional(&self.app_pool).await?;
+        Ok(age.is_some_and(|age|age>=0 && age<=seconds))
+    }
+    pub async fn clear_loop_heartbeat(&self) -> Result<()> {
+        sqlx::query("UPDATE loop_heartbeat SET updated_at=0 WHERE singleton=1")
+            .execute(&self.app_pool).await?;
+        Ok(())
+    }
+    pub async fn acknowledge_loop_commands(&self) -> Result<usize> {
+        let mut tx=self.pool.begin().await?;
+        let rows=sqlx::query("SELECT seq,run_id,schema_version,kind,payload FROM loop_commands WHERE acknowledged_at IS NULL ORDER BY seq LIMIT 128")
+            .fetch_all(&mut *tx).await?;
+        for row in &rows {
+            let seq:i64=row.get("seq");
+            let run_id:String=row.get("run_id");
+            let version:i64=row.get("schema_version");
+            let kind:String=row.get("kind");
+            let payload=self.unseal(&row.get::<Vec<u8>,_>("payload"))?;
+            if version!=1 || payload["schema_version"]!=1 || payload["run_id"]!=run_id
+                || payload["kind"]!=kind {
+                return Err(anyhow!("Unsupported or malformed loop command"));
+            }
+            sqlx::query("UPDATE loop_commands SET acknowledged_at=strftime('%s','now') WHERE seq=? AND acknowledged_at IS NULL")
+                .bind(seq).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,'command_ack',?,strftime('%s','now'))")
+                .bind(&run_id).bind(self.seal(&json!({"schema_version":1,
+                    "run_id":run_id,"command_seq":seq,"kind":"command_ack"}))?)
+                .execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(rows.len())
     }
     pub async fn events(&self, sid: &str, after: i64) -> Result<Vec<Value>> {
         let rows=sqlx::query("SELECT seq,kind,payload FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 200")
@@ -1193,7 +1466,7 @@ impl Store {
     }
     pub async fn atomic_docs_event(
         &self,
-        docs: Vec<(String, Value)>,
+        mut docs: Vec<(String, Value)>,
         sid: &str,
         kind: &str,
         payload: &Value,
@@ -1217,6 +1490,27 @@ impl Store {
             None
         };
         let mut tx = destination.begin().await?;
+        if let Some((_, run))=docs.iter_mut().find(|(key,_)|key.starts_with("run:")) {
+            let rid=run["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?.to_owned();
+            let expected=run["run_revision"].as_u64().unwrap_or(0);
+            if let Some(raw)=sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
+                .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await? {
+                let previous=self.unseal(&raw)?;
+                if previous["generation"]!=run["generation"]
+                    || previous["lease_epoch"]!=run["lease_epoch"]
+                    || previous["run_revision"].as_u64().unwrap_or(0)!=expected
+                    || (matches!(previous["status"].as_str(),Some("completed"|"cancelled"|"failed"))
+                        && previous!=*run)
+                {
+                    return Err(anyhow!("Run fence rejected stale command"));
+                }
+            } else if expected!=0 {
+                return Err(anyhow!("Run revision missing"));
+            }
+            run["run_revision"]=json!(expected+1);
+        }
+        let command_id=docs.iter().find(|(key,_)|key.starts_with("receipt:"))
+            .map(|(key,_)|key.clone());
         for (key, value) in docs {
             sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
                 .bind(&key).bind(self.seal(&value)?).execute(&mut *tx).await?;
@@ -1249,6 +1543,19 @@ impl Store {
                 .bind(self.seal(payload)?)
                 .execute(&mut *tx)
                 .await?;
+        }
+        if !sid.is_empty() && (kind=="message" || kind=="run_status") {
+            let run_id=payload["run_id"].as_str().or_else(||payload["id"].as_str())
+                .ok_or_else(||anyhow!("Run command has no id"))?;
+            let command_id=command_id.unwrap_or_else(||format!("{kind}:{run_id}"));
+            sqlx::query("INSERT INTO loop_commands(command_id,run_id,schema_version,kind,payload,created_at) VALUES(?,?,1,?,?,strftime('%s','now'))")
+                .bind(command_id).bind(run_id).bind(kind)
+                .bind(self.seal(&json!({"schema_version":1,"run_id":run_id,
+                    "kind":kind,"status":payload["status"]}))?)
+                .execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,?,?,strftime('%s','now'))")
+                .bind(run_id).bind(kind).bind(self.seal(&json!({"schema_version":1,
+                    "run_id":run_id,"kind":kind}))?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&touched);
@@ -1603,9 +1910,11 @@ mod tests {
             .unwrap();
         assert_eq!(store.context("s").await.unwrap()[0]["content"], "old");
         let summary = json!({"role":"user","content":"summary"});
+        let mut checkpoint=json!({"id":"r1","session_id":"s","status":"running",
+            "input":[summary.clone()],"updated_at":1});
         store
             .save_run(
-                &json!({"id":"r1","session_id":"s","status":"running","input":[summary.clone()],"updated_at":1}),
+                &mut checkpoint,
                 "context_compacted",
                 &json!({"run_id":"r1"}),
             )
@@ -1651,9 +1960,12 @@ mod tests {
                 async move { clone.context("s").await.unwrap() },
             ));
         }
+        let mut checkpoint=json!({"id":"r1","session_id":"s","status":"running",
+            "input":[],"updated_at":1});
+        checkpoint["input"]=json!([{"role":"user","content":"new checkpoint"}]);
         store
             .save_run(
-                &json!({"id":"r1","session_id":"s","status":"running","input":[{"role":"user","content":"new checkpoint"}],"updated_at":1}),
+                &mut checkpoint,
                 "context_compacted",
                 &json!({"run_id":"r1"}),
             )
@@ -2190,5 +2502,63 @@ mod tests {
             std::fs::read(root.path().join("encryption.key")).unwrap(),
             keys[0]
         );
+    }
+    #[tokio::test]
+    async fn command_ack_and_lease_takeover_fence_terminal_publication() {
+        let root=tempfile::tempdir().unwrap();
+        let store=Store::open(root.path()).await.unwrap();
+        let run=json!({"id":"r1","session_id":"s1","status":"queued","generation":"",
+            "input":[],"turns":1,"updated_at":1});
+        store.atomic_docs_event(vec![
+            ("run:r1".into(),run.clone()),
+            ("receipt:message:s1:one".into(),json!({"result":{"run_id":"r1"}})),
+        ],"s1","message",&json!({"role":"user","content":"hello","run_id":"r1"}))
+            .await.unwrap();
+        assert_eq!(store.acknowledge_loop_commands().await.unwrap(),1);
+        assert_eq!(store.acknowledge_loop_commands().await.unwrap(),0);
+        let mut first=store.get("run:r1").await.unwrap().unwrap();
+        assert!(store.claim_run(&mut first,"loop-a","generation-a").await.unwrap());
+        let mut stale_http=first.clone();
+        first["pending"]=json!({"state":"executing","name":"file_write"});
+        store.save_run(&mut first,"run_status",&json!({})).await.unwrap();
+        stale_http["status"]=json!("stopped");
+        assert!(store.save_run(&mut stale_http,"run_status",&json!({})).await.is_err());
+        assert_eq!(store.get("run:r1").await.unwrap().unwrap()["pending"]["state"],
+            "executing");
+        let rejected=store.atomic_docs_event(vec![
+            ("run:r1".into(),stale_http.clone()),
+            ("receipt:run:r1:cancel:stale".into(),json!({"result":{}})),
+        ],"s1","run_status",&json!({"id":"r1","status":"stopped"})).await;
+        assert!(rejected.is_err());
+        assert!(store.get("receipt:run:r1:cancel:stale").await.unwrap().is_none());
+        first["status"]=json!("queued");
+        store.save_run(&mut first,"run_status",&json!({})).await.unwrap();
+        let mut second=store.get("run:r1").await.unwrap().unwrap();
+        assert!(store.claim_run(&mut second,"loop-b","generation-b").await.unwrap());
+        sqlx::query("UPDATE run_index SET lease_expires_at=0 WHERE id='r1'")
+            .execute(&store.pool).await.unwrap();
+        let mut expired=second.clone();
+        expired["status"]=json!("completed");
+        assert!(store.save_run(&mut expired,"model_output",
+            &json!({"output":[],"terminal_text":"expired"})).await.is_err());
+        sqlx::query("UPDATE run_index SET lease_expires_at=strftime('%s','now')+30 WHERE id='r1'")
+            .execute(&store.pool).await.unwrap();
+        first["status"]=json!("completed");
+        assert!(store.save_run(&mut first,"model_output",
+            &json!({"output":[],"terminal_text":"stale"})).await.is_err());
+        let policy=crate::workflow::Policy::resolve(None).unwrap();
+        crate::publication::terminal(&store,&mut second,&[],"accepted",&policy)
+            .await.unwrap();
+        crate::publication::terminal(&store,&mut second,&[],"accepted",&policy)
+            .await.unwrap();
+        let chat_count:i64=sqlx::query_scalar(
+            "SELECT count(*) FROM chat WHERE terminal_run_id='r1'")
+            .fetch_one(&store.pool).await.unwrap();
+        let outbox_count:i64=sqlx::query_scalar(
+            "SELECT count(*) FROM publication_outbox WHERE run_id='r1'")
+            .fetch_one(&store.pool).await.unwrap();
+        assert_eq!((chat_count,outbox_count),(1,1));
+        let observer=Store::open(root.path()).await.unwrap();
+        assert_eq!(observer.get("run:r1").await.unwrap().unwrap()["status"],"completed");
     }
 }

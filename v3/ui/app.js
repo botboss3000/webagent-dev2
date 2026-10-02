@@ -1,3 +1,4 @@
+import { wirePageTabDrag } from './shared/page-tabs.js';
 import { purgeAllBrowserData } from './browser-data-reset.js';
 import { initChatConfig, applyChatConfig } from './chat/chat-config.js';
 
@@ -133,7 +134,7 @@ async function mountChat(){
   if(!response.ok)throw Error('Chat shell unavailable');
   const template=document.createElement('template');
   template.innerHTML=await response.text();
-  for(const id of ['chat-header','chat-messages','chat-messages-inner','sessions','new','runs','composer','chat-input','send','stop']){
+  for(const id of ['chat-header','chat-messages','chat-messages-inner','sessions','new','runs','composer','chat-input','chat-send','chat-stop-btn']){
     if(!template.content.querySelector('#'+id))throw Error('Chat shell is incomplete: '+id);
   }
   $('chat-panel').replaceChildren(template.content);
@@ -142,13 +143,13 @@ await mountChat();
 const chatPanel=$('chat-panel');
 const updateChatClearance=()=>{
   const header=$('chat-header').getBoundingClientRect().height;
-  const footer=$('composer').getBoundingClientRect().height;
+  const footer=$('chat-input-area').getBoundingClientRect().height + (parseFloat(getComputedStyle($('chat-input-area')).bottom)||0);
   if(header)chatPanel.style.setProperty('--v3-chat-header-clearance',`${Math.ceil(header)+12}px`);
   if(footer)chatPanel.style.setProperty('--v3-chat-footer-clearance',`${Math.ceil(footer)+16}px`);
 };
 const chatClearanceObserver=new ResizeObserver(updateChatClearance);
 chatClearanceObserver.observe($('chat-header'));
-chatClearanceObserver.observe($('composer'));
+chatClearanceObserver.observe($('chat-input-area'));
 await loadMainPages();
 
 let csrf='',session='',source,epoch=0,state={},poll;
@@ -165,6 +166,9 @@ async function showAgentView(view){
     const tab=$('agent-tab-'+page.id);
     tab.setAttribute('aria-selected',String(page.id===selected));
     tab.classList.toggle('active',page.id===selected);
+    tab.hidden=!agentTabOrder.includes(page.id)&&page.id!==selected;
+    tab.classList.toggle('ephemeral',!agentTabOrder.includes(page.id)&&page.id===selected);
+    if(!tab.hidden&&!agentTabOrder.includes(page.id))tab.parentElement.append(tab);
   }
   const route=new URL(location.href);
   route.searchParams.set('agentView',selected);
@@ -174,15 +178,37 @@ async function showAgentView(view){
 for(const page of [{id:'config'},...agentPages]){
   $('agent-tab-'+page.id).onclick=guard(()=>showAgentView(page.id));
 }
-renderAgentDirectory($('config-page'),agentPages,view=>guard(()=>showAgentView(view))());
+// Like V2, the favorite list is also the tab order; Config cannot be removed.
+const agentTabsKey='v3:agent-page-tabs:v1';
+let agentTabOrder;
+try{agentTabOrder=JSON.parse(localStorage.getItem(agentTabsKey));}catch{}
+const validAgentTabs=new Set(['config',...agentPages.map(page=>page.id)]);
+agentTabOrder=Array.isArray(agentTabOrder)?[...new Set(agentTabOrder)].filter(id=>validAgentTabs.has(id)):['config'];
+if(!agentTabOrder.includes('config'))agentTabOrder.push('config');
+function syncAgentTabs(){
+  const strip=document.querySelector('#agents-grid .agent-card-tabs');
+  for(const id of agentTabOrder)strip.append($('agent-tab-'+id));
+  for(const page of [{id:'config'},...agentPages])$('agent-tab-'+page.id).hidden=!agentTabOrder.includes(page.id);
+  renderAgentDirectory($('config-page'),agentPages,view=>guard(()=>showAgentView(view))(),agentTabOrder,id=>{
+    if(agentTabOrder.includes(id))agentTabOrder=agentTabOrder.filter(item=>item!==id);
+    else agentTabOrder.unshift(id);
+    saveAgentTabs();
+  });
+}
+function saveAgentTabs(){
+  try{localStorage.setItem(agentTabsKey,JSON.stringify(agentTabOrder));}catch{}
+  syncAgentTabs();
+}
+syncAgentTabs();
+wirePageTabDrag(document.querySelector('#agents-grid .agent-card-tabs'), { getOrder: () => agentTabOrder, save: saveAgentTabs, prefix: 'agent-tab-' });
 function button(text,fn){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=guard(fn);return node;}
 function out(){csrf='';source?.close();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;$('login').hidden=false;}
 function message(role,content){const row=document.createElement('article');row.className='v3-message '+role;const label=document.createElement('span');label.className='message-role';label.textContent=role==='user'?'You':role==='assistant'?'Agent':role;const body=document.createElement('div');body.className='message-content';body.textContent=typeof content==='string'?content:JSON.stringify(content);row.append(label,body);$('chat-messages-inner').append(row);return body;}
 function tail(){const box=$('chat-messages');box.scrollTop=box.scrollHeight;}
 async function sessions(){const data=await api('/sessions');$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=(item.title||'Conversation')+' — '+(item.agent_id||'shared_default');$('sessions').append(option);}$('sessions').value=session;return data.sessions;}
-async function open(id){const turn=++epoch;source?.close();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);const data=await api('/sessions/'+encodeURIComponent(id));if(turn!==epoch)return;sessionAgentId=data.session.agent_id||'shared_default';$('run-status').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content);tail();runs(data.runs||[]);let last=data.last_seq||0;source=new EventSource('/api/v3/sessions/'+encodeURIComponent(id)+'/events?after='+last);source.onmessage=event=>{if(turn!==epoch)return;try{const item=JSON.parse(event.data);if(item.seq<=last)return;last=item.seq;message(item.role,item.content);tail();}catch{note('Unable to read chat event. Reload to recover.');}};source.onerror=()=>note('Connection interrupted. Reconnecting…');source.onopen=()=>note('');}
+async function open(id){const turn=++epoch;source?.close();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);const data=await api('/sessions/'+encodeURIComponent(id));if(turn!==epoch)return;sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content);tail();runs(data.runs||[]);let last=data.last_seq||0;source=new EventSource('/api/v3/sessions/'+encodeURIComponent(id)+'/events?after='+last);source.onmessage=event=>{if(turn!==epoch)return;try{const item=JSON.parse(event.data);if(item.seq<=last)return;last=item.seq;message(item.role,item.content);tail();}catch{note('Unable to read chat event. Reload to recover.');}};source.onerror=()=>note('Connection interrupted. Reconnecting…');source.onopen=()=>note('');}
 async function cancel(id){await api('/runs/'+id+'/cancel','POST',{client_request_id:keyId('cancel:'+id)});await refresh();}
-function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('run-status').textContent=active?.status||relevant[0]?.status||'Ready';$('stop').hidden=!active||$('stop').dataset.configEnabled==='false';$('stop').dataset.run=active?.id||'';$('send').disabled=!!active||!!state.shutoff;
+function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!state.shutoff;
 for(const run of relevant){if(run.status==='completed')continue;const card=document.createElement('section');card.className='run-card';const title=document.createElement('strong');title.textContent=run.status+(run.error?' — '+run.error:'');card.append(title);
 if(run.pending && run.status==='waiting_approval'){const p=run.pending,pre=document.createElement('pre');pre.textContent=p.name+'\n'+JSON.stringify(p.arguments,null,2);card.append(pre);for(const decision of ['approve','deny'])card.append(button(decision==='approve'?'Approve action':'Deny action',async()=>{await api('/approvals/'+p.id+'/decision','POST',{decision,client_request_id:keyId('approval:'+p.id+':'+decision)});await refresh();}));}
 if(run.uncertain || run.status==='recovery'){const text=document.createElement('p');text.textContent='The previous action may have completed. Verify its outcome before retrying.';const output=document.createElement('textarea');output.placeholder='Known result to accept';output.setAttribute('aria-label','Known action result');card.append(text,output);for(const decision of ['accept','retry','abandon'])card.append(button({accept:'Accept known result',retry:'Authorize retry',abandon:'Abandon run'}[decision],async()=>{await api('/runs/'+run.id+'/recovery','POST',{decision,output:output.value,client_request_id:keyId('recovery:'+run.id+':'+decision+':'+output.value)});await refresh();}));}
@@ -389,8 +415,8 @@ $('theme').onclick=()=>{document.body.classList.toggle('light-mode');localStorag
 $('sessions').onchange=guard(()=>open($('sessions').value));
 $('new').onclick=guard(async()=>{const item=await api('/sessions','POST',{title:'New conversation',agent_id:agentId,client_request_id:crypto.randomUUID()});await sessions();await open(item.id);});
 $('composer').onsubmit=guard(async()=>{const text=$('chat-input').value.trim();if(!text)return;if(!session){const item=await api('/sessions','POST',{title:text.slice(0,60),agent_id:agentId,client_request_id:keyId('session:'+text)});await sessions();await open(item.id);}await api('/sessions/'+session+'/messages','POST',{text,client_message_id:keyId('message:'+session+':'+text)});ids.delete('message:'+session+':'+text);$('chat-input').value='';applyChatConfig();await refresh();});
-$('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('send').disabled)$('composer').requestSubmit();}};
-$('stop').onclick=guard(()=>cancel($('stop').dataset.run));
+$('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('chat-send').disabled)$('composer').requestSubmit();}};
+$('chat-stop-btn').onclick=guard(()=>cancel($('chat-stop-btn').dataset.run));
 $('shutoff').onclick=guard(async()=>{await api('/control','PUT',{shutoff:!state.shutoff,client_request_id:crypto.randomUUID()});await refresh();});
 $('connect').onclick=guard(async()=>{await api('/provider/login','POST',{});await refresh();$('device').scrollIntoView({block:'nearest'});});
 $('disconnect').onclick=guard(async()=>{await api('/provider/logout','POST',{});await refresh();});

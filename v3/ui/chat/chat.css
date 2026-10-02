@@ -11,23 +11,8 @@
 #new{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px}
 #chat-messages{position:absolute!important;inset:0!important;width:100%;height:100%;min-height:0;overflow:auto;padding:0!important}
 #chat-messages-inner{box-sizing:border-box;min-height:100%;width:100%;max-width:var(--v3-content-max-width,100%)!important;margin-inline:auto;padding:var(--v3-chat-header-clearance,100px) 14px calc(var(--v3-chat-footer-clearance,180px) + var(--v3-tail-gap,0px))!important}
-#composer{position:absolute;left:0;right:0;bottom:0;z-index:5;background:transparent;pointer-events:none}
-#chat-input-area{position:relative!important;inset:auto!important;padding:8px 14px 20px;background:transparent!important;pointer-events:none}
-#chat-input-row{pointer-events:auto!important}
-#chat-input-row .chat-pill-layout-rows{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center}
-#chat-input-row .v3-chat-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0;pointer-events:none}
-/* Shared composer overlays disable inherited pointer input; v3 binds these buttons directly. */
-#chat-input-row .v3-chat-actions > button{pointer-events:auto!important}
-#chat-input-row #chat-input{min-width:0}
-#chat-input-row #run-status{justify-self:center}
-#chat-input-row{position:relative!important;inset:auto!important;transform:none!important;width:min(100%,var(--v3-pill-width,500px))!important;max-width:100%!important;margin-inline:auto;border-radius:var(--v3-pill-radius,41px)!important}
-#chat-input{width:100%;min-height:60px;max-height:180px;resize:vertical;color:var(--fg-1);background:transparent;border:none;padding:14px!important;outline:none}
-#chat-input-row:focus-within{outline:2px solid var(--accent-line)}
-#chat-input-row .v3-config-pill-row{min-height:0;mask-image:none;-webkit-mask-image:none}
-#chat-input-row .v3-config-pill-row .chat-pill-layout-zone-center{margin-left:0}
-#chat-input-row .chat-pill-layout-row:last-child{padding:0}
-#run-status{color:var(--fg-3);font-size:12px}
-#send,#stop{min-width:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;padding:0}
+/* Composer geometry is exclusively the canonical v2 shared CSS + chat_ui.json. */
+#composer{display:contents}
 #chat-above-pill{width:100%;max-height:25dvh;overflow:auto;pointer-events:auto}
 #chat-above-pill:has(#runs:empty){display:none}
 #runs{max-height:none;overflow:visible;padding:0 4px}

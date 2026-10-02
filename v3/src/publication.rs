@@ -14,7 +14,7 @@ pub async fn terminal(store: &Store, run: &mut Value, output: &[Value],
     workflow::record(&mut published,policy,&Input::Publication {
         text_digest:hex::encode(Sha256::digest(text.as_bytes())) },Decision::Pass)?;
     published["status"]=json!("completed");
-    store.save_run(&published,"model_output",&json!({"output":output,"terminal_text":text})).await?;
+    store.save_run(&mut published,"model_output",&json!({"output":output,"terminal_text":text})).await?;
     *run = published;
     Ok(())
 }

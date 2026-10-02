@@ -72,7 +72,9 @@ Encrypted content and sensitive metadata follow the sensitivity noted above.
 | Table or key family | Plane and authority type | Sensitivity | Lifecycle |
 | --- | --- | --- | --- |
 | `user_accounts`, `user_profiles` | App; canonical identity/profile | Private | Revisioned account lifecycle |
-| `agents`, `agent_connections`, `agent_prompts` | Agent; canonical configuration | Private | Revisioned agent lifecycle |
+| `entitlement_tiers`, `agent_memberships` | App; canonical grants and caller relationships | Private security configuration | Revisioned; changes rotate account generation and recheck running work |
+| `agent_directory` | App; canonical agent ID and owner index | Private identity metadata | Add after validated agent storage; check each referenced agent file |
+| `agents`, `agent_connections`, `agent_prompts` | Agent; canonical configuration | Private | Revisioned agent lifecycle; nondefault agents use separate validated files |
 | `prompt_slots` | Agent; legacy compatibility source | Private | Retain for rollback; active reads use `agent_prompts` |
 | `chat` | User; canonical accepted publication | Private content | Append once per accepted message |
 | `interactions` | User; canonical private execution history | Private content | Append by run step; retain for replay |
@@ -81,16 +83,17 @@ Encrypted content and sensitive metadata follow the sensitivity noted above.
 | `legacy_event_map` | App or user; migration mapping | Private metadata | Preserve through rollback window |
 | `docs`: `session:`, `session_mode:`, `session_ability_state:`, `run:`, `run_view:`, `promotion:`, `receipt:session:`, `receipt:message:`, `receipt:run:`, `receipt:approval:` | User; canonical state and idempotency receipts | Private | Revisioned or immutable by key; user ownership check |
 | `docs`: `agent:`, `agent_abilities:` | Agent; compatibility/configuration document | Private | Migrate to typed agent tables when replaced |
-| `docs`: all remaining keys, including `workflow_policy`, provider tokens, shutoff, auth, model catalog, and `storage:split_migrated` | App; canonical policy, secret, control, or migration marker | Security sensitive or secret | Revisioned, revoked, or versioned by family |
+| `docs`: all remaining keys, including `workflow_policy`, provider tokens, shutoff, auth, model catalog, `storage:split_migrated`, `storage:access_v1`, and `storage:agent_split_v1` | App; canonical policy, secret, control, or migration marker | Security sensitive or secret | Revisioned, revoked, or versioned by family |
 
 The `docs` routing is implemented in `Store::pool_for`; new prefixes must be
 declared here and routed deliberately. A key without a declared owner must not
 be treated as user or agent state merely because the generic app fallback can
 store it.
 
-The table covers proposed future records as ownership rules, not as claims that
-accounts beyond the administrator, attachments, memories, tiers, or modules
-already execute. For any new table or document, add its owner, authority,
+The table declares ownership for both implemented and planned records. Confirm
+runtime wiring and migration markers before treating newly added accounts, tiers,
+or agent stores as live capabilities. Attachments, memories, and optional modules
+remain planned. For any new table or document, add its owner, authority,
 sensitivity, retention, and cross-plane checks here before migration.
 
 ## Migration and rollback contract
@@ -105,6 +108,19 @@ an incompatible rollback requires restoring that whole backup. Never copy v2
 accounts, tokens, credentials, keys, or session data into v3 as part of this
 phase. Existing split-storage migration uses `storage:split_migrated` version 2;
 future schema changes need their own versioned marker and tested retry path.
+
+The Phase 3 agent split keeps `agent_data/shared_default/shared_default.db` as the
+default agent store and preserves legacy nondefault agent rows there as rollback
+material. The additive `storage:agent_split_v1` marker binds a digest of those
+source rows; an initial copy or interrupted retry must match every destination
+record before the marker is written. After completion, each nondefault agent's
+database is authoritative. Later configuration edits go only to that database,
+so the preserved legacy rows become stale and cannot provide a current rollback.
+Rolling back after such edits requires restoring a whole-v3-data backup captured
+at a compatible point or explicitly reconciling agent changes. The runtime must
+fail on changed legacy source rows, missing agent databases, ownership conflicts,
+foreign rows, or malformed encrypted records rather than silently choosing one
+copy. This migration never opens or copies user session databases.
 
 ## Acceptance evidence
 

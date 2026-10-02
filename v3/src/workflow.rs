@@ -82,7 +82,11 @@ pub struct Policy {
 }
 impl Policy {
     pub fn resolve(overrides: Option<&Value>) -> Result<Self> {
-        let mut value: Value = serde_json::from_str(include_str!("workflow.defaults.json"))?;
+        let defaults = crate::loop_runtime::Config::default();
+        let mut value = json!({"schema_version":1,"max_turns":defaults.workflow.max_turns,
+            "max_attempts":defaults.workflow.max_attempts,"max_context_bytes":defaults.context.max_context_bytes,
+            "summary_reserve_bytes":defaults.context.summary_reserve_bytes,
+            "max_publication_bytes":defaults.workflow.max_publication_bytes,"modules":defaults.workflow.modules});
         if let Some(overrides) = overrides {
             let fields = overrides.as_object().ok_or_else(|| anyhow::anyhow!("Policy must be an object"))?;
             for (key, field) in fields { value[key] = field.clone(); }
@@ -98,9 +102,12 @@ impl Policy {
         }
         for (checkpoint, modules) in &policy.modules {
             let _: Checkpoint = serde_json::from_value(json!(checkpoint))?;
-            // No executable optional modules shipped in Phase 1. Never silently
-            // accept an unknown configured module or move it to another gate.
-            if !modules.is_empty() { bail!("Optional workflow module is not installed"); }
+            if modules.is_empty() { continue; }
+            if checkpoint != "publication" || modules.len() != 1
+                || !matches!(modules[0].as_str(), "publication_size_guard_v1"
+                    | "optional:publication_size_guard_v1") {
+                bail!("Optional workflow module is not installed at this checkpoint");
+            }
         }
         Ok(policy)
     }
@@ -159,8 +166,17 @@ mod tests {
     #[test] fn rejects_unsafe_or_unknown_configuration() {
         for value in [json!({"max_turns":51}),json!({"schema_version":2}),
             json!({"disable_authorization":true}),json!({"modules":{"pre_tool":["unknown"]}}),
+            json!({"modules":{"pre_tool":["publication_size_guard_v1"]}}),
+            json!({"modules":{"publication":["unknown"]}}),
+            json!({"modules":{"publication":["publication_size_guard_v1","publication_size_guard_v1"]}}),
             json!({"modules":{"arbitrary_gate":[]}})] {
             assert!(Policy::resolve(Some(&value)).is_err());
+        }
+    }
+    #[test] fn publication_module_modes_are_explicit_and_bounded() {
+        for name in ["publication_size_guard_v1", "optional:publication_size_guard_v1"] {
+            let policy=Policy::resolve(Some(&json!({"modules":{"publication":[name]}}))).unwrap();
+            assert_eq!(policy.modules["publication"],vec![name]);
         }
     }
     #[test] fn receipts_bind_policy_generation_and_input() {

@@ -42,7 +42,8 @@ pub(crate) async fn login(
     }
     let _guard = app.gate.lock().await;
     let account = app.store.account_by_id("admin").await?.ok_or_else(denied)?;
-    if account["is_approved"] == false || account["generation"].as_str().is_none() {
+    if !access::Principal::from_account(&account).is_ok_and(|principal| principal.administrator())
+        || account["generation"].as_str().is_none() {
         return Err(denied());
     }
     let username = account["username"].as_str().ok_or_else(denied)?;

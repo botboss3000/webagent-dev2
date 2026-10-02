@@ -1,0 +1,21 @@
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
+WORKDIR /build
+COPY v3/Cargo.toml v3/Cargo.lock ./
+COPY v3/src ./src
+COPY v3/plugins/abilities ./plugins/abilities
+COPY v3/ui ./ui
+ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+RUN cargo test --locked
+RUN cargo build --release --locked
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1100 v3 && useradd -u 1100 -g 1100 -M -s /usr/sbin/nologin v3loop
+COPY --from=builder /build/target/release/webagent-v3 /usr/local/bin/webagent-v3
+COPY v3/plugins/abilities /opt/v3/plugins/abilities
+ENV V3_PROCESS_ROLE=loop V3_STATE_ROOT=/state V3_WORKSPACE_ROOT=/workspaces
+USER 1100:1100
+HEALTHCHECK --interval=5s --timeout=3s --start-period=20s --retries=3 CMD ["env","V3_PROCESS_ROLE=health","/usr/local/bin/webagent-v3"]
+ENTRYPOINT ["/usr/bin/tini","--"]
+CMD ["/usr/local/bin/webagent-v3"]

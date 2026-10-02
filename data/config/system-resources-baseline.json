@@ -3,9 +3,9 @@
   "signals": {
     "memory_percent": 18.6,
     "db_p95_ms": 19.3,
-    "descriptor_percent": 2.3,
+    "descriptor_percent": 2.0,
     "cpu_percent": 1.8
   },
-  "captured_at": 1790885988,
-  "samples": 44
+  "captured_at": 1790922945,
+  "samples": 45
 }

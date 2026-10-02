@@ -1,0 +1,12 @@
+/* App reuses the Agents directory and tab markup/design; only scope differs. */
+#tab-app{padding:12px;min-height:100%}
+#tab-app .agent-detail-panel{display:block}
+#tab-app .agent-config-topics{padding:0}
+#tab-app .agent-config-star{align-self:center;margin-right:18px;padding:0;border:0;background:transparent;color:var(--agent-config-icon);cursor:pointer}
+#tab-app .agent-config-star:focus-visible{outline:2px solid var(--agent-config-icon);outline-offset:2px}
+#tab-app .agent-card-tabs{display:flex;gap:7px;overflow-x:auto}
+#tab-app .agent-card-tabs [role=tab]{touch-action:none;user-select:none;cursor:grab;border:0;background:transparent;color:var(--fg-2);padding:8px 14px;white-space:nowrap}
+#tab-app .agent-card-tabs [aria-selected=true]{color:var(--accent);border-bottom:2px solid var(--accent)}
+#tab-app .agent-card-tabs .dragging{cursor:grabbing;background:var(--accent-soft);outline:2px solid var(--accent)}
+#app-files-page{padding:18px;color:var(--fg-2)}
+@media(max-width:800px){#tab-app .agent-config-star{margin-right:14px}}

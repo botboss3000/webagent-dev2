@@ -1,6 +1,7 @@
 //! Administrator-only model catalog, agent creation, and scoped authorization.
 //! Runtime plans remain pinned while live grants/revocation are enforced at dispatch.
 use crate::{App, Api, ApiError};
+use crate::access::{Principal, Relationship};
 use crate::model_selection::Catalog;
 use axum::{extract::{State, Path}, Extension, Json, Router, routing::get, http::StatusCode};
 use serde_json::{json, Value};
@@ -8,9 +9,8 @@ use serde_json::{json, Value};
 async fn require_admin(app: &App, identity: &Value) -> Result<(), ApiError> {
     let user = identity["_user_id"].as_str().unwrap_or("");
     let account = app.store.account_by_id(user).await?;
-    let profile = app.store.user_profile(user).await?;
-    if account.as_ref().is_none_or(|account| account["is_approved"] != true)
-        || profile.as_ref().is_none_or(|profile| profile["is_admin"] != true) {
+    if account.as_ref().and_then(|account| Principal::from_account(account).ok())
+        .is_none_or(|principal| !principal.administrator()) {
         return Err(ApiError(StatusCode::FORBIDDEN, "Administrator access required".into()));
     }
     Ok(())
@@ -44,8 +44,10 @@ async fn save(State(app): State<App>, Extension(identity): Extension<Value>, Jso
     }
     new_owners!(connections); new_owners!(entries); new_owners!(groups); new_owners!(assignments);
     for id in catalog.assignments.keys() {
+        let view = app.store.for_agent(id).await
+            .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Assigned agent does not exist".into()))?;
         let exists: Option<String> = sqlx::query_scalar("SELECT id FROM agents WHERE id=?")
-            .bind(id).fetch_optional(&app.store.agent_pool).await.map_err(anyhow::Error::from)?;
+            .bind(id).fetch_optional(&view.agent_pool).await.map_err(anyhow::Error::from)?;
         if exists.is_none() {
             return Err(ApiError(StatusCode::BAD_REQUEST, "Assigned agent does not exist".into()));
         }
@@ -59,10 +61,15 @@ async fn save(State(app): State<App>, Extension(identity): Extension<Value>, Jso
 async fn agents(State(app): State<App>, Extension(identity): Extension<Value>) -> Api {
     use sqlx::Row;
     require_admin(&app, &identity).await?;
-    let rows = sqlx::query("SELECT id,name,description,status,revision FROM agents ORDER BY created_at,id")
-        .fetch_all(&app.store.agent_pool).await.map_err(anyhow::Error::from)?;
-    let values = rows.iter().map(|r| json!({"id":r.get::<String,_>("id"),"name":r.get::<String,_>("name"),
-        "description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision")})).collect::<Vec<_>>();
+    let mut values = Vec::new();
+    for id in app.store.agent_ids().await? {
+        let view=app.store.for_agent(&id).await?;
+        let r=sqlx::query("SELECT id,name,description,status,revision FROM agents WHERE id=?")
+            .bind(&id).fetch_one(&view.agent_pool).await.map_err(anyhow::Error::from)?;
+        values.push(json!({"id":r.get::<String,_>("id"),"name":r.get::<String,_>("name"),
+            "description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),
+            "revision":r.get::<i64,_>("revision")}));
+    }
     Ok(Json(json!({"agents":values})))
 }
 
@@ -88,15 +95,27 @@ async fn create_agent(State(app): State<App>, Extension(identity): Extension<Val
     let id=format!("agent-{}", &crate::digest(&json!({"owner":owner,"request_id":body.client_request_id}))[..32]);
     let metadata=app.store.seal(&json!({"owner_id":owner,"ability_modes":{"codebase_admin":"off"},
         "skill_modes":{},"tool_modes":{},"ability_revision":0,"creation_digest":crate::digest(&request)}))?;
+    let agent_pool=crate::agent_storage::open_agent_pool(&app.store.root,&id).await?;
     let existing: Option<Vec<u8>> = sqlx::query_scalar("SELECT metadata FROM agents WHERE id=?")
-        .bind(&id).fetch_optional(&app.store.agent_pool).await.map_err(anyhow::Error::from)?;
+        .bind(&id).fetch_optional(&agent_pool).await.map_err(anyhow::Error::from)?;
     if let Some(blob)=existing {
-        if app.store.unseal(&blob)?["creation_digest"]!=crate::digest(&request) { return Err(crate::conflict("Request identifier reused with different input")); }
+        let old=app.store.unseal(&blob)?;
+        if old["creation_digest"]!=crate::digest(&request) || old["owner_id"]!=owner {
+            agent_pool.close().await;
+            return Err(crate::conflict("Request identifier reused with different input"));
+        }
     } else {
         sqlx::query("INSERT INTO agents(id,name,description,provider,model,status,metadata,revision,created_at,updated_at) VALUES(?,?,?,'openai_subscription','','active',?,1,?,?)")
             .bind(&id).bind(body.name.trim()).bind(body.description.as_deref().unwrap_or(""))
             .bind(metadata).bind(crate::now() as i64).bind(crate::now() as i64)
-            .execute(&app.store.agent_pool).await.map_err(anyhow::Error::from)?;
+            .execute(&agent_pool).await.map_err(anyhow::Error::from)?;
+    }
+    agent_pool.close().await;
+    app.store.register_agent(&id,owner).await?;
+    match app.store.agent_membership(owner,&id).await? {
+        None => { app.store.set_agent_membership(owner,&id,Relationship::Owner,0).await?; }
+        Some(value) if value["relationship"]=="owner" => {}
+        Some(_) => return Err(crate::conflict("Agent ownership changed")),
     }
     let result=json!({"id":id,"name":body.name.trim(),"assignment_required":true});
     app.store.put(&receipt,&json!({"digest":crate::digest(&request),"result":result})).await?;
@@ -167,7 +186,6 @@ mod tests {
     #[tokio::test]
     async fn deepseek_keys_are_validated_encrypted_scoped_and_not_returned() {
         let (_root, app) = fixture().await;
-        app.store.create_admin_account("deepseek-test-admin", "fixture-only", "deepseek-generation").await.unwrap();
         let mut catalog = selection_fixture(&app).await;
         catalog.connections.get_mut("one").unwrap().transport = crate::model_selection::Transport::Deepseek;
         app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();

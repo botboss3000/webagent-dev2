@@ -44,7 +44,14 @@ read-only; edits to it affect both v2 and v3 after a browser refresh. Its
 `chat_common` values merge with `chat_desktop` or `chat_mobile`; arrays replace
 the common value. V3 currently applies supported header rows (agent name,
 conversation selector, previous/next, new, minimize), active/idle composer rows
-and sizes, placeholder, transcript width, and tail clearance. Other v2 controls
+and sizes, placeholder, transcript width, and tail clearance. The composer uses the canonical v2 pill/footer markup and shared CSS.
+`v3/ui/chat/chat-pill-config.js` is a synchronized copy of
+`ui/shared/js/chat-pill-config.js` with only its sign-in hook adapted;
+`footer-handle.js` reuses the v2 footer drag interaction with v3-scoped
+conversation persistence. Keep these copies synchronized when the v2 reference
+changes. Attachment, voice, execution-mode, model-picker, abilities, and
+notification actions remain visibly unavailable until their v3 contracts are
+ported; unavailable usage statistics are omitted, not fabricated. Other v2 controls
 remain unsupported until their v3 features are implemented. Run and approval
 cards remain visible above the composer regardless of footer layout, so
 approvals stay accessible. Rust, Python worker, and dependency changes still
@@ -318,13 +325,33 @@ rejected. Policy is read at loop boundaries and rechecked before normal model
 dispatch; publication checks the current limit. Tool permissions remain a separate
 mandatory policy. Model selection and base instructions retain run pinning.
 
-`context_projection` builds a model-call projection without mutating history.
+`context_assembly` is the pure model-call assembly entry point beside the loop.
+It pins base instructions plus ordered agent prompt slots and prepares an envelope
+from authorized ability/tool guidance, bootstrap and effective tool schemas,
+durable transcript items, and native lifetime-scoped contributions. It delegates
+projection to `context_projection` and safe complete-turn planning to `context`;
+it returns either a compaction plan or the budget-checked envelope. The loop still
+owns summary generation/validation/persistence, approvals, credentials, cancellation,
+failover and dispatch. Provider adapters retain their transport-specific serialization.
+
+Each ready normal model call saves `context_assembly_report` in its encrypted run
+checkpoint before dispatch. This content-free report records provider/transport,
+turn/call identity, logical JSON envelope bytes, prompt/guidance content sizes,
+bootstrap/tool schema sizes, overlay inclusion/expiry/deduplication, and history
+message/call/result/reasoning sections. Argument and result content sizes overlap
+their parent sections and are not additional totals. The logical envelope excludes
+HTTP transport options and provider-specific translation; these are not tokenizer
+counts or provider usage. Summary calls remain loop-owned and are not reported as
+normal calls. The existing context-composition UI remains a static estimate, not
+this per-call report.
+
 Trusted producer contracts distinguish history/run/turn/call contributions;
 history contributions must already have been committed by their producer. No
-user/model JSON is implicitly accepted as trusted instructions, and no optional
-context producers or new injection API are enabled yet. Existing ability guidance
-is regenerated per call. Existing safe compaction boundaries are preserved; this
-phase does not introduce token-aware budgets or intra-task compaction.
+user/model JSON is implicitly accepted as trusted instructions. Session capability
+mode is a native call-scoped overlay; ability guidance is regenerated per call.
+This extraction preserves existing compaction boundaries and skill visibility;
+it does not introduce token-aware budgets, independent skill persistence,
+intra-task compaction, a new injection API, or v2 provider-profile parity.
 
 `publication` validates and commits accepted final output through the existing
 transaction and unique terminal-run constraint. The caller's completed status and
@@ -343,3 +370,119 @@ compiler stage before the release build. Building does not deploy.
 Administrator-only `/api/v3/models/catalog`, `/agents`, and `/connections/{id}` plus `/connections/{id}/authorization` provide configuration, retry-safe agent creation, and connection-specific subscription authorization. These browser writes use the existing CSRF boundary. Reauthorization creates a new credential reference; no primary-account tokens are copied to a backup. Non-default agents require an explicit assignment. Legacy default-agent settings remain available until that agent receives an assignment.
 
 `v3/ui/main-panel/agents/pages/model-table.js` adapts the actual v2 compact configurator, expanded rows and shared-form backup lifecycle with explicit order controls. V3 does not import v2 auth-aware JavaScript or call v2 APIs. Full role routing, API-key transports, user sharing workflows, and non-default-agent ability editing remain unsupported; catalog rows are not evidence of those capabilities. See `docs/ui-journeys.md` for the required live acceptance.
+
+
+### Loop runtime configuration and incremental accounting
+
+`<V3_STATE_ROOT>/config/loop-runtime.json` is the non-secret authority for scheduler,
+context, cache and workflow settings (container `/state/config/loop-runtime.json`).
+On first startup the application creates the file using bootstrap defaults and imports
+an existing encrypted `workflow_policy` override, without deleting that rollback material.
+A present configuration wins; malformed/unknown/version-invalid configuration fails startup.
+Do not bake live data into the image. This phase does not migrate credentials or other
+application/agent state into plain JSON. The old `src/workflow.defaults.json` is no longer
+read by runtime policy resolution.
+
+Default JSON (created by the application, not by the development tools):
+
+```json
+{"schema_version":1,"scheduler":{"max_active_runs":1,"max_unresolved_runs":200,"poll_interval_ms":300,"recovery_interval_ms":10000},"context":{"max_context_bytes":262144,"summary_reserve_bytes":16384},"cache":{"document_budget_bytes":67108864,"context_budget_bytes":16777216},"workflow":{"max_turns":50,"max_attempts":3,"max_publication_bytes":262144,"modules":{}}}
+```
+
+Resource settings are startup-applied. The existing authorized workflow-policy API keeps
+its public shape, validates changes, atomically writes this file, then publishes an
+in-memory snapshot; context limits map to the context section, not duplicate settings.
+The loop rereads validated workflow limits and modules at run boundaries, so API
+policy changes take effect without replacing a container. Scheduler and cache
+settings remain startup-applied. After a manual file edit, restart both API and
+loop to reload all settings consistently. Back up this file before operator changes; roll back by restoring
+the previous validated file. Durable interactions and legacy workflow overrides are retained.
+No migration deletes transcript rows or changes encrypted history format.
+
+One global semaphore slot is held for an executing run, including provider waits; HTTP,
+streaming and recovery tasks stay concurrent. Queued runs persist their pinned prompt/model
+and message receipt but defer history hydration until acquiring a slot. Legacy runs retain
+their existing input. `run_index.enqueue_seq` preserves admission order across status updates
+and requeues; legacy indices initialize from their existing row order.
+
+`context_state.rs` belongs to an executing task. It measures committed append-only run
+snapshots once per new item, uses a counting serializer, and resets on compaction or restart.
+Logical request reports remain byte-based, not provider-token or RSS limits. Assembly borrows
+history/schemas; the existing provider interface still takes one owned dispatch snapshot.
+There is no second full-history cache. Cache budgets are estimates per store handle; the
+concurrent multi-user storage work requires aggregate cache/handle budgeting before claiming
+a process-wide memory ceiling.
+
+Verification: run `cargo test --locked` from `v3/`; the
+`context_state::measurements::repeated_accounting_measurement` test prints repeated-accounting
+CPU time and avoided temporary JSON bytes. This is an accounting microbenchmark, not a
+provider-throughput or peak-server-memory benchmark.
+
+Remaining optimization phases: delta/periodic recovery snapshots (active-run saves still
+serialize full input), versioned guidance/schema caching, aggregate multi-user cache limits,
+provider-aware token budgets and loaded-skill lifecycle, then measured operational tuning.
+Deployment/restart is separate; source tests do not apply settings to the running service.
+
+## Phase 4 loop and publication gate
+
+The v3 API, loop, and metadata gate are separate sibling containers. The API
+container runs HTTP, authentication, admission, the tool worker, and the promotion
+broker. `webagent-dev-v3-loop` runs the Rust scheduler and recovers durable runs;
+it has no public port. `webagent-dev-v3-gate` runs an unprivileged Python gate
+with no network, credentials, state, or workspace mount. Only the Rust loop can
+authorize tools or publish a terminal assistant reply.
+
+The API and loop share `v3/runtime` for local control and worker sockets, and
+`v3/data` for durable state. The loop and gate share only
+`v3/gate-runtime`, mounted at `/run/v3/gate`. The gate socket is
+`/run/v3/gate/gate.sock` (mode 0660); the Rust client verifies gate UID 1102
+and the gate verifies loop UID 1100. Requests and responses use a versioned,
+16 KiB bounded protocol with a one-second client deadline. The gate receives
+the final reply's byte count and digest, never its text. Its first installed
+module, `publication_size_guard_v1`, rejects replies above 8192 bytes.
+Rust still enforces the native publication limit and is the only writer of
+the final chat row.
+
+Accepted messages are written with a schema-v1 loop command and an idempotency
+receipt in one user-store transaction. The loop validates and acknowledges
+commands; the queued run index remains the execution authority. Run transitions
+produce versioned events and use a per-run revision plus lease owner, epoch,
+and expiry checks. A terminal reply, completed run, and unique publication
+outbox record commit together. The publication outbox records the accepted
+reply; there is no separate downstream delivery consumer in this phase.
+
+Build the images independently on the development server:
+
+```sh
+sh /home/ar/webagent-dev2/v3/deploy.sh build
+sh /home/ar/webagent-dev2/v3/deploy.sh build-loop
+sh /home/ar/webagent-dev2/v3/gate-deploy.sh build
+```
+
+For a new installation, start the API first so its control and worker sockets
+exist, start the gate, then start the loop with `deploy.sh start-loop`.
+`deploy.sh start` and `gate-deploy.sh start` each require their named
+container to be absent. For an update, inspect the live image and container
+settings, capture a compatible full backup of `v3/data` including its
+encryption key before a migration, and retain the stopped prior container as
+rollback material. Replace only the image's matching container: a gate update
+does not replace the API or loop, and a loop update does not replace the API or
+gate. Stop the loop before replacing its image; generation, lease-epoch, and
+run-revision checks govern durable recovery when the new loop starts. Treat an interrupted external write as uncertain until reconciled.
+The API readiness endpoint returns 503 while the loop heartbeat is absent or
+stale, then 200 after the loop resumes. Check health and one persisted reply
+after each replacement. The socket directory is transient and is not
+application data or backup authority.
+
+The gate is off by default (`workflow.modules={}`). An administrator can opt
+in through the revisioned workflow policy using
+`{"modules":{"publication":["publication_size_guard_v1"]}}` for mandatory
+fail-closed behavior, or
+`{"modules":{"publication":["optional:publication_size_guard_v1"]}}` to
+record and skip gate transport/protocol failures. A mandatory gate failure
+pauses the run without publishing; an optional skip is recorded in the private
+run checkpoint at `workflow.module_skips.publication` and can proceed only
+through Rust's native publication checks. An explicit module rejection always
+blocks publication in either mode. Unknown modules or checkpoints are
+rejected. Gate failure never grants a tool permission, overrides a native
+denial, or permits a second terminal publication.

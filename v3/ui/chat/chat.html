@@ -13,11 +13,70 @@
 </div>
 <div id="chat-messages"><div id="chat-messages-inner"></div></div>
 <form id="composer"><div id="chat-input-area">
-  <div id="chat-above-pill" class="chat-above-pill"><div id="runs" aria-live="polite"></div></div>
+<div id="chat-above-pill" class="chat-above-pill"><div id="runs" aria-live="polite"></div></div>
+  <div id="chat-composer-react-island"></div>
   <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
+    <div id="chat-preview-bar" style="display:none;"></div>
     <div class="chat-pill-layout-rows">
-      <div class="chat-pill-layout-row" data-pill-row="0"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" spellcheck="true"></textarea></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div></div>
-      <div class="chat-pill-layout-row" data-pill-row="1"><div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div><div class="chat-pill-layout-zone chat-pill-layout-zone-center"><span id="run-status">Ready</span></div><div class="chat-pill-layout-zone chat-pill-layout-zone-right"><div class="chat-pill-buttons"><button id="stop" class="chat-pill-stop" type="button" hidden title="Stop generation" aria-label="Stop generation">■</button><button id="send" class="chat-pill-send" title="Send message" aria-label="Send message">↑</button></div></div></div>
+      <div class="chat-pill-layout-row" data-pill-row="0">
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-left"></div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-center">
+          <textarea id="chat-input" class="chat-pill-input" rows="1" placeholder="Chat" autocomplete="off" autocapitalize="off" autocorrect="on" spellcheck="true"></textarea>
+        </div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-right"></div>
+      </div>
+      <div class="chat-pill-layout-row" data-pill-row="1">
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-left" style="align-items:flex-end;padding:4px 2px 20px 20px;">
+          <button id="chat-attach-btn" class="chat-pill-attach" title="Attach files (or paste / drop onto the chat pill)"><i data-lucide="plus" style="width:22px;height:22px;"></i></button>
+        </div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-center"></div>
+        <div class="chat-pill-layout-zone chat-pill-layout-zone-right" style="align-items:flex-end;padding:4px 20px 20px 0;">
+          <div class="chat-pill-buttons">
+            <button id="chat-voice-btn" class="chat-pill-voice" title="Voice conversation" aria-label="Voice conversation"><i data-lucide="mic" style="width:22px;height:22px;"></i></button>
+            <button id="chat-send" class="chat-pill-send" title="Send message" disabled><i data-lucide="send" style="width:22px;height:22px;"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="chat-pill-stats-row" class="chat-pill-stats-row">
+      <div id="chat-pill-stats" class="chat-pill-stats">
+        <button type="button" class="chat-stats-chev left" aria-label="Scroll left">&#10094;</button>
+        <div id="chat-pill-stats-strip" class="chat-pill-stats-strip">
+          <div id="chat-token-bar" class="chat-token-bar">
+            <span class="chat-token-label">in</span>
+            <span id="chat-tokens-in" class="chat-token-value">0</span>
+            <span id="chat-token-spinner" class="chat-token-spinner"></span>
+            <span id="chat-tokens-out" class="chat-token-value">0</span>
+            <span class="chat-token-label">out</span>
+          </div>
+          <div id="chat-model-ctx" class="chat-model-ctx" style="display:none;" title="Active model's context window and max output"></div>
+          <div id="chat-cost" class="chat-cost" style="display:none;" title="Estimated cost of this session so far (tokens used x active model's price)"></div>
+        </div>
+        <button type="button" class="chat-stats-chev right" aria-label="Scroll right">&#10095;</button>
+      </div>
+    </div>
+    <button id="chat-stop-btn" class="chat-pill-stop" title="Stop generation" data-header-control="stop" hidden><i data-lucide="octagon" style="width:18px;height:18px;"></i></button>
+    <button id="chat-continue-btn" class="chat-pill-continue" title="Continue" data-header-control="continue" hidden><i data-lucide="play" style="width:18px;height:18px;"></i></button>
+    <input type="file" id="chat-file-input" multiple accept="image/*,audio/*,video/*,.pdf,.txt,.md,.csv,.json" hidden>
+    <div id="chat-footer-handle" class="chat-footer-handle" title="Drag to show/hide footer" aria-expanded="false" aria-controls="chat-footer-row">
+      <div class="chat-footer-handle-line"></div>
     </div>
   </div>
-</div></form>
+  <div id="chat-footer-row" class="chat-footer-row" hidden>
+    <button id="chat-abilities-btn" class="chat-skills-btn" title="Abilities — click to turn each on/off for this chat" data-header-control="abilities">
+      <i data-lucide="blocks" style="width:16px;height:16px;"></i>
+      <span id="chat-abilities-badge" class="csp-badge">0</span>
+    </button>
+    <button id="chat-target-btn" class="chat-target-btn" type="button" title="Remote Control — choose which device runs your next message" data-header-control="target"><i data-lucide="monitor" style="width:16px;height:16px;"></i><span class="chat-target-label"></span></button>
+    <button id="chat-mode-btn" class="chat-mode-btn" title="Cycle execution mode" data-header-control="mode">Ask</button>
+    <button id="chat-model-changer" class="chat-model-changer" data-header-control="model_changer" title="Click for model list — ◀ ▶ arrows to cycle" type="button">
+      <svg class="cmc-chev cmc-chev-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      <span class="cmc-name">model</span>
+      <span class="cmc-status"></span>
+      <svg class="cmc-chev cmc-chev-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+    </button>
+    <div id="cmc-toast" class="cmc-toast" style="display:none;"></div>
+  </div>
+</div>
+
+</form>

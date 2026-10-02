@@ -39,6 +39,7 @@ source = Path("/live-v3")
 if source.is_symlink() or not source.is_dir() or source.stat().st_uid != 1000:
     raise RuntimeError("live v3 source mount unavailable")
 promote_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+Path("/run/v3/promote/promote.sock").unlink(missing_ok=True)
 promote_socket.bind("/run/v3/promote/promote.sock")
 os.chown("/run/v3/promote/promote.sock", 1100, 1100)
 os.chmod("/run/v3/promote/promote.sock", 0o600)

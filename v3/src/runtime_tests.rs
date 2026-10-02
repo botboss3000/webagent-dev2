@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-pub(crate) async fn fixture() -> (TempDir, App) {
+pub(crate) async fn fixture_uninitialized() -> (TempDir, App) {
     let root = tempfile::tempdir().unwrap();
     let control_dir = root.path().join("control");
     std::fs::create_dir(&control_dir).unwrap();
@@ -35,7 +35,9 @@ pub(crate) async fn fixture() -> (TempDir, App) {
         )
         .await
         .unwrap();
+    let (runtime, runtime_path) = loop_runtime::Config::initialize(root.path(), &store).await.unwrap();
     let app = App {
+        runtime: Arc::new(RwLock::new(runtime)), runtime_path,
         message_api_token_hash: None,
         browser_login_bridge: None,
         store,
@@ -48,7 +50,7 @@ pub(crate) async fn fixture() -> (TempDir, App) {
         refresh: Arc::new(Mutex::new(())),
         login: Arc::new(RwLock::new(None)),
         active: Arc::new(Mutex::new(HashMap::new())),
-        slots: Arc::new(Semaphore::new(2)),
+        slots: Arc::new(Semaphore::new(1)),
         ready: Arc::new(AtomicBool::new(true)),
         stop: CancellationToken::new(),
         login_attempts: Arc::new(Mutex::new(Vec::new())),
@@ -60,6 +62,13 @@ pub(crate) async fn fixture() -> (TempDir, App) {
     };
     (root, app)
 }
+pub(crate) async fn fixture() -> (TempDir, App) {
+    let (root, app) = fixture_uninitialized().await;
+    app.store.create_admin_account("admin", "fixture-only-password-hash",
+        "fixture-generation").await.unwrap();
+    (root, app)
+}
+
 
 fn checkpoint_pre_tool(name: &str) -> workflow::Input {
     workflow::Input::PreTool(workflow::PreToolInput {
@@ -92,7 +101,7 @@ async fn chat_ui_config_reads_data_config_on_each_request_and_requires_auth() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -292,9 +301,7 @@ async fn queued(app: &App, sid: &str) -> String {
 
 async fn running(app: &App, id: &str, generation: &str) {
     let mut run = app.run(id).await.unwrap();
-    run["status"] = json!("running");
-    run["generation"] = json!(generation);
-    app.save(&mut run).await.unwrap();
+    assert!(app.store.claim_run(&mut run,"fixture-loop",generation).await.unwrap());
 }
 
 #[tokio::test]
@@ -396,7 +403,7 @@ async fn agent_proposal_is_visible_and_admin_can_promote_the_same_review() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -577,7 +584,7 @@ async fn promotion_requires_auth_and_csrf_and_reuses_durable_receipt() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -732,7 +739,7 @@ async fn admin_rejects_proposal_once_and_csrf_is_required() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -837,7 +844,7 @@ async fn source_review_route_requires_auth_policy_and_existing_session() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -958,7 +965,7 @@ async fn authentication_and_csrf_protect_control_routes() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"expected","expires":now()+3600}),
+            &json!({"csrf":"expected","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -1306,16 +1313,6 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     let waiting = app.run(&id).await.unwrap();
     assert_eq!(waiting["status"], "waiting_approval");
     assert_eq!(waiting["provider_selection"]["model"], "pinned-model");
-    assert_eq!(
-        settings(
-            State(app.clone()),
-            Json(json!({"model":"replacement-model","provider":"openai_subscription"}))
-        )
-        .await
-        .unwrap()
-        .0["model"],
-        "replacement-model"
-    );
     assert_eq!(waiting["pending"]["arguments"]["command"], "printf hello");
     let approval_id = waiting["pending"]["id"].as_str().unwrap().to_owned();
     assert_eq!(
@@ -1352,6 +1349,16 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     assert!(requests
         .iter()
         .all(|request| request["model"] == "pinned-model"));
+    assert_eq!(
+        settings(
+            State(app.clone()),
+            Json(json!({"model":"replacement-model","provider":"openai_subscription"}))
+        )
+        .await
+        .unwrap()
+        .0["model"],
+        "replacement-model"
+    );
     let next_sid = conversation(&app).await;
     let next_id = queued(&app, &next_sid).await;
     assert_eq!(
@@ -1517,6 +1524,22 @@ async fn long_run_compacts_before_model_and_keeps_full_message_history() {
         .iter()
         .all(|request| request["model"] == "summary-pinned"));
     assert!(requests[0]["tools"].is_null());
+    // The durable report must describe the envelope actually sent after compaction.
+    let report = &finished["context_assembly_report"];
+    let request = &requests[1];
+    let envelope = json!({"instructions":request["instructions"],
+        "tools":request["tools"],"input":request["input"]});
+    assert_eq!(report["envelope_bytes"], serde_json::to_vec(&envelope).unwrap().len());
+    assert_eq!(report["history_json_bytes"], serde_json::to_vec(&request["input"]).unwrap().len());
+    assert_eq!(report["schemas_json_bytes"], serde_json::to_vec(&request["tools"]).unwrap().len());
+    // Successful output resets attempts; the report describes the pre-dispatch call.
+    assert_eq!(report["call"], 1);
+    assert_eq!(report["turn"], finished["workflow"]["receipts"]["model_dispatch"]["turn"]);
+    assert_eq!(report["transport"], "responses");
+    assert_eq!(report["overlays"][0]["id"], "session_mode");
+    assert_eq!(report["overlays"][0]["disposition"], "included");
+    assert!(request["instructions"].as_str().unwrap().contains("Current session capability mode:"));
+    assert!(!report.to_string().contains("Earlier conversation summary"));
     assert_eq!(requests[1]["input"][0]["role"], "user");
     assert!(requests[1]["input"][0]["content"]
         .as_str()
@@ -1922,7 +1945,7 @@ async fn sse_last_event_id_replays_only_chat_after_reconnect_cursor() {
     run["turns"] = json!(1);
     app.store
         .save_run(
-            &run,
+            &mut run,
             "model_output",
             &json!({
                 "output":[{"type":"message","role":"assistant",
@@ -1938,7 +1961,7 @@ async fn sse_last_event_id_replays_only_chat_after_reconnect_cursor() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -1976,7 +1999,8 @@ async fn expired_and_revoked_sessions_cannot_open_authenticated_routes() {
     let token = uuid();
     let auth_key = format!("auth:{}", digest(&json!(token)));
     app.store
-        .put(&auth_key, &json!({"csrf":"fixture","expires":now()-1}))
+        .put(&auth_key, &json!({"csrf":"fixture","expires":now()-1,
+            "generation":"fixture-generation","user_id":"admin"}))
         .await
         .unwrap();
     let request = || {
@@ -1995,7 +2019,8 @@ async fn expired_and_revoked_sessions_cannot_open_authenticated_routes() {
         StatusCode::UNAUTHORIZED
     );
     app.store
-        .put(&auth_key, &json!({"csrf":"fixture","expires":now()+3600}))
+        .put(&auth_key, &json!({"csrf":"fixture","expires":now()+3600,
+            "generation":"fixture-generation","user_id":"admin"}))
         .await
         .unwrap();
     assert_eq!(
@@ -2019,7 +2044,7 @@ async fn expired_and_revoked_sessions_cannot_open_authenticated_routes() {
 
 #[tokio::test]
 async fn first_run_setup_is_single_claim_and_revokes_old_sessions() {
-    let (_root, app) = fixture().await;
+    let (_root, app) = fixture_uninitialized().await;
     let old_token = uuid();
     app.store
         .put(
@@ -2121,7 +2146,7 @@ async fn first_run_setup_is_single_claim_and_revokes_old_sessions() {
 
 #[tokio::test]
 async fn account_panel_updates_profile_and_rotates_password_generation() {
-    let (_root, app) = fixture().await;
+    let (_root, app) = fixture_uninitialized().await;
     app.store.delete("admin").await.unwrap();
     setup_admin(
         State(app.clone()),
@@ -2221,7 +2246,7 @@ async fn account_panel_updates_profile_and_rotates_password_generation() {
 }
 #[tokio::test]
 async fn sign_in_duration_and_session_revocation_use_the_app_store() {
-    let (_root, app) = fixture().await;
+    let (_root, app) = fixture_uninitialized().await;
     app.store.delete("admin").await.unwrap();
     setup_admin(
         State(app.clone()),
@@ -2481,7 +2506,7 @@ async fn state_inspection_is_authenticated_policy_controlled_and_session_bounded
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -2763,7 +2788,7 @@ async fn prompt_slot_api_requires_auth_csrf_and_current_revision() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -2937,7 +2962,7 @@ async fn ability_auth(app: &App) -> String {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"ability-fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"ability-fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -3307,7 +3332,7 @@ async fn ability_changes_revoke_waiting_approvals_for_both_scopes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(app.run(&rid).await.unwrap()["status"], "queued");
+    assert_eq!(app.run(&rid).await.unwrap()["status"], "stopped");
     assert_eq!(
         approval(
             State(app.clone()),
@@ -3402,7 +3427,7 @@ async fn session_mode_api_requires_auth_and_csrf_and_is_session_scoped() {
     app.store
         .put(
             &format!("auth:{}", digest(&json!(token))),
-            &json!({"csrf":"fixture","expires":now()+3600,"generation":null}),
+            &json!({"csrf":"fixture","expires":now()+3600,"generation":"fixture-generation"}),
         )
         .await
         .unwrap();
@@ -3626,12 +3651,17 @@ async fn workflow_policy_is_authenticated_validated_and_live() {
     assert!(workflow_policy_set(State(app.clone()),Json(json!({"max_turns":51}))).await.is_err());
     assert!(app.store.get("workflow_policy").await.unwrap().is_none());
     let first=current_workflow_policy(&app).await.unwrap().revision().unwrap();
+    let mut loop_peer=app.clone();
+    loop_peer.runtime=Arc::new(RwLock::new(loop_runtime::Config::default()));
     workflow_policy_set(State(app.clone()),Json(json!({"max_turns":2}))).await.unwrap();
     let current=current_workflow_policy(&app).await.unwrap();
     assert_eq!(current.max_turns,2);
     assert_ne!(first,current.revision().unwrap());
     assert!(workflow_policy_set(State(app.clone()),Json(json!({"modules":{"publication":["uninstalled"]}}))).await.is_err());
     assert_eq!(current_workflow_policy(&app).await.unwrap().max_turns,2);
+    assert_eq!(current_workflow_policy(&loop_peer).await.unwrap().max_turns,2);
+    std::fs::write(&app.runtime_path,b"{}").unwrap();
+    assert!(current_workflow_policy(&loop_peer).await.is_err());
 }
 
 #[tokio::test]
@@ -3653,6 +3683,209 @@ async fn publication_commits_one_terminal_message_and_private_receipt() {
     assert_eq!(app.run(&id).await.unwrap()["workflow"]["receipts"]["publication"]["result"]["decision"],"pass");
 }
 
+
+#[tokio::test]
+async fn uncertain_write_recovery_decisions_preserve_effects_and_publish_once() {
+    use axum::routing::post;
+    let (root, mut app) = fixture().await;
+    let mock = Router::new().route("/responses", post(|| async {
+        let event = json!({"type":"response.completed","response":{"status":"completed",
+            "output":[{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":"Recovered reply."}]}]}});
+        ([("content-type","text/event-stream")], format!("data: {event}\n\n"))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
+
+    for decision in ["accept", "retry", "abandon"] {
+        let sid = conversation(&app).await;
+        let id = queued(&app, &sid).await;
+        let mut run = app.run(&id).await.unwrap();
+        run["status"] = json!("recovery");
+        run["phase"] = json!("tools");
+        run["uncertain"] = json!(true);
+        run["calls"] = json!([{"type":"function_call","call_id":"effect-call",
+            "name":"file_write","arguments":"{\"path\":\"effect.txt\",\"content\":\"content\"}"}]);
+        run["pending"] = json!({"id":"effect-approval","name":"file_write",
+            "call_id":"effect-call","state":"executing","decision":"consumed"});
+        workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
+            &checkpoint_pre_tool("file_write"), workflow::Decision::Pass).unwrap();
+        app.save(&mut run).await.unwrap();
+
+        let mut body = json!({"client_request_id":format!("review-{decision}"),"decision":decision});
+        if decision == "accept" { body["output"] = json!("confirmed effect"); }
+        let first = command(State(app.clone()), Path((id.clone(), "recovery".into())),
+            Json(body.clone())).await.unwrap().0;
+        assert_eq!(first["status"], match decision {
+            "accept" | "retry" => "queued", _ => "cancelled",
+        });
+        assert_eq!(first["uncertain"], false);
+        let again = command(State(app.clone()), Path((id.clone(), "recovery".into())),
+            Json(body)).await.unwrap().0;
+        assert_eq!(again, first);
+        let reviewed = app.run(&id).await.unwrap();
+        let (chat, _) = app.store.chat_snapshot(&sid).await.unwrap();
+        assert_eq!(chat.len(), 1);
+        assert_eq!(chat[0]["role"], "user");
+
+        match decision {
+            "accept" => {
+                assert!(reviewed["pending"].is_null());
+                assert_eq!(reviewed["call_index"], 1);
+                assert_eq!(reviewed["input"].as_array().unwrap().last().unwrap()["call_id"],
+                    "effect-call");
+                assert_eq!(reviewed["workflow"]["receipts"]["tool_result"]["result"]["decision"],
+                    "pass");
+                running(&app, &id, "recovered-generation").await;
+                execute_run(app.clone(), id.clone(), "recovered-generation".into(),
+                    CancellationToken::new()).await.unwrap();
+                assert_eq!(app.run(&id).await.unwrap()["status"], "completed");
+                let (chat, _) = app.store.chat_snapshot(&sid).await.unwrap();
+                assert_eq!(chat.iter().filter(|item| item["role"] == "assistant").count(), 1);
+                assert_eq!(chat[1]["content"], "Recovered reply.");
+                let reopened = Store::open(root.path()).await.unwrap();
+                let (durable_chat, _) = reopened.chat_snapshot(&sid).await.unwrap();
+                assert_eq!(durable_chat.iter().filter(|item| item["role"] == "assistant").count(), 1);
+            }
+            "retry" => {
+                assert_eq!(reviewed["pending"]["state"], "requested");
+                assert!(reviewed["pending"]["decision"].is_null());
+                assert_eq!(reviewed["call_index"], 0);
+            }
+            _ => {
+                assert_eq!(reviewed["status"], "cancelled");
+                assert_eq!(reviewed["call_index"], 0);
+            }
+        }
+    }
+    server.abort();
+}
+
+#[test]
+fn late_known_write_result_resolves_cancel_and_shutoff_without_replay() {
+    let policy = workflow::Policy::resolve(None).unwrap();
+    for (status, error, expected) in [
+        ("recovery", "Cancelled by user", "cancelled"),
+        ("stopped", "Stopped by global shutoff", "stopped"),
+    ] {
+        let mut run = json!({"status":status,"uncertain":true,"error":error,
+            "generation":"dispatch","turns":1,"call_index":0,"input":[],
+            "pending":{"call_id":"effect-call","name":"file_write","state":"executing"}});
+        workflow::record(&mut run, &policy, &checkpoint_pre_tool("file_write"),
+            workflow::Decision::Pass).unwrap();
+        let result = json!({"status":"success","output":"known effect"});
+        assert!(reconcile_late_tool_result(&mut run, Ok(result)).unwrap());
+        assert_eq!(run["status"], expected);
+        assert_eq!(run["uncertain"], false);
+        assert!(run["pending"].is_null());
+        assert_eq!(run["input"].as_array().unwrap().len(), 1);
+        assert_eq!(run["input"][0]["call_id"], "effect-call");
+        assert!(!reconcile_late_tool_result(&mut run,
+            Ok(json!({"status":"success","output":"duplicate"}))).unwrap());
+        assert_eq!(run["input"].as_array().unwrap().len(), 1);
+    }
+
+    let mut unknown = json!({"status":"recovery","uncertain":true,
+        "error":"Cancelled by user","input":[],"pending":{"call_id":"effect-call"}});
+    assert!(!reconcile_late_tool_result(&mut unknown,
+        Ok(json!({"status":"uncertain","output":"unknown"}))).unwrap());
+    assert_eq!(unknown["status"], "recovery");
+    assert_eq!(unknown["uncertain"], true);
+}
+
+#[tokio::test]
+async fn current_mode_contribution_changes_per_call_without_entering_history() {
+    use axum::routing::post;
+    let (_root, mut app) = fixture().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let mock = Router::new().route("/responses",
+        post(move |Json(body): Json<Value>| {
+            let captured = captured.clone();
+            async move {
+                captured.lock().await.push(body);
+                let event = json!({"type":"response.completed","response":{"status":"completed",
+                    "output":[{"type":"message","role":"assistant",
+                        "content":[{"type":"output_text","text":"Done."}]}]}});
+                ([("content-type","text/event-stream")], format!("data: {event}\n\n"))
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid = conversation(&app).await;
+
+    let first = queued(&app, &sid).await;
+    running(&app, &first, "write-mode").await;
+    execute_run(app.clone(), first.clone(), "write-mode".into(),
+        CancellationToken::new()).await.unwrap();
+    assert_eq!(app.run(&first).await.unwrap()["status"], "completed");
+    assert_eq!(session_mode_set(State(app.clone()), Path(sid.clone()),
+        Json(SessionModeBody { mode:"read_only".into() })).await.unwrap().0["revision"], 1);
+
+    let second = queued(&app, &sid).await;
+    running(&app, &second, "read-mode").await;
+    execute_run(app.clone(), second.clone(), "read-mode".into(),
+        CancellationToken::new()).await.unwrap();
+    assert_eq!(app.run(&second).await.unwrap()["status"], "completed");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]["instructions"].as_str().unwrap()
+        .contains("Current session capability mode: write (revision 0)"));
+    assert!(requests[1]["instructions"].as_str().unwrap()
+        .contains("Current session capability mode: read_only (revision 1)"));
+    for id in [&first, &second] {
+        let durable = app.run(id).await.unwrap();
+        assert!(!durable["input"].to_string().contains("Current session capability mode:"));
+    }
+    assert!(!json!(app.store.context(&sid).await.unwrap()).to_string()
+        .contains("Current session capability mode:"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn diagnostics_route_is_authenticated_session_bound_and_redacted() {
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let other = conversation(&app).await;
+    let id = queued(&app, &sid).await;
+    let sentinel = "secret tool arguments 8319";
+    let mut run = app.run(&id).await.unwrap();
+    run["pending"] = json!({"arguments":{"content":sentinel}});
+    workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
+        &checkpoint_pre_tool("file_write"),
+        workflow::Decision::Reject { reason:sentinel.into() }).unwrap();
+    app.save(&mut run).await.unwrap();
+    let uri = format!("/api/v3/sessions/{sid}/runs/{id}/diagnostics");
+    let request = |cookie: Option<&str>, uri: &str| {
+        let mut builder = Request::builder().uri(uri);
+        if let Some(cookie) = cookie { builder = builder.header("cookie", cookie); }
+        builder.body(Body::empty()).unwrap()
+    };
+    assert_eq!(router(app.clone()).oneshot(request(None, &uri)).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED);
+    let cookie = ability_auth(&app).await;
+    assert_eq!(router(app.clone()).oneshot(request(Some(&cookie),
+        &format!("/api/v3/sessions/{other}/runs/{id}/diagnostics")))
+        .await.unwrap().status(), StatusCode::NOT_FOUND);
+    let response = router(app.clone()).oneshot(request(Some(&cookie), &uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains(sentinel));
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["run_id"], id);
+    assert_eq!(body["session_id"], sid);
+    assert_eq!(body["status"], "queued");
+    assert_eq!(body["checkpoints"].as_array().unwrap().last().unwrap()["checkpoint"], "pre_tool");
+    let denied = body["checkpoints"].as_array().unwrap().last().unwrap();
+    assert_eq!(denied["decision"], "reject");
+    assert_eq!(denied["reason_code"], "rejected");
+    assert_eq!(denied.as_object().unwrap().len(), 6);
+    assert_eq!(body.as_object().unwrap().len(), 5);
+}
 
 #[tokio::test]
 async fn failed_publication_preserves_the_callers_run() {
@@ -3739,8 +3972,14 @@ fn successful_tool_result_records_pass_without_changing_dispatch_identity() {
 pub(crate) async fn selection_fixture(app: &App) -> model_selection::Catalog {
     use model_selection::*;
     use std::collections::{BTreeMap, BTreeSet};
-    sqlx::query("INSERT INTO agents SELECT 'agent-a','Agent A',description,provider,model,status,metadata,revision,created_at,updated_at FROM agents WHERE id='shared_default'")
-        .execute(&app.store.agent_pool).await.unwrap();
+    let agent_pool=crate::agent_storage::open_agent_pool(&app.store.root,"agent-a").await.unwrap();
+    let metadata=json!({"owner_id":"admin","ability_modes":{"codebase_admin":"visible"},
+        "skill_modes":{},"tool_modes":{},"ability_revision":0});
+    sqlx::query("INSERT INTO agents(id,name,description,provider,model,status,metadata,revision,created_at,updated_at) VALUES('agent-a','Agent A','','openai_subscription','fixture','active',?,1,0,0)")
+        .bind(app.store.seal(&metadata).unwrap()).execute(&agent_pool).await.unwrap();
+    agent_pool.close().await;
+    app.store.register_agent("agent-a","admin").await.unwrap();
+    app.store.set_agent_membership("admin","agent-a",crate::access::Relationship::Owner,0).await.unwrap();
     let mut catalog = Catalog::default();
     for (id, model) in [("one", "model-one"), ("two", "model-two")] {
         let credential_ref = format!("credential:{id}");
@@ -3763,8 +4002,9 @@ async fn model_selection_admission_pins_agent_model_prompt_and_credentials() {
     let (_root, app) = fixture().await;
     let mut catalog = selection_fixture(&app).await;
     app.store.upsert_prompt_slot("selection-isolation", "DEFAULT PRIVATE PROMPT", Some(5), None, None, 0).await.unwrap();
+    let agent=app.store.for_agent("agent-a").await.unwrap();
     sqlx::query("INSERT INTO agent_prompts(id,agent_id,slot_name,order_index,lock,merge_mode,content,revision,updated_at) VALUES('agent-a:selection-isolation','agent-a','selection-isolation',5,0,'replace',?,1,0)")
-        .bind(app.store.seal(&json!("AGENT A PRIVATE PROMPT")).unwrap()).execute(&app.store.agent_pool).await.unwrap();
+        .bind(app.store.seal(&json!("AGENT A PRIVATE PROMPT")).unwrap()).execute(&agent.agent_pool).await.unwrap();
     for (agent_id, expected_model, expected_token, expected_prompt, excluded) in [
         ("shared_default","model-one","token-one","DEFAULT PRIVATE PROMPT","AGENT A PRIVATE PROMPT"),
         ("agent-a","model-two","token-two","AGENT A PRIVATE PROMPT","DEFAULT PRIVATE PROMPT"),
@@ -3786,7 +4026,7 @@ async fn model_selection_admission_pins_agent_model_prompt_and_credentials() {
             assert_eq!(app.run_candidate(&run).await.unwrap().unwrap().upstream_model,"model-two");
             assert_eq!(app.tokens_for(&selection,&run).await.unwrap()["access_token"],"token-two");
             let (policy,_)=effective_policy(&app,&sid).await.unwrap();
-            assert_eq!(policy_decision(&policy,"prompt_slot_read"),"deny");
+            assert_eq!(policy_decision(&policy,"prompt_slot_read"),"allow");
         }
     }
     assert_eq!(app.store.list_prompt_slots().await.unwrap().iter().filter(|p|p["slot_name"]=="selection-isolation").count(),1);
@@ -3842,10 +4082,9 @@ async fn model_selection_unsafe_failures_do_not_change_candidate() {
 #[tokio::test]
 async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries() {
     let (_root,app)=fixture().await;
-    app.store.create_admin_account("catalog-admin","fixture-only","catalog-generation").await.unwrap();
     let token=uuid();
     app.store.put(&format!("auth:{}",digest(&json!(token))),&json!({"csrf":"catalog-csrf","expires":now()+3600,
-        "generation":"catalog-generation","user_id":"admin"})).await.unwrap();
+        "generation":"fixture-generation","user_id":"admin"})).await.unwrap();
     let request=|method: &str,path: &str,cookie: bool,csrf: bool,body: Value| {
         let mut r=Request::builder().method(method).uri(path).header("content-type","application/json");
         if cookie { r=r.header("cookie",format!("v3_session={token}")); }
@@ -3864,11 +4103,18 @@ async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries
         let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,true,new_agent.clone())).await.unwrap();
         assert_eq!(response.status(),StatusCode::OK);
         let body: Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
-        if created.is_null() { created=body.clone(); }
+        if created.is_null() {
+            created=body.clone();
+            let generation=app.store.account_by_id("admin").await.unwrap().unwrap()["generation"].clone();
+            app.store.put(&format!("auth:{}",digest(&json!(token))),
+                &json!({"csrf":"catalog-csrf","expires":now()+3600,
+                    "generation":generation,"user_id":"admin"})).await.unwrap();
+        }
         assert_eq!(body,created);
     }
     let count: i64=sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id=?").bind(created["id"].as_str().unwrap())
-        .fetch_one(&app.store.agent_pool).await.unwrap();
+        .fetch_one(&app.store.for_agent(created["id"].as_str().unwrap()).await.unwrap().agent_pool)
+        .await.unwrap();
     assert_eq!(count,1);
     let response=router(app.clone()).oneshot(request("POST","/api/v3/models/agents",true,true,
         json!({"client_request_id":"catalog-agent","name":"Different Agent"}))).await.unwrap();
@@ -3878,7 +4124,7 @@ async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries
     sqlx::query("UPDATE user_profiles SET value=? WHERE user_id='admin'")
         .bind(app.store.seal(&profile).unwrap()).execute(&app.store.app_pool).await.unwrap();
     let response=router(app.clone()).oneshot(request("GET","/api/v3/models/catalog",true,false,Value::Null)).await.unwrap();
-    assert_eq!(response.status(),StatusCode::FORBIDDEN);
+    assert_eq!(response.status(),StatusCode::OK);
 }
 
 #[tokio::test]
@@ -3900,4 +4146,230 @@ async fn deepseek_pins_transport_and_mixed_provider_backup() {
     model_failure(&mut run,&provider::typed_failure(model_selection::FailureKind::ModelUnavailable,false,"unavailable")).unwrap();
     assert_eq!(run["provider_selection"]["provider"],"openai_subscription");
     assert_eq!(run["provider_selection"]["model"],"model-one");
+}
+
+#[tokio::test]
+async fn runtime_config_migrates_only_when_absent_and_survives_reload() {
+    let root=tempfile::tempdir().unwrap();let store=Store::open(root.path()).await.unwrap();
+    store.put("workflow_policy",&json!({"max_turns":2})).await.unwrap();
+    let (c,path)=loop_runtime::Config::initialize(root.path(),&store).await.unwrap();
+    assert_eq!(c.policy().unwrap().max_turns,2);
+    store.put("workflow_policy",&json!({"max_turns":3})).await.unwrap();
+    assert_eq!(loop_runtime::Config::initialize(root.path(),&store).await.unwrap().0.policy().unwrap().max_turns,2);
+    std::fs::write(path,b"{\"schema_version\":99}").unwrap();
+    assert!(loop_runtime::Config::initialize(root.path(),&store).await.is_err());
+}
+#[tokio::test]
+async fn lightweight_queue_keeps_history_durable_and_fifo_across_updates() {
+    let (root,app)=fixture().await;let a=conversation(&app).await;let b=conversation(&app).await;
+    let first=queued(&app,&a).await;let second=queued(&app,&b).await;
+    let mut run=app.run(&first).await.unwrap();assert_eq!(run["input"],json!([]));assert_eq!(run["context_hydration_pending"],true);
+    assert_eq!(app.store.context(&a).await.unwrap().len(),1);
+    run["updated_at"]=json!(now()+500);app.save(&mut run).await.unwrap();
+    let rows=app.store.active_runs().await.unwrap();assert_eq!(rows[0]["id"],first);assert_eq!(rows[1]["id"],second);
+    let reopened=Store::open(root.path()).await.unwrap();assert_eq!(reopened.active_runs().await.unwrap()[0]["id"],first);
+}
+#[tokio::test]
+async fn single_slot_blocks_queue_without_hydration() {
+    let (_root,app)=fixture().await;let sid=conversation(&app).await;let id=queued(&app,&sid).await;
+    let slot=app.slots.clone().acquire_owned().await.unwrap();assert!(app.slots.clone().try_acquire_owned().is_err());
+    let task=tokio::spawn(scheduler(app.clone()));tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(status(&app.run(&id).await.unwrap()),"queued");assert_eq!(app.run(&id).await.unwrap()["input"],json!([]));
+    app.stop.cancel();task.await.unwrap();drop(slot);assert_eq!(app.slots.available_permits(),1);
+}
+#[tokio::test]
+async fn phase3_http_isolation_and_membership_revocation() {
+    let (_root,app)=fixture().await;
+    let account=app.store.create_user_account("phase3_member","fixture-only-password-hash").await.unwrap();
+    let user_id=account["user_id"].as_str().unwrap().to_owned();
+    let admin_token=uuid();let user_token=uuid();
+    let admin_key=format!("auth:{}",digest(&json!(admin_token)));
+    let user_key=format!("auth:{}",digest(&json!(user_token)));
+    app.store.put(&admin_key,&json!({"user_id":"admin","generation":"fixture-generation",
+        "csrf":"admin-csrf","expires":now()+3600})).await.unwrap();
+    let request=|token:&str,csrf:&str,method:&str,path:&str,body:Value| {
+        Request::builder().method(method).uri(path).header("content-type","application/json")
+            .header("cookie",format!("v3_session={token}")).header("x-csrf-token",csrf)
+            .body(Body::from(body.to_string())).unwrap()
+    };
+    let generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&user_key,&json!({"user_id":user_id,"generation":generation,
+        "csrf":"user-csrf","expires":now()+3600})).await.unwrap();
+    assert_eq!(router(app.clone()).oneshot(request(&user_token,"user-csrf","GET",
+        "/api/v3/auth/me",Value::Null)).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+    app.store.update_account_access(&user_id,1,access::AccountStatus::Active,
+        access::Role::User,"operator").await.unwrap();
+    app.store.set_agent_membership(&user_id,"shared_default",access::Relationship::Member,0).await.unwrap();
+    let generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&user_key,&json!({"user_id":user_id,"generation":generation,
+        "csrf":"user-csrf","expires":now()+3600})).await.unwrap();
+    let body=json!({"client_request_id":"same-request","agent_id":"shared_default"});
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        "/api/v3/sessions",body.clone())).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let user_session:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        "/api/v3/sessions",body.clone())).await.unwrap();
+    let retried:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    assert_eq!(retried,user_session);
+    let response=router(app.clone()).oneshot(request(&admin_token,"admin-csrf","POST",
+        "/api/v3/sessions",body)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let admin_session:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    assert_ne!(user_session["id"],admin_session["id"]);
+    let user_path=format!("/api/v3/sessions/{}",user_session["id"].as_str().unwrap());
+    let admin_path=format!("/api/v3/sessions/{}",admin_session["id"].as_str().unwrap());
+    assert_eq!(router(app.clone()).oneshot(request(&admin_token,"admin-csrf","GET",
+        &user_path,Value::Null)).await.unwrap().status(),StatusCode::NOT_FOUND);
+    assert_eq!(router(app.clone()).oneshot(request(&user_token,"user-csrf","GET",
+        &admin_path,Value::Null)).await.unwrap().status(),StatusCode::NOT_FOUND);
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        &format!("{user_path}/messages"),json!({"client_message_id":"one","text":"hello"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::ACCEPTED);
+    let accepted:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let run_id=accepted["run_id"].as_str().unwrap();
+    let response=router(app.clone()).oneshot(request(&admin_token,"admin-csrf","PUT",
+        &format!("/api/v3/admin/access/memberships/{user_id}/shared_default"),
+        json!({"expected_revision":1,"relationship":"revoked"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let scoped=app.store.for_user(&user_id).await.unwrap();
+    assert_eq!(scoped.get(&key("run",run_id)).await.unwrap().unwrap()["status"],"stopped");
+    assert_eq!(router(app.clone()).oneshot(request(&user_token,"user-csrf","GET",
+        &user_path,Value::Null)).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+    let revision=app.store.account_by_id(&user_id).await.unwrap().unwrap()
+        ["access_revision"].as_u64().unwrap();
+    app.store.update_account_access(&user_id,revision,access::AccountStatus::Suspended,
+        access::Role::User,"operator").await.unwrap();
+    let generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&user_key,&json!({"user_id":user_id,"generation":generation,
+        "csrf":"user-csrf","expires":now()+3600})).await.unwrap();
+    assert_eq!(router(app).oneshot(request(&user_token,"user-csrf","GET",
+        "/api/v3/auth/me",Value::Null)).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+}
+#[tokio::test]
+async fn phase3_nondefault_agent_admin_routes_use_its_store_and_filter_denied_abilities() {
+    let (_root,app)=fixture().await;
+    selection_fixture(&app).await;
+    let token=uuid();
+    let auth_key=format!("auth:{}",digest(&json!(token)));
+    let generation=app.store.account_by_id("admin").await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&auth_key,&json!({"user_id":"admin","generation":generation,
+        "csrf":"agent-csrf","expires":now()+3600})).await.unwrap();
+    let request=|method:&str,path:&str,body:Value| {
+        Request::builder().method(method).uri(path).header("content-type","application/json")
+            .header("cookie",format!("v3_session={token}"))
+            .header("x-csrf-token","agent-csrf").body(Body::from(body.to_string())).unwrap()
+    };
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/agents/agent-a/model",Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let response=router(app.clone()).oneshot(request("PUT","/api/v3/agents/agent-a/model",
+        json!({"provider":"openai_subscription","model":"agent-a-model"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let default=router(app.clone()).oneshot(request("GET","/api/v3/agents/shared_default/model",Value::Null)).await.unwrap();
+    let default:Value=serde_json::from_slice(&axum::body::to_bytes(default.into_body(),65536).await.unwrap()).unwrap();
+    assert_ne!(default["model"],"agent-a-model");
+    let response=router(app.clone()).oneshot(request("PUT","/api/v3/agents/agent-a/slots/phase3",
+        json!({"content":"AGENT A ONLY","expected_revision":0}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/agents/agent-a/slots/phase3",Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let slot:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    assert_eq!(slot["slot"]["content"],"AGENT A ONLY");
+    assert_eq!(router(app.clone()).oneshot(request("GET",
+        "/api/v3/agents/shared_default/slots/phase3",Value::Null)).await.unwrap().status(),StatusCode::NOT_FOUND);
+    let response=router(app.clone()).oneshot(request("POST","/api/v3/sessions",
+        json!({"client_request_id":"agent-a-session","agent_id":"agent-a"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let session:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let sid=session["id"].as_str().unwrap();
+    let response=router(app.clone()).oneshot(request("GET","/api/v3/admin/access/agents/agent-a/ability-permissions",Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let permissions:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let response=router(app.clone()).oneshot(request("PUT","/api/v3/admin/access/agents/agent-a/ability-permissions",
+        json!({"expected_revision":permissions["revision"],
+            "ability_permissions":{"codebase_admin":"deny"}}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let response=router(app.clone()).oneshot(request("GET",
+        &format!("/api/v3/sessions/{sid}/abilities"),Value::Null)).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let catalog:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    assert!(!catalog["abilities"].as_array().unwrap().iter().any(|ability|ability["id"]=="codebase_admin"));
+}
+#[tokio::test]
+async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
+    let (_root,app)=fixture().await;
+    let account=app.store.create_user_account("phase3_tier","fixture-only-password-hash").await.unwrap();
+    let user_id=account["user_id"].as_str().unwrap().to_owned();
+    app.store.update_account_access(&user_id,1,access::AccountStatus::Active,
+        access::Role::User,"basic").await.unwrap();
+    app.store.set_agent_membership(&user_id,"shared_default",access::Relationship::Member,0).await.unwrap();
+    let admin_token=uuid();let user_token=uuid();
+    let admin_generation=app.store.account_by_id("admin").await.unwrap().unwrap()["generation"].clone();
+    let user_generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&format!("auth:{}",digest(&json!(admin_token))),
+        &json!({"user_id":"admin","generation":admin_generation,"csrf":"admin-csrf","expires":now()+3600})).await.unwrap();
+    app.store.put(&format!("auth:{}",digest(&json!(user_token))),
+        &json!({"user_id":user_id,"generation":user_generation,"csrf":"user-csrf","expires":now()+3600})).await.unwrap();
+    let request=|token:&str,csrf:&str,method:&str,path:&str,body:Value| {
+        Request::builder().method(method).uri(path).header("content-type","application/json")
+            .header("cookie",format!("v3_session={token}")).header("x-csrf-token",csrf)
+            .body(Body::from(body.to_string())).unwrap()
+    };
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        "/api/v3/sessions",json!({"client_request_id":"tier-session"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let session:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let sid=session["id"].as_str().unwrap();
+    let message_path=format!("/api/v3/sessions/{sid}/messages");
+    assert_eq!(router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        &message_path,json!({"client_message_id":"denied","text":"hello"})))
+        .await.unwrap().status(),StatusCode::FORBIDDEN);
+    let granted_model=app.selection().await.unwrap().model;
+    let response=router(app.clone()).oneshot(request(&admin_token,"admin-csrf","PUT",
+        "/api/v3/admin/access/tiers/basic",
+        json!({"expected_revision":1,"tier":{"id":"basic","revision":1,
+            "allowed_models":[granted_model],"tools":{"file_read":"auto","file_write":"ask"},
+            "max_sessions":10,"max_active_runs":2}}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    let access=app.store.live_access(&user_id,"shared_default").await.unwrap();
+    assert_eq!(access.tool_decision_for_abilities("file_read",&["codebase_admin".into()],
+        access::Permission::Auto,true,true,false,true).permission,access::Permission::Auto);
+    assert_eq!(access.tool_decision_for_abilities("file_write",&["codebase_admin".into()],
+        access::Permission::Auto,true,true,false,false).permission,access::Permission::Ask);
+    assert_eq!(access.tool_decision_for_abilities("shell",&["codebase_admin".into()],
+        access::Permission::Auto,true,true,false,false).permission,access::Permission::Deny);
+    let user_generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
+    app.store.put(&format!("auth:{}",digest(&json!(user_token))),
+        &json!({"user_id":user_id,"generation":user_generation,
+            "csrf":"user-csrf","expires":now()+3600})).await.unwrap();
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        &message_path,json!({"client_message_id":"accepted","text":"hello"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::ACCEPTED);
+    let accepted:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
+    let run_id=accepted["run_id"].as_str().unwrap();
+    let mut user_app=app.clone();
+    user_app.store=app.store.for_user(&user_id).await.unwrap();
+    let mut run=user_app.run(run_id).await.unwrap();
+    let args=json!({"path":"notes.txt","content":"test"});
+    run["status"]=json!("waiting_approval");
+    run["phase"]=json!("tools");
+    run["calls"]=json!([{"type":"function_call","call_id":"c",
+        "name":"file_write","arguments":args.to_string()}]);
+    run["pending"]=json!({"id":"tier-stale-approval","name":"file_write","arguments":args,
+        "digest":digest(&args),"call_id":"c","state":"waiting","decision":null,
+        "access_revision":access.revision,"policy_version":1,"mode_revision":0,
+        "visibility_revision":0,"ability_state_revision":0});
+    user_app.save(&mut run).await.unwrap();
+    let status=app.store.agent_status("shared_default").await.unwrap();
+    let response=router(app.clone()).oneshot(request(&admin_token,"admin-csrf","PUT",
+        "/api/v3/admin/access/agents/shared_default/status",
+        json!({"expected_revision":status["revision"],"status":"disabled"}))).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    assert_eq!(user_app.run(run_id).await.unwrap()["status"],"stopped");
+    let response=router(app.clone()).oneshot(request(&user_token,"user-csrf","POST",
+        "/api/v3/approvals/tier-stale-approval/decision",
+        json!({"client_request_id":"stale","decision":"approve"}))).await.unwrap();
+    assert_ne!(response.status(),StatusCode::OK);
+    assert_eq!(router(app).oneshot(request(&user_token,"user-csrf","GET",
+        &format!("/api/v3/sessions/{sid}"),Value::Null)).await.unwrap().status(),StatusCode::FORBIDDEN);
 }

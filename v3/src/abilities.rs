@@ -337,6 +337,44 @@ impl Catalog {
             .collect()
     }
 
+    /// Installed owners of a tool, independent of visibility or activation.
+    /// A shared tool name must meet every owning ability permission.
+    pub fn tool_abilities(&self,name:&str,_visibility:&Value,_state:&Value,
+        _loaded:&Value) -> Vec<String> {
+        if !Self::supported(name) {return Vec::new();}
+        self.abilities.iter().filter(|ability| {
+            Self::present(ability) && ability.tools.iter().any(|tool|tool==name)
+        }).map(|ability|ability.id.clone()).collect()
+    }
+
+    /// Separate installed support from the effective agent/session visibility.
+    /// The two gates do not include operator, tier, or caller permissions.
+    pub fn tool_gate(
+        &self,
+        name: &str,
+        visibility: &Value,
+        state: &Value,
+        loaded: &Value,
+    ) -> (bool, bool) {
+        let supported = Self::supported(name);
+        let mut available = false;
+        let mut visible = false;
+        for ability in &self.abilities {
+            if !Self::present(ability) || !ability.tools.iter().any(|tool| tool == name) {
+                continue;
+            }
+            available |= supported;
+            visible |= supported
+                && match Self::tool_mode(visibility, name) {
+                    "off" => false,
+                    "discoverable" => Self::contains_id(loaded, &ability.id),
+                    _ => true,
+                }
+                && Self::available(ability, visibility, state);
+        }
+        (available, visible)
+    }
+
     pub fn tool_available(
         &self,
         name: &str,
@@ -344,17 +382,8 @@ impl Catalog {
         state: &Value,
         loaded: &Value,
     ) -> bool {
-        self.abilities.iter().any(|ability| {
-            Self::present(ability)
-                && ability.tools.iter().any(|tool| tool == name)
-                && Self::supported(name)
-                && match Self::tool_mode(visibility, name) {
-                    "off" => false,
-                    "discoverable" => Self::contains_id(loaded, &ability.id),
-                    _ => true,
-                }
-                && Self::available(ability, visibility, state)
-        })
+        let (available, visible) = self.tool_gate(name, visibility, state, loaded);
+        available && visible
     }
 
     #[cfg(test)]
@@ -397,13 +426,29 @@ impl Catalog {
     }
 
     pub fn visible_guidance(&self, policy: &Value, visibility: &Value, state: &Value) -> String {
+        self.visible_guidance_filtered(policy, visibility, state, |_| true, |_| true)
+    }
+
+    /// Assemble model-facing guidance using live ability and tool permissions.
+    /// Denied abilities are excluded before their skill or tool text is read.
+    pub fn visible_guidance_filtered(
+        &self,
+        policy: &Value,
+        visibility: &Value,
+        state: &Value,
+        allow_ability: impl Fn(&str) -> bool,
+        allow_tool: impl Fn(&str) -> bool,
+    ) -> String {
         const LIMIT: usize = 24 * 1024;
         const MARKER_RESERVE: usize = 256;
         let mut text = String::new();
         for ability in &self.abilities {
             if !Self::present(ability)
+                || !allow_ability(&ability.id)
                 || Self::is_off(visibility, &ability.id)
-                || !ability.tools.iter().any(|tool| Self::allowed(policy, tool))
+                || !ability.tools.iter().any(|tool| {
+                    Self::allowed(policy, tool) && allow_tool(tool)
+                })
                 || Self::suppressed(state, &ability.id)
                 || !(Self::is_visible(visibility, &ability.id) || Self::active(state, &ability.id))
             {
@@ -417,7 +462,9 @@ impl Catalog {
                 }
             }
             for (tool, skill) in &ability.tool_skills {
-                if Self::allowed(policy, tool) && Self::tool_mode(visibility, tool) == "visible" {
+                if Self::allowed(policy, tool)
+                    && allow_tool(tool)
+                    && Self::tool_mode(visibility, tool) == "visible" {
                     part.push_str("\n\nTool ");
                     part.push_str(tool);
                     part.push_str(":\n");
@@ -657,6 +704,28 @@ mod tests {
     }
 
     #[test]
+    fn tool_gate_distinguishes_missing_tools_from_hidden_tools() {
+        let (_root, catalog) = fixture();
+        let state = json!({"active":[],"suppressed":[]});
+        let hidden = json!({"visibility":{"codebase_admin":"off"}});
+        assert_eq!(catalog.tool_gate("file_read",&hidden,&state,&Value::Null),
+            (true,false));
+        assert_eq!(catalog.tool_gate("missing",&hidden,&state,&Value::Null),
+            (false,false));
+        let visible = json!({"visibility":{"codebase_admin":"visible"}});
+        assert_eq!(catalog.tool_gate("file_read",&visible,&state,&Value::Null),
+            (true,true));
+        assert_eq!(catalog.tool_abilities("file_read",&visible,&state,&Value::Null),
+            vec!["codebase_admin".to_owned()]);
+        assert_eq!(catalog.tool_abilities("file_read",&hidden,&state,&Value::Null),
+            vec!["codebase_admin".to_owned()]);
+        let disabled_tool = json!({"visibility":{"codebase_admin":"visible"},
+            "tool_modes":{"file_read":"off"}});
+        assert_eq!(catalog.tool_gate("file_read",&disabled_tool,&state,&Value::Null),
+            (true,false));
+    }
+
+    #[test]
     fn catalog_version_changes_with_skill() {
         let (root, catalog) = fixture();
         fs::write(
@@ -712,6 +781,30 @@ mod tests {
         );
         assert_eq!(result["status"], "denied");
         assert!(run["loaded_abilities"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn visible_guidance_filters_denied_ability_and_tool_text() {
+        let (_root, catalog) = fixture();
+        let policy = policy();
+        let visibility = json!({"visibility":{"codebase_admin":"visible"}});
+        let state = json!({"active":[],"suppressed":[]});
+        let normal = catalog.visible_guidance(&policy, &visibility, &state);
+        assert!(normal.contains("Use scoped workspace tools."));
+        assert!(normal.contains("Match one exact span."));
+
+        let denied_ability = catalog.visible_guidance_filtered(
+            &policy, &visibility, &state, |_| false, |_| true);
+        assert!(denied_ability.is_empty());
+
+        let denied_tool = catalog.visible_guidance_filtered(
+            &policy, &visibility, &state, |_| true, |tool| tool != "file_edit");
+        assert!(denied_tool.contains("Use scoped workspace tools."));
+        assert!(!denied_tool.contains("Match one exact span."));
+
+        let all_tools_denied = catalog.visible_guidance_filtered(
+            &policy, &visibility, &state, |_| true, |_| false);
+        assert!(all_tools_denied.is_empty());
     }
 
     #[test]

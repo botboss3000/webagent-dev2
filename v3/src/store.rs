@@ -434,6 +434,8 @@ impl Store {
             || key.starts_with("session_ability_state:")
             || key.starts_with("run:")
             || key.starts_with("run_view:")
+            || key.starts_with("attachment:")
+            || key.starts_with("memory:")
             || key.starts_with("promotion:")
             || key.starts_with("receipt:session:")
             || key.starts_with("receipt:message:")
@@ -1539,12 +1541,15 @@ impl Store {
                 .ok_or_else(|| anyhow!("User message has no content"))?;
             self.insert_chat(&mut tx, sid, run_id, "user", &json!(text))
                 .await?;
+            // Chat shows the author's message; model context also includes
+            // the validated attachment text, committed in this same transaction.
+            let context_content = payload["context_content"].as_str().unwrap_or(text);
             self.insert_interaction(
                 &mut tx,
                 sid,
                 run_id,
                 "user",
-                &json!({"role":"user","content":text}),
+                &json!({"role":"user","content":context_content}),
             )
             .await?;
         }

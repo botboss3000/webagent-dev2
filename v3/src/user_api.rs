@@ -80,6 +80,10 @@ path_json!(mode_set => session_mode_set, String, SessionModeBody);
 path_arg!(abilities => session_abilities, String);
 path_json!(ability_set => session_ability_set, (String, String), SessionAbilityBody);
 path_json!(send => send, String, Value);
+path_arg!(attachment => attachment_get, (String, String));
+path_arg!(memory_list => memory_list, String);
+path_json!(memory_save => memory_save, String, Value);
+path_arg!(memory_delete => memory_delete, (String, String));
 path_arg!(source_review => source_review, String);
 path_arg!(promotions => promotions, String);
 path_arg!(promotion_review => promotion_review, (String, String));
@@ -148,6 +152,9 @@ pub(crate) fn router() -> Router<App> {
         .route("/sessions/{id}/promotions/{request_id}", get(promotion_receipt))
         .route("/sessions/{id}/promotions/{request_id}/reject", post(promotion_reject))
         .route("/sessions/{id}/messages", post(send))
+        .route("/sessions/{id}/attachments/{aid}", get(attachment))
+        .route("/sessions/{id}/memories", get(memory_list).post(memory_save))
+        .route("/sessions/{id}/memories/{mid}", axum::routing::delete(memory_delete))
         .route("/sessions/{id}/events", get(events))
         .route("/runs/{id}/{action}", post(command))
         .route("/approvals/{id}/decision", post(approval))

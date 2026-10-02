@@ -359,7 +359,12 @@ user/model JSON is implicitly accepted as trusted instructions. Session capabili
 mode is a native call-scoped overlay; ability guidance is regenerated per call.
 This extraction preserves existing compaction boundaries and skill visibility;
 it does not introduce token-aware budgets, independent skill persistence,
-intra-task compaction, a new injection API, or v2 provider-profile parity.
+a new injection API, or v2 provider-profile parity. Phase 5 also permits
+compaction after a fully completed tool exchange within one long task.
+The loop summarizes that completed prefix, validates the summary, and saves
+it before another model call; an incomplete exchange cannot be split.
+A single oversized result without a safe bounded summary source still pauses
+for review.
 
 `publication` validates and commits accepted final output through the existing
 transaction and unique terminal-run constraint. The caller's completed status and
@@ -367,9 +372,27 @@ publication receipt are replaced only after the durable commit succeeds; a stora
 failure leaves the in-memory run unchanged. Oversized candidates pause for
 review; empty responses retain the explicit failure behavior. Rich closing flags,
 working-message promotion, classifiers and repair loops are later modules.
-Attachments are explicitly unsupported. This is not full v2 parity or the Phase 2
-MVP acceptance release. Image builds now run locked Rust tests in the pinned
-compiler stage before the release build. Building does not deploy.
+A first Phase 5 attachment slice accepts up to two inline `text/plain` entries on
+`POST /api/v3/sessions/{id}/messages`: `{"name":"note.txt","media_type":"text/plain","text":"..."}`.
+Each is limited to 16 KiB, with a 32 KiB total. Admission saves encrypted
+user-owned records, the queued run, and the retry receipt atomically. Chat
+shows the author's message while model context includes labeled, untrusted
+attachment text. The response and run view carry IDs and digests; the owner can
+read a record at `GET /api/v3/sessions/{id}/attachments/{aid}`. Binary uploads,
+PDF extraction, image descriptions, and UI attachment actions remain unsupported.
+Session memory can be saved explicitly after a completed run with
+`POST /api/v3/sessions/{id}/memories` and
+`{"source_run_id":"...","client_memory_id":"...","text":"..."}`.
+The authenticated owner can list notes at `GET /api/v3/sessions/{id}/memories`
+and remove one at `DELETE /api/v3/sessions/{id}/memories/{mid}`. Each session
+holds at most 16 notes of 1 KiB each. The eight newest notes are frozen at
+the next message admission and enter model context as labeled, untrusted user
+data. No model output or tool call can write them implicitly. Notes are encrypted
+in the user plane. This is session-scoped explicit memory, not automatic
+post-run extraction or cross-session recall.
+This is not full v2 parity or the Phase 2 MVP acceptance release. Image builds
+run locked Rust tests in the pinned compiler stage before the release build.
+Building does not deploy.
 
 ## Agent-bound model selection (source implementation; live acceptance pending)
 

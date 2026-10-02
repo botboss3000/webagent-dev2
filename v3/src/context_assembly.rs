@@ -4,7 +4,7 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use crate::{context, context_projection, provider};
+use crate::{context_compaction, context_projection, provider};
 
 #[derive(Debug, Clone, Copy)]
 pub struct CallIdentity { pub turn: u64, pub call: u64 }
@@ -30,7 +30,7 @@ pub struct Envelope<'a> {
     pub schemas: &'a [Value],
     pub report: Report,
 }
-pub enum Prepared<'a> { Compact(context::Plan), Ready(Envelope<'a>) }
+pub enum Prepared<'a> { Compact(context_compaction::Plan), Ready(Envelope<'a>) }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Section { pub bytes: usize, pub items: usize }
@@ -159,7 +159,7 @@ pub fn prepare_incremental<'a>(request: Request<'a>, state: &mut crate::context_
         bail!("Instructions and tool schemas exceed context budget; review required");
     }
     if state.bytes() > history_budget {
-        if let Some(plan) = context::plan(request.history, history_budget, request.summary_reserve_bytes)? {
+        if let Some(plan) = context_compaction::plan(request.history, history_budget, request.summary_reserve_bytes)? {
             return Ok(Prepared::Compact(plan));
         }
     }

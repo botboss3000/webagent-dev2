@@ -142,6 +142,23 @@
   "chat_common": {
     "description": "Shared configuration for every chat surface. Surface profiles inherit this object at runtime, including its messages.",
     "content_max_width": "1000px",
+    "message_bubbles": {
+      "description": "Bubble text size and internal padding in pixels. Surface and agent profiles may override individual values; agent left padding controls its text inset independently of user bubbles.",
+      "font_size_px": 17,
+      "padding_y_px": 10,
+      "padding_x_px": 14,
+      "agent_padding_left_px": 4,
+      "user": {
+        "background": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 82%, transparent))",
+        "background_light": "var(--user-bubble-bg, color-mix(in oklab, var(--bg-elev) 85%, transparent))",
+        "border": "var(--border-width) solid var(--user-bubble-border, color-mix(in oklab, currentColor 12%, transparent))"
+      },
+      "agent": {
+        "background": "transparent",
+        "background_light": "transparent",
+        "border": "none"
+      }
+    },
     "context_composition": {
       "enabled": true,
       "detailed_segments": true
@@ -168,7 +185,7 @@
       "description": "Limits long user messages in the transcript while preserving their complete DOM content. Set enabled false to disable, or override max_lines and labels per surface or agent.",
       "enabled": true,
       "max_lines": 3,
-      "expand_label": "Click to see more",
+      "expand_label": "See more",
       "collapse_label": "Show less"
     },
     "message_gutters": {
@@ -770,20 +787,20 @@
       ],
       "controls": {
         "minimize": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "new_session": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "session_prev": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "session_next": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "sub_agent_tabs": {
           "enabled": true,
@@ -841,12 +858,12 @@
       ],
       "controls": {
         "changes": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "new_session": {
-          "element_size": "20px",
-          "container_size": "32px"
+          "element_size": "28px",
+          "container_size": "40px"
         },
         "sub_agent_tabs": {
           "enabled": true,

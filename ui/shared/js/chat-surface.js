@@ -188,7 +188,40 @@ function formatCount(value, decimals) {
   return `${(value / 1000).toFixed(decimals == null ? 1 : decimals)}k`;
 }
 
+// Shared by panel, widget and embed; reset absent overrides on every profile switch.
+export function applyMessageBubbleConfig(root, profile) {
+  if (!root) return;
+  const cfg = profile?.message_bubbles || {};
+  const settings = [
+    ['font_size_px', '--chat-bubble-font-size', 17, 1],
+    ['padding_y_px', '--chat-bubble-padding-y', 10, 0],
+    ['padding_x_px', '--chat-bubble-padding-x', 14, 0],
+    ['agent_padding_left_px', '--chat-agent-padding-left', 4, 0],
+  ];
+  for (const [key, token, fallback, min] of settings) {
+    const value = cfg[key];
+    const valid = typeof value === 'number' && Number.isFinite(value) && value >= min;
+    root.style.setProperty(token, `${valid ? value : fallback}px`);
+  }
+  // Role surfaces come from the profile, reset on switches, and resolve theme
+  // variables at the bubble rather than freezing palette values on the root.
+  for (const role of ['user', 'agent']) {
+    const surface = cfg[role] || {};
+    for (const key of ['background', 'background_light', 'border']) {
+      const token = `--chat-${role}-${key.replaceAll('_', '-')}`;
+      const value = surface[key];
+      const property = key === 'border' ? 'border' : 'background-color';
+      if (typeof value === 'string' && CSS.supports(property, value)) {
+        root.style.setProperty(token, value);
+      } else {
+        root.style.removeProperty(token);
+      }
+    }
+  }
+}
+
 export function applyChatSurfaceProfile(els, profile) {
+  applyMessageBubbleConfig(els.root, profile);
   if (!profile) return;
   // Support both new active_footer.chat_pill and legacy top-level chat_pill
   const activeFooter = profile.active_footer || {};

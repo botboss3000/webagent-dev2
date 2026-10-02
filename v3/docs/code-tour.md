@@ -38,7 +38,8 @@ executable in separate containers. The `health` role checks the loop heartbeat.
 5. **Prepare and call the model.** The loop assembles history, instructions,
    and available tools. [workflow.rs](../src/workflow.rs) names the fixed
    checkpoints; [context_assembly.rs](../src/context_assembly.rs) builds the
-   request, and [provider.rs](../src/provider.rs) sends it.
+   request, [context_compaction.rs](../src/context_compaction.rs) plans and validates
+   history compaction, and [provider.rs](../src/provider.rs) sends it.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
    again. Some actions need human approval. Only a permitted action reaches
    the Python tool worker. Showing a tool to the model does not permit its use.
@@ -101,5 +102,15 @@ records what it checked and decided.
 ## Current limits
 
 The final-reply size guard is the only installed Python gate module.
-Attachments, memory, progress checks, and delegation are later roadmap work.
+The context planner can now summarize a completed tool exchange during one
+long task when earlier-turn compaction cannot make room. Rust persists the
+validated summary before calling the model again; the original run history
+remains durable. Small inline text attachments are accepted and stored in the
+user plane with the message; their text enters context as untrusted source data.
+A completed run can supply the source for an explicit session memory note.
+The authenticated API saves the bounded note in the user plane. At the next
+message admission, Rust freezes the eight newest notes; loop hydration puts
+them beside the newest user turn as labeled source data, never instructions.
+List and delete are session-scoped. Automatic memory extraction, binary files,
+images, progress checks, and delegation remain later roadmap work.
 An ability catalog entry does not imply that every v2 tool runs in v3.

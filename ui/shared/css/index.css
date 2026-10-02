@@ -184,12 +184,24 @@ body.light-mode .chat-bubble.agent { --chat-bubble-bg: var(--agent-bubble-bg, co
    instead of approximating it with a solid theme colour. User bubbles and the
    technical schema-inspect panel retain their separate surfaces. */
 #chat-panel .chat-bubble.agent {
+  padding-left: var(--chat-agent-padding-left, 4px);
   --chat-bubble-bg: transparent;
-  background: transparent !important;
-  border: none !important;
+  background: var(--chat-agent-background, transparent) !important;
+  border: var(--chat-agent-border, none) !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+/* JSON role surfaces override the resting fill/edge, but never the glimmer. */
+#chat-panel .chat-bubble.user {
+  background: var(--chat-user-background) !important;
+  border: var(--chat-user-border) !important;
+}
+body.light-mode #chat-panel .chat-bubble.user {
+  background: var(--chat-user-background-light, var(--chat-user-background)) !important;
+}
+body.light-mode #chat-panel .chat-bubble.agent:not(.activity-group) {
+  background: var(--chat-agent-background-light, var(--chat-agent-background, transparent)) !important;
 }
 /* Activity groups are structural transcript shells. Their nested .ca-* rows
    still paint their own surfaces; the shell also needs unclipped overflow and

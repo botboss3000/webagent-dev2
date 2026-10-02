@@ -26,6 +26,22 @@
   `.agents/skills/webagent-feature-test/SKILL.md` and follow its trajectory and
   evidence contracts.
 
+## V3 breadcrumb comments
+
+- When changing v3 behavior, leave brief, plain-language breadcrumbs at the
+  boundaries a new reader must follow: request admission, storage ownership,
+  model context, policy and approval decisions, tool dispatch, recovery, and
+  publication. Explain what happens and why the boundary exists.
+- Put a comment beside a non-obvious invariant, failure path, or handoff between
+  Rust and a worker. Name the authority that makes the decision and what the
+  other component is allowed to do. Do not use comments to restate each line.
+- Keep comments current when changing the code they describe. Update
+  `v3/docs/code-tour.md` when a new actor, durable record, or major execution
+  step changes the layman's route through the system.
+- A reader should be able to trace a feature from its API through the loop,
+  storage, and worker without assuming that a catalog entry means the feature
+  executes. Document unsupported or deliberately deferred parts explicitly.
+
 ## V3 compilation and build coordination
 
 - Treat a v3 Rust compilation as a checkout of its inputs. Before running

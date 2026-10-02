@@ -3918,6 +3918,109 @@ async fn admission_records_policy_and_explicitly_rejects_attachments() {
     assert_eq!(run["workflow"]["receipts"]["admission"]["policy_revision"],current_workflow_policy(&app).await.unwrap().revision().unwrap());
 }
 
+#[tokio::test]
+async fn text_attachment_is_saved_once_and_scoped_to_its_session() {
+    let (_root, app) = fixture().await;
+    let Json(session) = create_session(State(app.clone()),
+        Json(json!({"client_request_id":"attachment-session","title":"Attachments"}))).await.unwrap();
+    let sid = session["id"].as_str().unwrap().to_owned();
+    let body = json!({"client_message_id":"attachment-once","text":"Summarize the note",
+        "attachments":[{"name":"note.txt","media_type":"text/plain","text":"Source fact 42"}]});
+    let (_, Json(first)) = send(State(app.clone()),Path(sid.clone()),Json(body.clone())).await.unwrap();
+    let (_, Json(retry)) = send(State(app.clone()),Path(sid.clone()),Json(body)).await.unwrap();
+    assert_eq!(first, retry);
+    let aid = first["attachments"][0]["id"].as_str().unwrap().to_owned();
+    let run = app.run(first["run_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(run["attachments"][0]["sha256"], first["attachments"][0]["sha256"]);
+    assert_eq!(run["workflow"]["receipts"]["attachment_preparation"]["result"]["decision"],"pass");
+    let (chat, _) = app.store.chat_snapshot(&sid).await.unwrap();
+    assert_eq!(chat.len(), 1);
+    assert_eq!(chat[0]["content"], "Summarize the note");
+    let context = app.store.context(&sid).await.unwrap();
+    assert_eq!(context.len(), 1);
+    assert!(context[0]["content"].as_str().unwrap().contains("Source fact 42"));
+    let Json(saved) = attachment_get(State(app.clone()),Path((sid.clone(),aid.clone()))).await.unwrap();
+    assert_eq!(saved["text"], "Source fact 42");
+    let token = uuid();
+    app.store.put(&format!("auth:{}",digest(&json!(token))),
+        &json!({"csrf":"fixture","expires":now()+3600,
+            "generation":"fixture-generation"})).await.unwrap();
+    let response = router(app.clone()).oneshot(Request::builder()
+        .uri(format!("/api/v3/sessions/{sid}/attachments/{aid}"))
+        .header("cookie",format!("v3_session={token}"))
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let Json(other) = create_session(State(app.clone()),
+        Json(json!({"client_request_id":"other-attachment-session","title":"Other"}))).await.unwrap();
+    let other_sid = other["id"].as_str().unwrap().to_owned();
+    assert!(matches!(attachment_get(State(app),Path((other_sid,aid))).await,
+        Err(ApiError(StatusCode::NOT_FOUND,_))));
+}
+
+#[tokio::test]
+async fn completed_run_memory_is_scoped_and_frozen_for_next_message() {
+    let (_root, app)=fixture().await;
+    let Json(session)=create_session(State(app.clone()),
+        Json(json!({"client_request_id":"memory-session","title":"Memory"}))).await.unwrap();
+    let sid=session["id"].as_str().unwrap().to_owned();
+    let (_,Json(first))=send(State(app.clone()),Path(sid.clone()),
+        Json(json!({"client_message_id":"memory-source","text":"First turn"}))).await.unwrap();
+    let rid=first["run_id"].as_str().unwrap().to_owned();
+    let id=uuid();
+    let body=json!({"source_run_id":rid,"client_memory_id":id,"text":"The folder is blue"});
+    assert!(matches!(memory_save(State(app.clone()),Path(sid.clone()),Json(body.clone())).await,
+        Err(ApiError(StatusCode::CONFLICT,_))));
+    let mut run=app.run(&rid).await.unwrap();
+    run["status"]=json!("completed");
+    app.store.put(&key("run",&rid),&run).await.unwrap();
+    let (created,Json(saved))=memory_save(State(app.clone()),Path(sid.clone()),
+        Json(body.clone())).await.unwrap();
+    assert_eq!(created,StatusCode::CREATED);
+    assert_eq!(saved["text"],"The folder is blue");
+    assert_eq!(memory_save(State(app.clone()),Path(sid.clone()),Json(body.clone())).await.unwrap().0,
+        StatusCode::OK);
+    let Json(other)=create_session(State(app.clone()),
+        Json(json!({"client_request_id":"memory-other","title":"Other"}))).await.unwrap();
+    let other_sid=other["id"].as_str().unwrap().to_owned();
+    assert!(matches!(memory_delete(State(app.clone()),Path((other_sid,id.clone()))).await,
+        Err(ApiError(StatusCode::NOT_FOUND,_))));
+    let (_,Json(next))=send(State(app.clone()),Path(sid.clone()),
+        Json(json!({"client_message_id":"memory-next","text":"Second turn"}))).await.unwrap();
+    let next_run=app.run(next["run_id"].as_str().unwrap()).await.unwrap();
+    let context=next_run["memory_context"].as_str().unwrap();
+    assert!(context.contains("The folder is blue"));
+    let mut input=vec![json!({"role":"user","content":"Second turn"})];
+    memory::insert(&mut input,Some(context));
+    assert_eq!(input[0]["role"],"user");
+    assert!(input[0]["content"].as_str().unwrap().contains("untrusted user data"));
+    assert_eq!(input[1]["content"],"Second turn");
+    let Json(list)=memory_list(State(app.clone()),Path(sid.clone())).await.unwrap();
+    assert_eq!(list["memories"].as_array().unwrap().len(),1);
+    let token=uuid();
+    app.store.put(&format!("auth:{}",digest(&json!(token))),
+        &json!({"csrf":"fixture","expires":now()+3600,
+            "generation":"fixture-generation"})).await.unwrap();
+    let uri=format!("/api/v3/sessions/{sid}/memories");
+    let unauth=router(app.clone()).oneshot(Request::builder().uri(&uri)
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(unauth.status(),StatusCode::UNAUTHORIZED);
+    let forbidden=router(app.clone()).oneshot(Request::builder().method("POST").uri(&uri)
+        .header("cookie",format!("v3_session={token}"))
+        .header("content-type","application/json")
+        .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+    assert_eq!(forbidden.status(),StatusCode::FORBIDDEN);
+    let accepted=router(app.clone()).oneshot(Request::builder().method("POST").uri(&uri)
+        .header("cookie",format!("v3_session={token}"))
+        .header("x-csrf-token","fixture").header("content-type","application/json")
+        .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+    assert_eq!(accepted.status(),StatusCode::OK);
+    let deleted=router(app.clone()).oneshot(Request::builder().method("DELETE")
+        .uri(format!("{uri}/{id}")).header("cookie",format!("v3_session={token}"))
+        .header("x-csrf-token","fixture").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(deleted.status(),StatusCode::OK);
+    assert!(memory_list(State(app),Path(sid)).await.unwrap().0["memories"].as_array().unwrap().is_empty());
+}
+
 #[test]
 fn tool_result_checkpoint_stays_private_and_binds_dispatch() {
     let policy=workflow::Policy::resolve(None).unwrap();

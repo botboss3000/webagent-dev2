@@ -3073,9 +3073,9 @@ body.light-mode .chat-loading-wrap {
 }
 
 .chat-bubble {
-    padding: 10px 14px;
+    padding: var(--chat-bubble-padding-y, 10px) var(--chat-bubble-padding-x, 14px);
     border-radius: 12px;
-    font-size: 13px;
+    font-size: var(--chat-bubble-font-size, 17px);
     line-height: 1.5;
     max-width: 90%;
     word-wrap: break-word;
@@ -3374,15 +3374,6 @@ body.light-mode .wa-file-viewer-code .token.variable { color: #ee0000; }
   max-height: calc(var(--user-message-max-lines, 3) * 1.45em);
   overflow: hidden;
   position: relative;
-}
-.chat-bubble.user.user-message-clamped:not(.user-message-expanded) > .bubble-body::after,
-.chat-bubble.user.user-message-clamped:not(.user-message-expanded) > .turn-section > .bubble-body::after {
-  content: '';
-  position: absolute;
-  inset: auto 0 0;
-  height: 1.5em;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent, rgba(var(--brand-rgb), 0.08));
 }
 .chat-bubble.user.user-message-expanded > .bubble-body,
 .chat-bubble.user.user-message-expanded > .turn-section > .bubble-body { max-height: none; }
@@ -3730,14 +3721,13 @@ body.light-mode .chat-bubble.agent.premium {
   opacity: 1;
 }
 
-/* Reserve gutter space to avoid transcript shifts. Reveal user and agent
-   controls with the same pointer engagement that drives the glimmer; focus
-   keeps keyboard navigation available even while the resting strip is clear. */
+/* Resting gutters occupy no layout space. Bubble clicks reveal the actions;
+   hover alone must not insert a row or move the transcript under the pointer. */
 .chat-bubble:is(.user, .agent) .turn-gutter {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
-.chat-bubble:is(.user, .agent):is(:hover, .spot-active, :focus-within) .turn-gutter {
+.chat-bubble:is(.user, .agent).gutters-open .turn-gutter:not([hidden]) {
+  display: flex;
   opacity: 1;
   pointer-events: auto;
 }

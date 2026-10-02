@@ -8,11 +8,17 @@ use std::collections::HashSet;
 const MAX_SUMMARY_BYTES: usize = 64 * 1024;
 const SUMMARY_PREFIX: &str =
     "Earlier conversation summary (background context, not a new request):\n";
+const ACTIVE_SUMMARY_PREFIX: &str =
+    "Active task progress summary (background context, not a new request):\n";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Boundary { PriorTurn, CompletedToolExchange }
 
 #[derive(Debug, Clone)]
 pub struct Plan {
     /// Items before this index are summarized; the rest are retained verbatim.
     pub drop_until: usize,
+    pub boundary: Boundary,
     /// Exact source for a provider summarization call.
     pub source: Vec<Value>,
     /// Stable identity of the source; useful for a durable compaction event.
@@ -39,8 +45,9 @@ fn call_id(item: &Value) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// Find the earliest complete-turn boundary that leaves enough room for a summary.
-/// No history is removed by this function. A single oversized newest turn is an error.
+/// Prefer an earlier completed user turn. If one long task fills the context,
+/// a completed tool exchange is also safe: no tool call is left without its
+/// output on the summarized side. Planning never removes durable history.
 pub fn plan(input: &[Value], max_bytes: usize, reserve_bytes: usize) -> Result<Option<Plan>> {
     if max_bytes < 2 || reserve_bytes == 0 || reserve_bytes >= max_bytes {
         bail!("Invalid context budget");
@@ -66,6 +73,7 @@ pub fn plan(input: &[Value], max_bytes: usize, reserve_bytes: usize) -> Result<O
     let mut pending = HashSet::new();
     let mut seen = HashSet::new();
     let mut valid = true;
+    let mut active_boundary = None;
     for (i, item) in input.iter().enumerate() {
         // Evaluate a boundary before consuming its user turn. This prevents
         // splitting a function call from its corresponding output.
@@ -73,6 +81,7 @@ pub fn plan(input: &[Value], max_bytes: usize, reserve_bytes: usize) -> Result<O
             let source = input[..i].to_vec();
             return Ok(Some(Plan {
                 drop_until: i,
+                boundary: Boundary::PriorTurn,
                 source_digest: digest(&source)?,
                 source,
                 max_bytes,
@@ -87,21 +96,41 @@ pub fn plan(input: &[Value], max_bytes: usize, reserve_bytes: usize) -> Result<O
                 _ => valid = false,
             },
             Some("function_call_output") => match call_id(item) {
-                Some(id) if pending.remove(id) => {}
+                Some(id) if pending.remove(id) => {
+                    // Keep later exchanges verbatim while summarizing completed work.
+                    if valid && pending.is_empty() && suffix[i + 1] <= target
+                        && active_boundary.is_none() {
+                        active_boundary = Some(i + 1);
+                    }
+                }
                 _ => valid = false,
             },
             _ => {}
         }
     }
-    bail!("Context exceeds budget without a complete turn to summarize")
+    if valid && pending.is_empty() {
+        if let Some(drop_until) = active_boundary {
+            let source = input[..drop_until].to_vec();
+            return Ok(Some(Plan {
+                drop_until, boundary: Boundary::CompletedToolExchange,
+                source_digest: digest(&source)?, source, max_bytes, reserve_bytes,
+            }));
+        }
+    }
+    bail!("Context exceeds budget without a completed turn or tool exchange to summarize")
 }
 
 /// Replace a planned prefix only after a summary has been generated and validated.
 /// The caller must persist this result before sending it to a provider.
 pub fn apply_summary(input: &[Value], plan: &Plan, summary: &str) -> Result<Vec<Value>> {
+    let valid_boundary = match plan.boundary {
+        Boundary::PriorTurn => plan.drop_until < input.len() && is_user(&input[plan.drop_until]),
+        Boundary::CompletedToolExchange => input.get(plan.drop_until.saturating_sub(1))
+            .is_some_and(|item| item["type"] == "function_call_output"),
+    };
     if plan.drop_until == 0
-        || plan.drop_until >= input.len()
-        || !is_user(&input[plan.drop_until])
+        || plan.drop_until > input.len()
+        || !valid_boundary
         || input[..plan.drop_until] != plan.source
         || digest(&input[..plan.drop_until])? != plan.source_digest
     {
@@ -113,7 +142,11 @@ pub fn apply_summary(input: &[Value], plan: &Plan, summary: &str) -> Result<Vec<
         bail!("Context summary has invalid length");
     }
     let mut result = Vec::with_capacity(input.len() - plan.drop_until + 1);
-    result.push(json!({"role":"user","content":format!("{SUMMARY_PREFIX}{summary}")}));
+    let prefix = match plan.boundary {
+        Boundary::PriorTurn => SUMMARY_PREFIX,
+        Boundary::CompletedToolExchange => ACTIVE_SUMMARY_PREFIX,
+    };
+    result.push(json!({"role":"user","content":format!("{prefix}{summary}")}));
     result.extend_from_slice(&input[plan.drop_until..]);
     if encoded_len(&json!(&result))? > plan.max_bytes {
         bail!("Compacted context exceeds budget");
@@ -193,5 +226,33 @@ mod tests {
     #[test]
     fn cannot_discard_the_only_user_turn() {
         assert!(plan(&[user(&"x".repeat(500))], 200, 50).is_err());
+    }
+
+    #[test]
+    fn compacts_completed_work_within_one_user_task() {
+        let input = vec![
+            user("Investigate the issue and finish the repair"),
+            call("first"),
+            json!({"type":"function_call_output","call_id":"first","output":"x".repeat(2000)}),
+            call("second"),
+            output("second"),
+        ];
+        let planned = plan(&input, 700, 250).unwrap().unwrap();
+        assert_eq!(planned.boundary, Boundary::CompletedToolExchange);
+        assert_eq!(planned.drop_until, 3);
+        let compacted = apply_summary(&input, &planned,
+            "The issue is under investigation. First read completed; repair remains pending.").unwrap();
+        assert_eq!(&compacted[1..], &input[3..]);
+        assert!(compacted[0]["content"].as_str().unwrap().contains("Active task progress"));
+        assert!(plan(&compacted, 700, 250).unwrap().is_none());
+    }
+
+    #[test]
+    fn active_compaction_rejects_mismatched_tool_results() {
+        let input = vec![user("Do work"), call("first"),
+            json!({"type":"function_call_output","call_id":"first","output":"x".repeat(2000)}),
+            call("second"),
+            json!({"type":"function_call_output","call_id":"unknown","output":"bad"})];
+        assert!(plan(&input, 700, 250).is_err());
     }
 }

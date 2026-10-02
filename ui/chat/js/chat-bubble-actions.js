@@ -2481,6 +2481,18 @@ function _addBubbleActions(bubble) {
   const isAgent = bubble.classList.contains('agent');
   const isUser = bubble.classList.contains('user');
 
+  // Wire once across streaming/finalization/reconciliation. Hidden action rows
+  // use display:none, so the message itself remains the reveal target.
+  if ((isAgent || isUser) && !bubble._gutterRevealWired) {
+    bubble._gutterRevealWired = true;
+    bubble.addEventListener('click', (event) => {
+      if (event.target.closest('a, button, input, textarea, select, .turn-gutter, .bubble-actions')) return;
+      // Selecting message text should not change its layout.
+      if (window.getSelection()?.toString()) return;
+      bubble.classList.toggle('gutters-open');
+    });
+  }
+
   // Tool-only groups own no response message. Their update rows render their
   // own footers within the disclosure.
   if (isAgent && bubble.classList.contains('tool-only')) return;

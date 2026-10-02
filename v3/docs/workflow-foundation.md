@@ -81,7 +81,7 @@ Encrypted content and sensitive metadata follow the sensitivity noted above.
 | `run_index` | User; projection of run documents | Private metadata | Update with run; rebuild or verify against it |
 | `events` | App or user; operational event stream | Redacted metadata | Append; bounded retention |
 | `legacy_event_map` | App or user; migration mapping | Private metadata | Preserve through rollback window |
-| `docs`: `session:`, `session_mode:`, `session_ability_state:`, `run:`, `run_view:`, `promotion:`, `receipt:session:`, `receipt:message:`, `receipt:run:`, `receipt:approval:` | User; canonical state and idempotency receipts | Private | Revisioned or immutable by key; user ownership check |
+| `docs`: `session:`, `session_mode:`, `session_ability_state:`, `run:`, `run_view:`, `attachment:`, `promotion:`, `receipt:session:`, `receipt:message:`, `receipt:run:`, `receipt:approval:` | User; canonical state and idempotency receipts | Private | Revisioned or immutable by key; user ownership check |
 | `docs`: `agent:`, `agent_abilities:` | Agent; compatibility/configuration document | Private | Migrate to typed agent tables when replaced |
 | `docs`: all remaining keys, including `workflow_policy`, provider tokens, shutoff, auth, model catalog, `storage:split_migrated`, `storage:access_v1`, and `storage:agent_split_v1` | App; canonical policy, secret, control, or migration marker | Security sensitive or secret | Revisioned, revoked, or versioned by family |
 
@@ -92,7 +92,10 @@ store it.
 
 The table declares ownership for both implemented and planned records. Confirm
 runtime wiring and migration markers before treating newly added accounts, tiers,
-or agent stores as live capabilities. Attachments, memories, and optional modules
+or agent stores as live capabilities. Inline text attachments now use encrypted
+`attachment:` user documents and a same-transaction interaction copy. They are
+scoped to the owning session, retained with its user history, and never treated
+as trusted instructions. Binary attachments, memories, and optional modules
 remain planned. For any new table or document, add its owner, authority,
 sensitivity, retention, and cross-plane checks here before migration.
 

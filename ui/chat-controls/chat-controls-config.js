@@ -26,6 +26,7 @@ import { app } from '../shared/js/state.js';
 import { getAgentChatUi } from '../shared/js/app-prompts.js';
 import { applyRubberBand } from '../shared/js/rubber-band.js';
 import { applyChatPillLayout } from '../shared/js/chat-pill-config.js';
+import { applyMessageBubbleConfig } from '../shared/js/chat-surface.js';
 import { init as initStatsControl } from './controls/stats.js';
 
 let _applied = false;
@@ -983,6 +984,7 @@ async function _applyOnce() {
     // Applied here rather than in _buildActiveFooter so it is re-established on
     // every re-apply (agent switch, panel-width crossing), not just at boot.
     _applyContentMaxWidth(chatUi);
+    applyMessageBubbleConfig(document.getElementById('chat-panel'), profile);
 
     // ── Resolve footer profiles (active + idle) ──
     _activeFooterProfile = _resolveFooterProfile(profile, 'active_footer');

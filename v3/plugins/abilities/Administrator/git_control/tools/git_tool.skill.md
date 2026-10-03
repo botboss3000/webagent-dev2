@@ -1,11 +1,3 @@
-# Git Tool
+# git_tool
 
-Use `git_tool` only when it is the exact action the request calls for. This belongs to the Git Control ability.
-
-Follow the tool schema that arrives with this file. Supply every required field,
-inspect the returned result before taking a dependent action, and surface any
-reported warning, limitation, or refusal accurately rather than retrying the
-same failed request unchanged.
-
-For ability-wide selection rules, safety boundaries, and cross-tool workflows,
-follow `git_control.skill.md` alongside this tool skill.
+Use operation status first. Read operations: status, diff, log, show, branch_list, tag_list, stash_list. Mutations: branch_create, branch_delete, tag_create, tag_delete, checkout, stash_push, stash_pop, add, reset, pull, push. Mutations require expected_head. Provide exact paths for add/reset; optional repo defaults webagent-v3. name/ref are strict references, never flags. pull is FF-only; push never forces. Trusted configured remote transport is required.

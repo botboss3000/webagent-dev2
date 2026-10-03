@@ -9,6 +9,7 @@
   "placeholder": false,
   "default_enabled": true,
   "tools": [
+    "repository_access",
     "git_tool",
     "resolve_conflict",
     "commit_and_push"

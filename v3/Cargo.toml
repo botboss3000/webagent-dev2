@@ -16,6 +16,8 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 hex = "0.4"
+# Already locked through reqwest; decode bounded private PNG artifacts.
+base64 = "=0.22.1"
 aes-gcm = "0.10"
 rand = "0.8"
 argon2 = "0.5"

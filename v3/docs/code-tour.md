@@ -1,5 +1,20 @@
 # A plain-language tour of WebAgent v3
 
+Agent ability access follows `src/api/ability_admin.rs` into the selected agent's
+metadata and membership reference. `src/access/capabilities.rs` owns revisioned
+capability levels; `src/access/policy.rs` meets them with installation rules,
+account-tier ability/tool grants and agent base policy. The same result filters
+model guidance and schemas and is checked again before execution. A listed
+manifest remains metadata until compiled registration and readiness exist.
+Partial ports expose only registered tools and keep unsupported declarations
+unavailable. Core native adapters live under `plugins/abilities/Core/base/`.
+Startup-resume installation configuration lives in `src/services.rs`, with its
+revisioned administrator API in `src/api/service_admin.rs`; startup recovery
+checks it before requeuing safe interrupted work. Uncertain writes still require
+reconciliation regardless of that setting.
+See [ability port ledger](ability-port-ledger.md) for explicit remaining gaps.
+
+
 This is a map for someone reading v3 code for the first time. The
 [README](../README.md) has deployment commands and the detailed contracts.
 
@@ -15,6 +30,9 @@ tool or ability authority. Owners appoint administrators; delegated administrato
 assign existing accounts as members or visitors. Installation administrators
 retain oversight without becoming owners. See `agent_authority` and
 `assign_agent_membership` in [storage/access.rs](../src/storage/access.rs).
+Initial owner creation advances access revisions while preserving the creator's
+sign-in, allowing immediate configuration and retry. Later membership edits
+rotate sign-in generation and stop affected work.
 
 [api/model_admin.rs](../src/api/model_admin.rs) resolves the selected agent before
 returning a filtered catalog or accepting changes. Only a connection owner can
@@ -186,3 +204,58 @@ them beside the newest user turn as labeled source data, never instructions.
 List and delete are session-scoped. Automatic memory extraction, binary files,
 images, requirement evidence, and delegation remain later roadmap work.
 An ability catalog entry does not imply that every v2 tool runs in v3.
+
+Authenticated run diagnostics also expose a bounded numeric context summary from
+the durable assembly report. These values measure serialized JSON bytes, not
+provider tokens; transcript text, instructions and tool contents remain private.
+
+Luna calls have a conservative 119,808-byte logical input ceiling beneath the
+requested 128,000 context limit. The runtime reserves 8,192 for output/protocol
+headroom and never lets an operator estimate expand that ceiling. This is a
+conservative byte budget, not an exact provider token count or output control.
+
+Bundled skill reads resolve current caller, agent, tier, capability level and
+visibility before returning exact catalog assets. Loading never grants execution.
+Live bundle validity invalidates the run cache when a manifest or skill changes;
+revoked native skill text is masked from future model inputs while its encrypted
+journal remains intact. Compacted history remains past evidence, not permission.
+
+Base read_own_prompt resolves the current caller-owned session before the agent
+and rechecks live access and bundle validity around bounded prompt-slot reads.
+Internal slots are omitted; locked slots and nonmanagers are reported read-only.
+This does not install the separate edit_own_prompt contract.
+
+## Administrator coding path
+
+`agent_loop/tools/administrator.rs` and its compiled schema JSON bind current-session
+diagnostics, browser authority, workspace receipts and host jobs. `api/repository.rs`
+owns tenant repository URLs and minted encrypted credentials; `api/ability_admin.rs`
+owns CAS settings. `administrator_services.rs` renews host authorization leases and
+polls opt-in content-free repository notices without publishing assistant replies.
+`api/administrator.rs` checks authenticated session ownership for private PNG artifacts
+and notices.
+
+Static worker dispatch loads only installed Administrator adapters. Code Index keeps
+its derived bounded index inside the isolated workspace; Git uses no-follow directory
+descriptors and exact HEAD/review fences; PTYs retain observation sequences and
+bounded output. Seeding, shell, Python and fixed Cargo tasks run under `sandbox.py`;
+trusted supervisors cancel descendants. Diagnostics profiles and preview authentication
+remain outside the shell-readable workspace. The preview proxy rechecks that the
+listener belongs to the same workspace terminal before forwarding.
+
+`plugins/abilities/Administrator/v3_build/host.py` is installed as a protected host
+service, with a root-created Unix listener and narrow frozen-input snapshot channel.
+Generated Python bytecode caches are excluded from both protected and direct image
+build inputs.
+The app and worker do not receive host Docker privileges. Fixed development jobs
+are caller-owned, idempotent and revision fenced. Revocation cancels a pending job;
+after uncertain effects it retains receipts and rollback material for reconciliation.
+Computer Control and Program Screenshot remain excluded and unavailable. The
+eight selected Administrator abilities passed authenticated API acceptance: real
+workspace editing, Code Index, Git push and conflict handling, supervised
+terminals, private browser artifacts, leased previews and protected image
+builds. Fixed V3 Workspace Cargo check and test passed on a stable source
+snapshot. Cargo tool output keeps the final 8 KiB so diagnostics remain visible
+within the model context budget. The development API container needs 2 GiB of
+memory for full V3 source compilation. No UI journey was run. Broader ability
+groups remain pending as documented in the port ledger.

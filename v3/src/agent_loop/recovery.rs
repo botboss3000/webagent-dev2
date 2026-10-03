@@ -32,6 +32,17 @@ pub(crate) async fn user_apps(app:&App) -> Result<Vec<App>> {
 // external write is held for review because its effect may already have happened.
 pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
     let _guard = app.gate.lock().await;
+    // Only boot recovery obeys the optional resume control. Uncertain effects
+    // are always classified, and ordinary lease recovery retains its behavior.
+    let resume = if !startup {true} else {
+        match crate::services::startup_resume_enabled(&app.store).await {
+            Ok(enabled) => enabled,
+            Err(_) => {
+                tracing::error!("Startup resume configuration unavailable; safe interrupted runs remain stopped");
+                false
+            }
+        }
+    };
     for user_app in user_apps(app).await? {
     for view in user_app.store.active_runs().await? {
         let id = view["id"].as_str().unwrap();
@@ -53,7 +64,7 @@ pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
             let allowed=user_app.store.live_access(user_app.store.current_user_id(),agent_id).await
                 .is_ok_and(|access|access.admitted()
                     && (model.is_empty() || access.model_allowed(model)));
-            run["status"] = json!(if app.shutoff().await? || !allowed {
+            run["status"] = json!(if !resume || app.shutoff().await? || !allowed {
                 "stopped"
             } else {
                 "queued"
@@ -64,7 +75,7 @@ pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
             if let Some(items)=run["batch"].as_array_mut() {
                 for item in items { if item["state"]=="executing" {item["state"]=json!("requested");item["pending"]["state"]=json!("requested");} }
             }
-            run["error"] = json!("Recovered after interruption");
+            run["error"] = json!(if !resume {"Automatic startup resume is disabled; explicit resume required"} else {"Recovered after interruption"});
         }
         user_app.save_override(&mut run).await?;
     }

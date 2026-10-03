@@ -5,7 +5,7 @@
   "color": "#bb9af7",
   "description": "Screenshot any program window and get a text description of everything visible on screen. Opens the program first if it isn't running.",
   "skill_summary": "How to screenshot a running program (or start it first) and get a detailed text description via a vision model. Load when the user says 'screenshot <app>' or asks what's showing in a program.",
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
+  "migration_note": "Excluded from this Administrator coding port at the user\u2019s explicit request; remains unavailable.",
   "order": 50,
   "placeholder": false,
   "tools": [

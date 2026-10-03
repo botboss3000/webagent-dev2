@@ -2,7 +2,16 @@ use anyhow::{bail, Context, Result};
 // Single and parallel turns share the same Rust dispatch for native and worker tools.
 #[path = "../../../plugins/abilities/Web/web_access/adapter.rs"]
 pub(crate) mod web_access;
+#[path = "../../../plugins/abilities/Core/base/adapter.rs"]
+pub(crate) mod core_utilities;
+#[path = "../../../plugins/abilities/Core/base/session_adapter.rs"]
+pub(crate) mod core_session;
+#[path = "../../../plugins/abilities/Core/base/skills_adapter.rs"]
+pub(crate) mod core_skills;
+#[path = "../../../plugins/abilities/Core/base/prompt_adapter.rs"]
+pub(crate) mod core_prompt;
 mod dispatch;
+pub(crate) mod administrator;
 pub(crate) use dispatch::call;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
@@ -15,7 +24,15 @@ use tokio_util::sync::CancellationToken;
 pub fn is_read(name: &str) -> bool {
     matches!(
         name,
-        "web_search"
+        "get_time"
+            | "get_date"
+            | "calculate"
+            | "read_attachment"
+            | "search_this_session"
+            | "list_skills"
+            | "load_skill"
+            | "read_own_prompt"
+            | "web_search"
             | "get_weather"
             | "maps_geocode"
             | "file_list"
@@ -24,6 +41,21 @@ pub fn is_read(name: &str) -> bool {
             | "source_review"
             | "state_inspect"
             | "prompt_slot_read"
+            | "code_index_lookup"
+            | "code_index_coverage"
+            | "code_index_trace"
+            | "code_index_progress"
+            | "terminal_read"
+            | "terminal_wait"
+            | "terminal_list"
+            | "v3_workspace_status"
+            | "v3_workspace_receipt"
+            | "v3_build_status"
+            | "v3_worker_job"
+            | "read_diagnostics"
+            | "dev_browser_url"
+            | "get_tunnel_url"
+            | "repository_access"
     )
 }
 
@@ -48,7 +80,12 @@ pub fn schemas() -> Vec<Value> {
         "type":"function", "name":name, "description":description,
         "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}
     })).collect();
+        schemas.extend(administrator::schemas());
         schemas.extend(web_access::schemas());
+        schemas.extend(core_utilities::schemas());
+        schemas.extend(core_session::schemas());
+        schemas.extend(core_skills::schemas());
+        schemas.extend(core_prompt::schemas());
         schemas
     }).clone()
 }
@@ -72,9 +109,34 @@ pub async fn execute(
             | "source_patch"
             | "shell"
             | "python"
+            | "code_index_scan"
+            | "code_index_lookup"
+            | "code_index_coverage"
+            | "code_index_trace"
+            | "code_index_progress"
+            | "git_tool"
+            | "resolve_conflict"
+            | "commit_and_push"
+            | "terminal_open"
+            | "terminal_read"
+            | "terminal_send"
+            | "terminal_wait"
+            | "terminal_list"
+            | "terminal_close"
+            | "v3_workspace_status"
+            | "v3_workspace_action"
+            | "v3_cargo_task"
     ) {
         bail!("unknown tool");
     }
+    execute_trusted(name,args,session,socket,None,cancel).await
+}
+
+// Only Rust supplies trusted browser/host metadata; it is not a model schema.
+pub(crate) async fn execute_trusted(
+    name:&str,args:&Value,session:&str,socket:&std::path::Path,
+    trusted:Option<Value>,cancel:CancellationToken,
+)->Result<Value> {
     uuid::Uuid::parse_str(session).context("invalid workspace identifier")?;
     if cancel.is_cancelled() {
         bail!("tool execution cancelled");
@@ -88,7 +150,7 @@ pub async fn execute(
         .clamp(1, 600);
     let request_id = uuid::Uuid::new_v4().to_string();
     let request = json!({"id":request_id,"name":name,
-        "arguments":args,"workspace":session,"timeout_seconds":timeout});
+        "arguments":args,"workspace":session,"timeout_seconds":timeout,"trusted":trusted});
     let mut encoded = serde_json::to_vec(&request)?;
     if encoded.len() > 1024 * 1024 {
         bail!("tool input exceeds limit");

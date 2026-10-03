@@ -19,7 +19,9 @@ Encrypted membership records add `agent_administrator`, limited to agent/model
 administration. Owner, member, caller (visitor), and revoked keep their existing
 tool-policy meaning. Membership writes check actor authority, target account,
 directory ownership, and expected revision in one application transaction,
-then rotate account access generation and quiesce affected work.
+then rotate account access generation and quiesce affected work. Initial owner
+creation advances the access revision but preserves sign-in generation; it grants
+new ownership and must allow the same authenticated creator to configure models.
 
 Legacy primary records remain for rollback. Reads project absent role maps to
 Standard without appointing other roles; the next atomic save persists that
@@ -30,6 +32,43 @@ the chat plan and independent System plan and failover cursor. Role changes
 affect new runs, while live revocation and account ceilings still stop dispatch.
 No session database inspection or alternate state access path is introduced.
 
+
+## Agent ability authority and migration
+
+The application access-policy tiers add explicit `ability_permissions` keyed by
+ability ID. Missing IDs deny; an explicit `*` opts in to future abilities.
+Missing fields on legacy tier records project only `codebase_admin` and
+`web_access` as Auto, preserving their old tool ceilings. This is a bounded
+read migration; the next tier save persists the projection.
+
+Agent metadata owns `capability_levels` (aggregate revision and keyed records)
+and the base `ability_permissions` / `tool_permissions`. A membership in the
+application plane references `capability_level_id`. Legacy memberships project
+owner/delegated administrator to administrator, member to member, caller to
+visitor. Built-in levels initially grant only the two legacy ready abilities;
+missing tool settings inherit the existing ceilings. New custom levels have no
+ability grants. Level names never confer administrative authority.
+
+One live Rust access snapshot meets installation tool policy, account tier,
+agent base policy and membership capability level before discovery, guidance,
+schemas, approval and dispatch. Visibility cannot grant execution. Revisions
+and resolved grants enter the context fingerprint; edits quiesce affected runs,
+and recovery still rechecks live policy. Capability-level and base-policy CAS
+updates commit encrypted agent-owned audit receipts with metadata in the agent
+file. Membership assignment and its audit commit in the application file and
+rotate the target account generation. No session database migration is used.
+
+Agent owners, delegated administrators and explicit installation oversight use
+tenant-scoped ability APIs after resolving directory authority. Nonmanagers
+receive a sanitized effective view, without private policy maps or roster.
+Prompt settings use the same authority. Installation tier edits remain separate.
+Capability levels cannot be deleted while memberships may reference them.
+
+| New record family | Owner/location | Migration/lifecycle |
+| --- | --- | --- |
+| Tier ability-ID grants | Installation access-policy configuration | Legacy field omission projects only ready adapters; CAS saves persist |
+| Capability levels, base policies, encrypted ability audit receipts | Selected agent metadata and docs in agent data file | Defaults project on read; atomic revisioned writes persist |
+| Membership capability-level reference | Application membership record | Legacy authority-based default; revisioned assignment invalidates sign-in |
 
 ## Fixed execution boundary
 

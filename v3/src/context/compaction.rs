@@ -104,7 +104,12 @@ impl Config {
         result
     }
     pub fn prompt(&self, plan: &Plan) -> Result<String> {
-        let source = serde_json::to_string(&plan.source.iter()
+        // A summary must not turn revocable bundled skill instructions into
+        // durable background guidance. Preserve the original plan identity and
+        // project only the provider source; ordinary history remains unchanged.
+        let mut projected = plan.source.clone();
+        crate::tools::core_skills::mask_summary_history(&mut projected);
+        let source = serde_json::to_string(&projected.iter()
             .filter(|item| item["type"] != "reasoning").collect::<Vec<_>>())?;
         if source.len() > self.max_source_bytes { bail!("Context summary source is too large"); }
         // Substitute source last so transcript text cannot expand template placeholders.
@@ -121,7 +126,7 @@ pub struct Plan {
     /// Items before this index are summarized; the rest are retained verbatim.
     pub drop_until: usize,
     pub boundary: Boundary,
-    /// Exact source for a provider summarization call.
+    /// Exact original prefix. The summary prompt masks native bundled guidance.
     pub source: Vec<Value>,
     /// Stable identity of the source; useful for a durable compaction event.
     pub source_digest: String,
@@ -319,6 +324,43 @@ mod tests {
     }
     fn output(id: &str) -> Value {
         json!({"type":"function_call_output","call_id":id,"output":"{}"})
+    }
+
+    #[test]
+    fn summary_projection_masks_native_skill_evidence_without_changing_plan_identity() {
+        let config=rolling_config();
+        let guide="REVOCABLE_BUNDLED_INSTRUCTIONS";
+        let native=json!({"status":"success","output":{"ability_id":"base","kind":"ability",
+            "skill_id":"base","bytes":guide.len(),"text":guide,
+            "sha256":hex::encode(Sha256::digest(guide.as_bytes())),
+            "source_kind":"untrusted_bundled_guidance","activates":false}});
+        let input=vec![user(&"old conversation ".repeat(100)),
+            json!({"type":"function_call","call_id":"skill","name":"load_skill",
+                "arguments":json!({"ability_id":"base","kind":"ability","skill_id":"base"}).to_string()}),
+            json!({"type":"function_call_output","call_id":"skill","output":native.to_string()}),
+            json!({"type":"function_call","call_id":"ordinary","name":"web_search","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"ordinary",
+                "output":json!({"status":"success","output":{"text":"ORDINARY_RESULT_MUST_REMAIN",
+                    "source_kind":"untrusted_bundled_guidance"}}).to_string()}),
+            user("latest")];
+        let original=input.clone();
+        let planned=plan_rolling(&input,8192,&config).unwrap().unwrap();
+        let source=planned.source.clone();
+        let identity=planned.source_digest.clone();
+        assert!(serde_json::to_string(&source).unwrap().contains(guide));
+        let prompt=config.prompt(&planned).unwrap();
+        assert!(!prompt.contains(guide));
+        assert!(prompt.contains("bundled_skill_withdrawn"));
+        assert!(prompt.contains("ORDINARY_RESULT_MUST_REMAIN"));
+        assert!(prompt.contains("old conversation"));
+        assert_eq!(planned.source,source);
+        assert_eq!(planned.source_digest,identity);
+        assert_eq!(digest(&planned.source).unwrap(),identity);
+        assert_eq!(input,original);
+        // apply_summary still validates the original history/digest and leaves
+        // the ordinary tail untouched. No source is rewritten by prompt projection.
+        let compacted=apply_summary(&input,&planned,"Earlier work completed.").unwrap();
+        assert_eq!(&compacted[1..],&input[planned.drop_until..]);
     }
 
     #[test]

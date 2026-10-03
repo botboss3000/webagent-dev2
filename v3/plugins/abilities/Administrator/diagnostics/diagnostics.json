@@ -3,9 +3,9 @@
   "kind": "ability",
   "icon": "activity",
   "color": "#e0af68",
-  "description": "Lets the agent diagnose WebAgent runs and safely test the local development app in an authenticated server-backed browser. On by default; switch off to remove it platform-wide.",
-  "skill_summary": "The recipe for diagnosing any chat session, run failure, or tool error in one or two calls. Load before investigating a misbehaving session, a stuck run, a resume question, or a vague error.",
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
+  "description": "Read sanitized V3 run diagnostics and operate a private fixed-origin development browser under current caller, session and agent authority.",
+  "skill_summary": "Use typed run diagnostics or a private authenticated V3 browser with bounded visible text, fresh observations before input, opaque PNG artifacts and bounded frame recording.",
+  "migration_note": "Compiled V3 adapter, scoped policy and configuration passed focused tests and authenticated V3 API acceptance. Execution still requires applicable installation, account-tier, agent, membership and session grants.",
   "order": 2,
   "placeholder": false,
   "tools": [
@@ -15,6 +15,6 @@
     "dev_browser_action",
     "dev_browser_record"
   ],
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {}
 }

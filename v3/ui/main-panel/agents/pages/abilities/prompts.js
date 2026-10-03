@@ -6,7 +6,7 @@ const _PROMPT_ICON_MAP = {
   misc: 'file-text', automation: 'clock', bootstrap_tools: 'wrench',
 };
 
-export async function buildPromptsGroup(request) {
+export async function buildPromptsGroup(request, agentId) {
   const groupEl = document.createElement('div');
   groupEl.className = 'ac-row ac-group ac-group-prompts';
   groupEl.id = 'ac-group-prompts';
@@ -54,7 +54,7 @@ export async function buildPromptsGroup(request) {
     if (built) return;
     built = true;
     try {
-      const data = await request('/agents/shared_default/slots');
+      const data = await request('/agents/' + encodeURIComponent(agentId) + '/slots');
       const slots = data.slots || [];
       const overrides = {};
       bodyEl.innerHTML = '';

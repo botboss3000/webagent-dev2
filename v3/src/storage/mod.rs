@@ -1,6 +1,8 @@
 //! Durable storage for the three owners: application, agent, and user.
 //! A run revision and a time-limited lease stop stale processes from replacing
 //! newer progress. See docs/code-tour.md before following the SQL below.
+pub(crate) mod session;
+
 use crate::access;
 use crate::cache::{Cache, ContextCache};
 use aes_gcm::{
@@ -268,6 +270,7 @@ impl Store {
         .execute(&store.agent_pool)
         .await?;
         store.migrate_legacy(root).await?;
+        store.migrate_session_metadata().await?;
         store.init_accounts().await?;
         store.init_access_policy().await?;
         store.init_policy_tiers().await?;
@@ -299,12 +302,14 @@ impl Store {
                 states.insert(user_id.to_owned(),state.clone()); state
             }
         }};
-        Ok(Self {app_pool:self.app_pool.clone(),pool:state.pool,
+        let handle = Self {app_pool:self.app_pool.clone(),pool:state.pool,
             agent_pool:self.agent_pool.clone(),root:self.root.clone(),
             user_id:user_id.to_owned(),agent_id:self.agent_id.clone(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
             cipher:self.cipher.clone(),cache:state.cache,
-            context_cache:state.context_cache,context_gate:state.context_gate})
+            context_cache:state.context_cache,context_gate:state.context_gate};
+        handle.migrate_session_metadata().await?;
+        Ok(handle)
     }
     pub async fn for_agent(&self, agent_id:&str) -> Result<Self> {
         if !access::valid_agent_id(agent_id) {
@@ -440,10 +445,12 @@ impl Store {
             }
         }
         Ok(json!({"revision":metadata["ability_revision"].as_i64().unwrap_or(0),"visibility":visibility,
-            "skill_visibility":metadata["skill_modes"],"tool_modes":metadata["tool_modes"]}))
+            "skill_visibility":metadata["skill_modes"],"tool_modes":metadata["tool_modes"],"settings":metadata["ability_settings"]}))
     }
     pub async fn save_agent_abilities(&self, value: &Value, expected_revision: u64) -> Result<()> {
+        if expected_revision==u64::MAX {return Err(anyhow!("Agent ability revision overflow"));}
         let mut tx = self.agent_pool.begin().await?;
+        sqlx::query("UPDATE agents SET revision=revision WHERE id=?").bind(&self.agent_id).execute(&mut *tx).await?;
         let row = sqlx::query("SELECT metadata,revision FROM agents WHERE id=?")
             .bind(&self.agent_id).fetch_one(&mut *tx).await?;
         let mut metadata = self.unseal(&row.get::<Vec<u8>,_>("metadata"))?;
@@ -464,7 +471,13 @@ impl Store {
         metadata["ability_modes"]=Value::Object(active);
         metadata["skill_modes"]=value["skill_visibility"].clone();
         metadata["tool_modes"]=value["tool_modes"].clone();
+        metadata["ability_settings"]=value["settings"].clone();
         metadata["ability_revision"]=json!(expected_revision + 1);
+        // Visibility and its encrypted audit receipt have one agent-owned commit.
+        sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
+            .bind(format!("agent:{}:ability_visibility_audit:{}",self.agent_id,expected_revision+1))
+            .bind(self.seal(&json!({"agent_id":self.agent_id,"actor_id":self.current_user_id(),"revision":expected_revision+1}))?)
+            .execute(&mut *tx).await?;
         sqlx::query("UPDATE agents SET metadata=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id=? AND revision=?")
             .bind(self.seal(&metadata)?).bind(&self.agent_id)
             .bind(row.get::<i64,_>("revision"))
@@ -493,6 +506,10 @@ impl Store {
             || key.starts_with("session_ability_state:")
             || key.starts_with("run:")
             || key.starts_with("run_view:")
+            || key.starts_with("administrator_receipt:")
+            || key.starts_with("administrator_browser:")
+            || key.starts_with("administrator_host:")
+            || key.starts_with("administrator_notice:")
             || key.starts_with("attachment:")
             || key.starts_with("memory:")
             || key.starts_with("promotion:")
@@ -1165,9 +1182,10 @@ impl Store {
         } else {
             None
         };
-        sqlx::query("INSERT OR IGNORE INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),?)")
+        let inserted = sqlx::query("INSERT OR IGNORE INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),?)")
             .bind(id).bind(sid).bind(run_id).bind(role)
             .bind(self.seal(content)?).bind(terminal).execute(&mut **tx).await?;
+        if inserted.rows_affected() > 0 { self.touch_session_activity(tx, sid).await?; }
         Ok(())
     }
     /// Reconstruct a split recovery record under the reader's transaction.
@@ -1209,6 +1227,14 @@ impl Store {
     /// and truncation update only affected rows. A metadata reference is published
     /// only alongside its complete item set. No transcript rows are deleted.
     async fn write_document(&self, tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, key: &str, value: &Value) -> Result<()> {
+        if key.starts_with("run:") && !matches!(value["status"].as_str(), Some("completed" | "cancelled" | "failed")) {
+            self.require_active_session(tx, value["session_id"].as_str().ok_or_else(||anyhow!("Run has no session"))?).await?;
+        }
+        let session_value;
+        let value = if key.starts_with("session:") {
+            session_value = self.prepare_session_document(tx, key, value).await?;
+            &session_value
+        } else { value };
         let mut metadata;
         let stored = if key.starts_with("run:") && value["input"].is_array() {
             let rid = value["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?;
@@ -1416,6 +1442,9 @@ impl Store {
             None
         };
         let mut tx = self.pool.begin().await?;
+        if !matches!(run["status"].as_str(), Some("completed" | "cancelled" | "failed")) {
+            self.require_active_session(&mut tx, run["session_id"].as_str().ok_or_else(||anyhow!("Run has no session"))?).await?;
+        }
         let expected=run["run_revision"].as_u64().unwrap_or(0);
         if let Some(raw)=sqlx::query_scalar::<_,Vec<u8>>("SELECT value FROM docs WHERE key=?")
             .bind(format!("run:{rid}")).fetch_optional(&mut *tx).await? {
@@ -1507,6 +1536,7 @@ impl Store {
                 sqlx::query("INSERT INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),NULL)")
                     .bind(message_id).bind(sid).bind(rid).bind("assistant")
                     .bind(self.seal(&json!(text))?).execute(&mut *tx).await?;
+                self.touch_session_activity(&mut tx, sid).await?;
             }
         }
         if kind == "model_output" {
@@ -1705,6 +1735,14 @@ impl Store {
             None
         };
         let mut tx = destination.begin().await?;
+        if kind == "message" && payload["role"] == "user" {
+            self.require_active_session(&mut tx, sid).await?;
+        }
+        for (_, run) in docs.iter().filter(|(key,_)|key.starts_with("run:")) {
+            if !matches!(run["status"].as_str(), Some("completed" | "cancelled" | "failed")) {
+                self.require_active_session(&mut tx, run["session_id"].as_str().ok_or_else(||anyhow!("Run has no session"))?).await?;
+            }
+        }
         if let Some((_, run))=docs.iter_mut().find(|(key,_)|key.starts_with("run:")) {
             let rid=run["id"].as_str().ok_or_else(||anyhow!("Run has no id"))?.to_owned();
             let expected=run["run_revision"].as_u64().unwrap_or(0);
@@ -2728,9 +2766,13 @@ mod tests {
             "status":"running","generation":"generation","lease_epoch":0,
             "input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}],
             "turns":1});
+        store.put("session:working-session", &json!({"id":"working-session","created_at":1})).await.unwrap();
         let payload=json!({"id":"working:working-run:call-1","text":"Progress update"});
         store.save_run(&mut run,"working_message",&payload).await.unwrap();
         store.save_run(&mut run,"working_message",&payload).await.unwrap();
+        let summary=store.session_read_summary("working-session").await.unwrap();
+        assert!(summary["last_active_at"].as_i64().unwrap()>1);
+        assert_eq!(summary["unread_count"],1);
         let rows=sqlx::query("SELECT id,terminal_run_id,content FROM chat WHERE run_id=?")
             .bind("working-run").fetch_all(&store.pool).await.unwrap();
         assert_eq!(rows.len(),1);

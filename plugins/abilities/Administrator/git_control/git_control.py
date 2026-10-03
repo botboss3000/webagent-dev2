@@ -1,7 +1,8 @@
 """Git Control ability - SELF-CONTAINED drop-in.
 
 Structured git operations only (no shell / file / python access) - the entire
-surface is git_tool, resolve_conflict and commit_and_push. These handlers are
+surface is repository_access, git_tool, resolve_conflict and commit_and_push.
+Discovery lives in the sibling repository_access module; operation handlers are
 defined HERE, in this ability file (`_inject_git_tools` below): Git Control is
 the only thing that uses them, so they are NOT kept in the shared admin library.
 Only genuinely shared, multi-use infra is reused from `plugins/admin`: the
@@ -53,6 +54,19 @@ def build_tools(*, user_id: str = "", session_id: str = "", agent_id: str = "",
     from plugins.admin.adapter import extract_injected
 
     handlers, schemas, destructive = extract_injected(_inject_git_tools, user_id)
+
+    # Discovery belongs to Git Control; shared credentials stay server-side.
+    from plugins.abilities.Administrator.git_control.repository_access import (
+        repository_access, SCHEMA as repository_schema,
+    )
+
+    async def _repository_access(verify_remote: bool = True):
+        return json.dumps(await repository_access(
+            verify_remote=verify_remote, user_id=user_id, agent_id=agent_id,
+        ))
+
+    handlers["repository_access"] = _repository_access
+    schemas["repository_access"] = dict(repository_schema)
 
     TOOL_SCHEMAS.clear()
     TOOL_SCHEMAS.update(schemas)

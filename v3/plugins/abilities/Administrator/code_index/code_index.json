@@ -3,9 +3,9 @@
   "kind": "ability",
   "icon": "scan-search",
   "color": "#7aa2f7",
-  "description": "Build a source-derived, line-complete index of all maintainable UI source. It records line ownership, AST symbols, UI edges, and source hashes in data/db/code_index.db.",
-  "skill_summary": "Use for a complete, source-derived map of current UI source. Check coverage and staleness, then trace functions, lines, selectors, events, endpoints, imports, or assets through the indexed graph. Every approved UI source line is recorded; parser uncertainty is explicit rather than silently omitted.",
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
+  "description": "Build a bounded, line-complete derived index of the caller's isolated V3 source snapshot, with symbol ownership, static references, explicit parser uncertainty and live freshness.",
+  "skill_summary": "Scan the current session workspace, check coverage and freshness, and navigate exact indexed lines, symbols and static references. Read-only queries never rescan.",
+  "migration_note": "Compiled V3 adapter, scoped policy and configuration passed focused tests and authenticated V3 API acceptance. Execution still requires applicable installation, account-tier, agent, membership and session grants.",
   "order": 4,
   "placeholder": false,
   "tools": [
@@ -15,6 +15,6 @@
     "code_index_trace",
     "code_index_progress"
   ],
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {}
 }

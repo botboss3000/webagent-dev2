@@ -5,3 +5,6 @@
 /deployment-secrets/
 /runtime/
 /gate-runtime/
+/build-jobs/
+/host-build-service/
+/rollback/

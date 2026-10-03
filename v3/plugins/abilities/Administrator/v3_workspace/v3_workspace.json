@@ -10,7 +10,7 @@
   "icon": "folder-git-2",
   "order": 10,
   "placeholder": false,
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {},
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+  "migration_note": "Compiled V3 adapter, scoped policy and configuration passed focused tests and authenticated V3 API acceptance. Execution still requires applicable installation, account-tier, agent, membership and session grants."
 }

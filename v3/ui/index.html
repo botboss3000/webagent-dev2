@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/ui/shared/css/index.css">
 <link rel="stylesheet" href="/v3-ui/app.css?v=chat-partial-20260930">
 <link rel="stylesheet" href="/v3-ui/chat/chat.css?v=chat-overlay-20260930">
+<script src="/v3-ui/boot/uuid.js"></script>
 <script src="/ui/vendor/lucide/lucide.min.js"></script>
 <script type="module" src="/v3-ui/app.js?v=chat-overlay-20260930"></script>
 <link rel="stylesheet" href="/v3-ui/boot/boot.css">
@@ -23,6 +24,8 @@
 <div id="cursor-glow" aria-hidden="true"></div>
 <script src="/v3-ui/boot/cursor-effects.js"></script>
 <script src="/v3-ui/boot/boot.js"></script>
+<script src="/v3-ui/boot/viewport.js"></script>
+<script src="/v3-ui/boot/zoom.js"></script>
 <div id="ptr-indicator" hidden aria-live="polite" aria-label="Pull to refresh">
   <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
     <path d="M24,7 A17,17 0 1,1 10.3,15.3 L15.5,10.5" fill="none" stroke="var(--fg-faint, #4a516e)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.06"/>
@@ -38,13 +41,13 @@
     <select id="main-tab-select" hidden aria-hidden="true"></select>
     <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="Open navigation" aria-controls="mobile-nav-menu" aria-expanded="false" hidden><span aria-hidden="true">☰</span></button>
     <button id="mobile-back-main-btn" class="mobile-back-main-btn" type="button" hidden>Agents</button>
-    <div id="main-tabs-wrap"><div id="main-tabs" role="tablist">
+    <div id="main-tabs-wrap"><button type="button" id="main-tabs-chev-left" class="main-tabs-chev left" aria-label="Scroll tabs left">&#10094;</button><div id="main-tabs" role="tablist">
       <div class="user-dropdown">
         <button id="top-user-id" class="user-dropdown-trigger" type="button" title="Manage account" aria-label="Manage account" aria-expanded="false" aria-controls="user-dropdown-menu">
           <span id="top-user-avatar-slot"><svg class="user-avatar-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 4-7 8-7s8 3 8 7"></path></svg></span>
         </button>
       </div>
-    </div></div>
+    </div><button type="button" id="main-tabs-chev-right" class="main-tabs-chev right" aria-label="Scroll tabs right">&#10095;</button></div>
     <span id="status-right" class="chat-header-controls">
       <button id="chat-toggle-btn" class="chat-toggle-btn active" type="button" title="Toggle chat panel" aria-label="Toggle chat panel" aria-controls="chat-panel" aria-expanded="true"><span>Chat</span></button>
     </span>

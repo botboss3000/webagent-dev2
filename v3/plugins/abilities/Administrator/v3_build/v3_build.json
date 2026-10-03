@@ -1,7 +1,7 @@
 {
   "display_name": "V3 Build",
   "kind": "ability",
-  "description": "Check v3 prerequisites, run local Rust tasks, or submit and poll fixed builds/deployments through a dedicated private development worker. Includes trusted-admin browser login to validate the independent v3 app.",
+  "description": "Run bounded V3 workspace Rust checks and installation-admin development image jobs through a private host broker. Builds use frozen allowlisted inputs; deployments retain rollback material.",
   "tools": [
     "v3_build_status",
     "v3_cargo_task",
@@ -14,7 +14,7 @@
   "color": "#7aa2f7",
   "order": 9,
   "placeholder": false,
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {},
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+  "migration_note": "Compiled V3 adapter, scoped policy and configuration passed focused tests and authenticated V3 API acceptance. Execution still requires applicable installation, account-tier, agent, membership and session grants."
 }

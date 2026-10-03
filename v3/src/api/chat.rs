@@ -36,9 +36,9 @@ pub(crate) async fn send(
     if app.shutoff().await? {
         return Err(conflict("Global shutoff is active"));
     }
-    if app.store.get(&key("session", &id)).await?.is_none() {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
-    }
+    let session = app.store.get(&key("session", &id)).await?
+        .ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Session not found".into()))?;
+    if session["status"] == "recycled" { return Err(conflict("Session is recycled; restore it first")); }
     let agent_id = session_agent_id(&app, &id).await?;
     let access=app.store.live_access(app.store.current_user_id(),&agent_id).await
         .map_err(|_|ApiError(StatusCode::FORBIDDEN,"Agent unavailable".into()))?;
@@ -350,6 +350,9 @@ pub(crate) async fn command(
         if r["digest"] != digest(&body) {
             return Err(conflict("Identifier reused"));
         }
+        if action=="cancel" {
+            if let Some(sid)=r["result"]["session_id"].as_str() {phase3_api::quiesce_session_resources(&app,sid).await?;}
+        }
         return Ok(Json(r["result"].clone()));
     }
     let mut run = app
@@ -484,6 +487,7 @@ pub(crate) async fn command(
             &result,
         )
         .await?;
+    if action=="cancel" {phase3_api::quiesce_session_resources(&app,result["session_id"].as_str().unwrap()).await?;}
     Ok(Json(result))
 }
 pub(crate) async fn approval(State(app): State<App>, Path(id): Path<String>, Json(body): Json<Value>) -> Api {

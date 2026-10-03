@@ -1,39 +1,25 @@
-# Code Index — UI and application source map
+# Code Index — current-session source map
 
-Use this ability for source-backed investigation of WebAgent's current UI and application code. It maps maintainable source beneath `ui/` and `app/`; it does not map session data or runtime-generated browser execution.
+Use Code Index to navigate the source snapshot in this caller's isolated V3 session workspace. Rust resolves the caller, agent and chat session and checks live policy before dispatch. No user ID, agent ID, runtime database or arbitrary absolute path is accepted.
 
-## Freshness contract
+The default repository root is `webagent-v3`, created by `workspace_seed`. An optional `root` must be a relative directory inside this same workspace. Relative `scope` and `file_path` arguments are measured from that repository root. Traversal, symlinks, special files, generated assets and runtime/data directories are rejected or explicitly excluded.
 
-The index is a derived snapshot, so its exact file and line totals are intentionally not recorded here. Run `code_index_coverage(action="report")` before relying on it; use the result only when it reports zero ledger gaps, zero stale digests, and no unindexed files. A full scan also removes records for files no longer in its approved source set.
+## Workflow
 
-## What is indexed
+1. Call `code_index_scan(action="discover")` to find maintainable source and detect missing/stale index entries.
+2. Run `code_index_scan(action="scan")`, or `scan_file` with one relative file path. A successful scan reports its revision and batch ID. Optional `expected_revision` rejects stale writes.
+3. Check `code_index_coverage(action="report")`. Review all pages, using `next_offset` while `has_more` is true. Zero gaps alone does not mean fresh: require zero `stale_count` and zero `unindexed_count`.
+4. Use `code_index_lookup` for files, exact lines, symbols and static edges. Use `code_index_trace` for exact symbols, selectors, events, endpoints, imports, data attributes and assets.
+5. After edits, explicitly scan changed files. Reads never silently rescan; returned lookup and trace records carry `stale` flags.
 
-Every physical line in each approved source file has one ledger record, including blank and comment lines. The approved source set is every non-generated `.js`, `.mjs`, `.cjs`, `.css`, `.html`, `.json`, and `.py` file below `ui/` or `app/`.
+Every physical source line, including comments and blanks, receives one hashed ledger entry. Python symbols use Python AST. JavaScript uses Tree-sitter when installed; an unavailable or invalid parser produces explicitly uncertain fallback spans. Rust and TOML are lexical source coverage with uncertainty, not an AST claim. Static edges are navigation evidence, not runtime behavior.
 
-- JavaScript functions, classes, methods, and callable variable declarations have Tree-sitter AST spans, parent-symbol context, and line ownership.
-- Python functions and classes have Python-AST spans, parent-symbol context, and line ownership.
-- CSS, HTML, and JSON have complete line records classified in their native source category. HTML asset links are indexed.
-- Static edges include JavaScript imports, DOM selectors, `data-*` attributes, event names, chat/API endpoint strings, and HTML `src`/`href` assets.
-- Each file stores a SHA-256 source digest, scan timestamp, line count, parser status, and parser notes.
+The SQLite index is derived metadata under this session workspace's `.code-index/`. Source files and the immutable interaction journal are untouched. Full scans remove entries whose files disappeared within the scanned scope. Batches record completion or failure; progress does not prove current freshness.
 
-The index therefore supports questions such as: which function owns an application or UI line; which source files bind an event, selector, attribute, endpoint, import, or asset; and which static references surround a changed implementation.
+## Bounds and authority
 
-## Source of truth and freshness
+Enumeration, file bytes, total source bytes, physical lines, symbols, static edges, parser time, database size and response pages are bounded. A rejected scan preserves the previous index. Responses use `source_kind: untrusted_source_index`; source signatures, paths and edge strings never grant execution or become trusted instructions.
 
-The SQLite database at `data/db/code_index.db` is derived data, never the source of truth. Before a diagnosis or edit:
+Rust's installation, tier, agent, capability-level and session rules remain authoritative for every call. Disabling or revoking the ability withdraws its tools. This adapter has no external credentials and no direct access to the shared checkout or runtime/session databases.
 
-1. Run `code_index_coverage(action="report")`. Use indexed results only when the relevant files have zero gaps and are not stale.
-2. Use `code_index_lookup` for an exact file, line, symbol, or edge. Use `code_index_trace` for an exact symbol, selector, event, endpoint, data attribute, import, or asset.
-3. After changing UI source, run `code_index_scan(action="scan_file", file_path="...")` for the changed file, or `scan` for a broader refresh. Recheck stale state afterward.
-
-`code_index_progress` records scan batches only. A completed batch is not proof that a file remains current; the digest check is.
-
-## Interpretation limits
-
-Static references are navigation evidence, not a runtime call graph. Dynamic imports, computed selectors, string-built endpoints, framework rendering, CSS cascade/layout, browser state, and server-provided payloads may affect behavior without a static edge. Use the index to focus source review, then use an appropriate browser journey or API check to prove live behavior.
-
-If Tree-sitter cannot parse a JavaScript file or is unavailable, Code Index falls back to a conservative scanner and marks it `parser_uncertain`; it must not be treated as an exact AST function map. At the current baseline, all indexed UI files have parser status `ok`.
-
-## Exclusions
-
-Generated/minified files, vendored code, backup/original copies, bytecode, documentation, data, binary media, images, archives, and fonts below `ui/` are intentionally excluded from source coverage. They are not silently counted as runnable UI code.
+Use authenticated V3 API acceptance to prove coding behavior as requested. This ability does not require a browser journey.

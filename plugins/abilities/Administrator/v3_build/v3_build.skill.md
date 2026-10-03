@@ -10,7 +10,13 @@ No arbitrary commands, paths, image tags, installation, Docker socket mounting, 
 
 ## Direction and boundaries
 
-V3 is an independent Rust application in `v3/`, built incrementally from v2's working features. The goal is to move the **actual v2 UI** over and implement the Rust backend contracts that make each feature work—not build a lookalike, connect v3 to the v2 backend, or treat copied markup as feature parity. V2 remains independently available.
+V3 is an independent Rust application in `v3/`. The v2 reference repository is in **`v3/v2_ref/`**. The goal is to adapt the **whole reference repository** to the v3 app piece by piece, including the actual v2 UI and the Rust backend contracts that make each feature work—not build a lookalike, connect v3 to the v2 backend, or treat copied markup as feature parity. V2 remains independently available.
+
+### Reference repository as migration tracking
+
+Treat `v3/v2_ref/` as the remaining migration inventory, not a permanent duplicate. As functions are fully adapted and verified in v3, delete those adapted functions from the corresponding reference files while retaining the not-yet-adapted parts. Once a whole file has been fully adapted and verified, delete that file from `v3/v2_ref/`. Do not remove incomplete work or unrelated reference code, and do not delete from the independently running v2 repository. The eventual goal is for `v3/v2_ref/` to contain only the bits deliberately unwanted in v3, making what remains versus what has actually moved over clear. Preserve intentionally unwanted bits there rather than deleting them as if migrated.
+
+For **UI files**, port each file **completely**, including its markup, styles, interactions, lifecycle, and applicable supporting assets; adjust its API endpoints and request/response handling for v3 where applicable. A partial UI copy is not a completed port. Remove a UI reference file only after the complete port and its applicable v3 backend behavior have been verified.
 
 Rust owns authentication, APIs, provider requests, policy/approval gates, run state, recovery, and storage. An isolated Python worker performs permitted filesystem and process operations. A separate promotion broker handles approved live-source changes. Keep those boundaries intact; loading an ability never bypasses policy.
 
@@ -21,16 +27,26 @@ Read `CLAUDE.md`, `v3/README.md`, and `v3/docs/ui-journeys.md` first. They are t
 - `v3/src/main.rs`: API routing and run orchestration; `provider.rs`: subscription adapter; `store.rs`: persistence; `abilities.rs`: catalog and effective tool discovery.
 - `v3/worker.py`: workspace tool execution. `v3/deploy.sh`, `Dockerfile`, and `launch.py`: build, mounts, and startup.
 - `v3/ui/`: independent shell, chat partial/styles, and page modules. Pages under `main-panel/<id>/` use `page.json`; the Rust `/api/v3/pages/catalog` discovers them. Entry modules export `start(mount)`.
-- Root `ui/` and `index.html`: v2 reference implementations. V3 already reuses selected v2 CSS/assets and the Agents partial. Inspect the exact component's markup, styling, events, lifecycle, and API callers before adapting it; retain shared design tokens and sister-panel consistency.
+- `v3/v2_ref/`: v2 reference repository and remaining migration inventory; its `ui/` and `index.html` contain the UI reference implementations. Inspect the exact component's markup, styling, events, lifecycle, and API callers before adapting it; retain shared design tokens and sister-panel consistency. Port UI files completely and adjust endpoints for v3 where applicable. Remove verified adapted functions/files from this reference directory as described above, leaving pending and intentionally unwanted bits.
 
 The documented baseline includes setup/account, Agents model/ability controls, chat, approvals/recovery, and Codebase Admin workspace tools. This is **not full v2 parity**: other Administrator abilities can be catalog-only, and v2 controls may remain unsupported. A manifest, displayed row, or saved visibility mode does not establish executable support.
+
+## UI migration scope and lessons
+
+- **Port supported functions by default.** Preserve v2 behavior unless checked evidence shows it is dead, stale, deliberately unwanted, or already replaced by an equivalent v3 implementation. A simpler implementation is not proof of equivalence. Trace callers, consumers, events, assets, and API dependencies first; verify existing equivalents and fill gaps rather than duplicate them.
+- **Keep UI migration separate from new feature development.** During a UI-porting task, leave a function completely unported in `v3/v2_ref/` if it requires new backend endpoints, contracts, services, or other development outside that task. Report the missing dependency; do not add unused UI fragments or expand scope. For example, browser-error reporting remains pending until a supported v3 diagnostics intake exists. The feature-development steps below apply only when that broader work is in scope.
+- **Respect v3 Content Security Policy.** Move v2 inline scripts into external scripts when required, preserving execution order. Do not weaken CSP to make copied code work. Use CSP-compatible verification rather than harnesses requiring `eval` or dynamic code construction.
+- **Verify behavior and lifecycle, not appearance alone.** For startup/animation ports, assert readiness gates, event order and counts, timers, reduced-motion behavior, and cleanup. For carousels, verify overflow, edge controls, active-tab visibility, scrolling, and spring-back. A screenshot alone cannot detect duplicate lifecycle events.
+- **Clean migrated remnants as part of completion.** After verification, remove the adapted function and exclusively owned wiring from the reference: obsolete listeners, observer callbacks, dangling calls, empty script tags, and inaccurate comments. Preserve shared and unported logic. Search for removed symbols afterward. Partial function migration does not justify deleting the containing UI file.
+- **Separate simulated checks from device confirmation.** Synthetic gesture tests establish handler behavior, not physical-device behavior; report that limitation. Record explicit user confirmation on a real device as additional acceptance evidence, not as a new change request.
 
 ## Port one complete feature at a time
 
 1. Trace the v2 control through UI events, API request/response shapes, authorization, persistence, and runtime effects. State exactly what will be reused and any intentional v3 differences.
 2. Define and implement the matching `/api/v3` contract in Rust, including validation, ownership, CSRF for browser writes, policy/approval checks, durable state, and explicit errors. Preserve run pinning, cancellation, shutoff, and recovery semantics where applicable. Reject unsupported operations instead of returning fake success.
-3. Adapt the real component in `v3/ui`; keep v3-only behavior out of shared v2 files. Mark pending features honestly until the backend and execution path exist. Do not import v2 accounts, sessions, credentials, or provider tokens.
+3. Port the complete real UI files from `v3/v2_ref/` into `v3/ui`, including markup, styles, interactions, lifecycle, and supporting assets; adjust endpoints and request/response handling for v3 where applicable. Keep v3-only behavior out of shared v2 files. Mark pending features honestly until the backend and execution path exist. Do not import v2 accounts, sessions, credentials, or provider tokens.
 4. Test the Rust contract and worker boundary, then exercise the authenticated v3 control end-to-end. Verify persistence after reload, failures, both themes, and mobile layout. Resolve routes from the **v3** journey registry, not v2's. Capture a final screenshot and visible assertion; API tests alone do not prove a UI port.
+5. After verification, delete the fully adapted functions or whole files from `v3/v2_ref/` only. Retain pending portions and intentionally unwanted bits so the reference directory accurately tracks the remaining migration inventory.
 
 ## Deployment and workspace discipline
 

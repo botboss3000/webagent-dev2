@@ -1,4 +1,12 @@
 use super::*;
+// Recheck all context authority after credential retrieval, under the dispatch gate.
+async fn dispatch_asset_key(app:&App,sid:&str,agent_id:&str,loaded:&Value)->Result<String> {
+    let access=app.store.live_access(app.store.current_user_id(),agent_id).await?;
+    let (policy,_,visibility,state)=ability_controls(app,sid).await?;
+    let mode=session_mode(app,sid).await?;
+    Ok(digest(&json!([app.abilities.live_version(),policy,visibility,state,loaded,
+        mode,access.context_fingerprint()])))
+}
 pub(crate) async fn execute_run(
     app: App,
     id: String,
@@ -95,10 +103,16 @@ pub(crate) async fn execute_run(
             let (policy, _, visibility, ability_state) = ability_controls(&app, &sid).await?;
             let mode = session_mode(&app, &sid).await?;
             let read_only=mode["mode"]=="read_only";
+            // Old skill results are historical evidence, never continuing authority.
+            // Mask derived recovery context; original interaction journal stays intact.
+            if tools::core_skills::mask_withdrawn_history(&app,&sid,&id,
+                run["input"].as_array_mut().unwrap()).await {
+                context_accounting.reset();
+            }
             // CONTEXT-ASSET-KEY: include full freshly resolved access (including
-            // grants), catalog, policy, visibility, loaded state and session mode.
+            // grants), live bundle validity, policy, visibility, loaded state and session mode.
             // Hash only in memory; never publish private grant data in reports.
-            let asset_key = digest(&json!([app.abilities.version(), policy, visibility,
+            let asset_key = digest(&json!([app.abilities.live_version(), policy, visibility,
                 ability_state, run["loaded_abilities"], mode, access.context_fingerprint()]));
             if context_assets.as_ref().map(|entry| &entry.0) != Some(&asset_key) {
                 let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state)
@@ -123,7 +137,8 @@ pub(crate) async fn execute_run(
                         .permission!=access::Permission::Deny);
                 context_assets = Some((asset_key, schemas, guidance));
             }
-            let (_, base_schemas, guidance) = context_assets.as_ref().unwrap();
+            let (assembled_asset_key, base_schemas, guidance) = context_assets.as_ref().unwrap();
+            let assembled_asset_key=assembled_asset_key.clone();
             let mut gate_schemas = base_schemas.clone();
             let mode_content = format!("Current session capability mode: {} (revision {}). Recheck authorization before every tool call.",
                 mode["mode"].as_str().unwrap(), mode["revision"].as_u64().unwrap());
@@ -243,17 +258,6 @@ pub(crate) async fn execute_run(
                 // Preserve the same shutoff/dispatch ordering as normal model calls.
                 let dispatch_guard = app.gate.lock().await;
                 let mut current = app.run(&id).await?;
-                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
-                    current["status"]=json!("stopped");
-                    current["error"]=json!("Access changed before model dispatch");
-                    app.save(&mut current).await?;
-                    drop(sender);
-                    drop(dispatch_guard);
-                    let _=drain.await;
-                    return Ok(());
-                }
-                app.run_candidate(&system_dispatch_run(&current)?).await?;
                 if current["generation"] != generation
                     || status(&current) != "running"
                     || app.shutoff().await?
@@ -264,6 +268,27 @@ pub(crate) async fn execute_run(
                     let _ = drain.await;
                     return Ok(());
                 }
+                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                    current["status"]=json!("stopped");
+                    current["error"]=json!("Access changed before model dispatch");
+                    app.save(&mut current).await?;
+                    drop(sender);
+                    drop(dispatch_guard);
+                    let _=drain.await;
+                    return Ok(());
+                }
+                if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
+                    .is_ok_and(|key|key==assembled_asset_key) {
+                    current["status"]=json!("stopped");
+                    current["error"]=json!("Ability access or bundle changed before model dispatch; review and resume");
+                    app.save(&mut current).await?;
+                    drop(sender);
+                    drop(dispatch_guard);
+                    let _=drain.await;
+                    return Ok(());
+                }
+                app.run_candidate(&system_dispatch_run(&current)?).await?;
                 let mut completion = Box::pin(app.provider.complete_selected(
                     &selection,
                     &tokens,
@@ -404,17 +429,6 @@ pub(crate) async fn execute_run(
             // First poll initiates local dispatch while holding the same gate as shutoff.
             let dispatch_guard = app.gate.lock().await;
             let mut current = app.run(&id).await?;
-            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                .is_ok_and(|access|access.model_allowed(&selection.model)) {
-                current["status"]=json!("stopped");
-                current["error"]=json!("Access changed before model dispatch");
-                app.save(&mut current).await?;
-                drop(sender);
-                drop(dispatch_guard);
-                let _=collector.await;
-                return Ok(());
-            }
-            app.run_candidate(&current).await?;
             if current["generation"] != generation
                 || status(&current) != "running"
                 || app.shutoff().await?
@@ -425,6 +439,27 @@ pub(crate) async fn execute_run(
                 let _ = collector.await;
                 return Ok(());
             }
+            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
+                .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                current["status"]=json!("stopped");
+                current["error"]=json!("Access changed before model dispatch");
+                app.save(&mut current).await?;
+                drop(sender);
+                drop(dispatch_guard);
+                let _=collector.await;
+                return Ok(());
+            }
+            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
+                .is_ok_and(|key|key==assembled_asset_key) {
+                current["status"]=json!("stopped");
+                current["error"]=json!("Ability access or bundle changed before model dispatch; review and resume");
+                app.save(&mut current).await?;
+                drop(sender);
+                drop(dispatch_guard);
+                let _=collector.await;
+                return Ok(());
+            }
+            app.run_candidate(&current).await?;
             if current_workflow_policy(&app).await?.revision()? != workflow_policy.revision()? {
                 drop(sender);
                 drop(dispatch_guard);
@@ -935,7 +970,7 @@ pub(crate) async fn execute_run(
             }
             match result {
                 Ok(value) => {
-                    let uncertain = matches!(
+                    let uncertain = value["uncertain"]==true || matches!(
                         value["status"].as_str(),
                         Some("cancelled" | "timeout" | "uncertain")
                     );

@@ -180,7 +180,7 @@ pub(super) async fn execute_parallel_batch(
             if current["generation"]!=generation
                 || current["batch"][idx]["pending"]["id"]!=pending_id {continue;}
             let interrupted=match &result {
-                Ok(value)=>matches!(value["status"].as_str(),Some("cancelled"|"timeout"|"uncertain")),
+                Ok(value)=>value["uncertain"]==true || matches!(value["status"].as_str(),Some("cancelled"|"timeout"|"uncertain")),
                 Err(_)=>true,
             };
             if interrupted && !tools::is_read(&name) {

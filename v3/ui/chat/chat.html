@@ -7,10 +7,21 @@
   </div>
   <div class="chat-header-row v3-chat-session-row">
     <span class="chat-header-zone chat-header-zone-left"></span>
-    <span class="chat-header-zone chat-header-zone-center"><span class="session-dropdown"><label for="sessions" class="sr-only">Conversation</label><select id="sessions" class="session-dropdown-trigger"></select></span></span>
-    <span class="chat-header-zone chat-header-zone-right"><button id="new" class="session-new-header-btn" type="button" title="New session" aria-label="New session">+</button></span>
+    <span class="chat-header-zone chat-header-zone-center">  <div id="session-dropdown" class="session-dropdown" data-header-control="session_dropdown">
+    <div id="session-dropdown-trigger" class="session-dropdown-trigger" role="button" tabindex="0" title="Show sessions" aria-label="Show sessions">
+      <span class="session-row-agent-icon" id="session-dropdown-icon"><i data-lucide="bot" style="width:14px;height:14px;"></i></span>
+      <span class="session-row-title" id="session-dropdown-label">—</span>
+      <span class="session-row-status" id="session-dropdown-status"></span>
+      <button class="session-row-kebab" id="session-dropdown-kebab" title="More…" data-id=""><i data-lucide="more-vertical" style="width:14px;height:14px;"></i></button>
+      <button class="session-row-delete" id="session-dropdown-delete" title="Delete session" data-id=""><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+    </div>
+    <div id="session-dropdown-menu" class="session-dropdown-menu" hidden></div>
+  </div>
+</span>
+    <span class="chat-header-zone chat-header-zone-right"><button id="new" class="session-new-header-btn" type="button" title="New session" aria-label="New session"><i data-lucide="plus"></i></button></span>
   </div>
 </div>
+<select id="sessions" hidden aria-hidden="true" tabindex="-1"></select>
 <div id="chat-messages"><div id="chat-messages-inner"></div></div>
 <form id="composer"><div id="chat-input-area">
 <div id="chat-above-pill" class="chat-above-pill"><div id="runs" aria-live="polite"></div></div>

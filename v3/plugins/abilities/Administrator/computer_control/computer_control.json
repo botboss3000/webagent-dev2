@@ -4,8 +4,8 @@
   "icon": "monitor-cog",
   "color": "#f7768e",
   "description": "Lets the agent see the full desktop and operate the mouse and keyboard through native Windows UI control. Non-Windows input backends are a later phase.",
-  "skill_summary": "How to observe and operate the host desktop with screenshot, pointer, literal text, and key/chord tools using the mandatory screenshot→inspect→one action→verify loop. Load when a task requires seeing or operating a native desktop UI.",
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
+  "skill_summary": "How to observe and operate the host desktop with screenshot, pointer, literal text, and key/chord tools using the mandatory screenshot\u2192inspect\u2192one action\u2192verify loop. Load when a task requires seeing or operating a native desktop UI.",
+  "migration_note": "Excluded from this Administrator coding port at the user\u2019s explicit request; remains unavailable.",
   "order": 5,
   "placeholder": false,
   "tools": [

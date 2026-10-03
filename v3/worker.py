@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import json
+import importlib.util
 import os
 import select
 import signal
@@ -25,6 +26,98 @@ LIMIT = 1024 * 1024
 ROOT = Path(os.environ.get("V3_WORKSPACE_ROOT", "/workspaces"))
 SOCKET = os.environ.get("V3_TOOL_SOCKET", "/run/v3/worker/tools.sock")
 TEMPLATE = Path(os.environ.get("V3_CODE_TEMPLATE", "/opt/v3/source-template"))
+
+
+PLUGINS = {}
+
+def administrator_plugin(name):
+    # Static ownership, not manifest-driven imports or a model supplied path.
+    if name not in ("code_index", "git_control", "terminal_control", "v3_workspace", "diagnostics", "remote_tunnel"):
+        raise ValueError("unknown installed Administrator adapter")
+    if name not in PLUGINS:
+        filename="transport.py" if name=="git_control" else "adapter.py"
+        path = Path(__file__).parent / "plugins/abilities/Administrator" / name / filename
+        spec = importlib.util.spec_from_file_location("v3_admin_" + name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        if name == "v3_workspace":
+            module.configure(sys.modules[__name__])
+        if name == "terminal_control":
+            module.configure(network_ports)
+        if name == "remote_tunnel":
+            module.configure(terminal_listener_owned)
+        PLUGINS[name] = module
+    return PLUGINS[name]
+
+
+PORTS = {}
+
+def network_ports(base):
+    key = str(Path(base).resolve())
+    directory = CONTROL.parent / "worker" / "port-claims"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = directory / "lock"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = directory / (hashlib.sha256(key.encode()).hexdigest() + ".json")
+        if path.exists():
+            ports = json.loads(path.read_text())
+            if not isinstance(ports,list) or len(ports)!=4 or any(type(p)!=int or not 20000<=p<=29999 for p in ports):
+                raise ValueError("invalid workspace port claims")
+            PORTS[key] = ports
+            return ports
+        claimed = set()
+        for claim in directory.glob("*.json"):
+            claimed.update(json.loads(claim.read_text()))
+        ports = []
+        for port in range(20000,30000):
+            if port in claimed:
+                continue
+            with socket.socket() as listener:
+                try: listener.bind(("127.0.0.1",port))
+                except OSError: continue
+            ports.append(port)
+            if len(ports)==4: break
+        if len(ports)!=4: raise ValueError("workspace preview ports exhausted")
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,"w") as file:
+            json.dump(ports,file);file.flush();os.fsync(file.fileno())
+        PORTS[key] = ports
+        return ports
+
+def terminal_listener_owned(base,port):
+    if port not in network_ports(base): return False
+    module=PLUGINS.get("terminal_control")
+    if module is None: return False
+    roots={t.process.pid for t in list(module._TERMINALS.values())
+           if t.base==Path(base).resolve() and t.process.returncode is None}
+    parents={}
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            try:
+                raw=(entry/"stat").read_text();parents[int(entry.name)]=int(raw[raw.rfind(")")+2:].split()[1])
+            except (OSError,ValueError,IndexError): pass
+    owned=set(roots)
+    while True:
+        expanded=owned|{pid for pid,parent in parents.items() if parent in owned}
+        if expanded==owned: break
+        owned=expanded
+    inodes=set()
+    for line in Path("/proc/net/tcp").read_text().splitlines()[1:]:
+        fields=line.split()
+        if len(fields)>9 and fields[3]=="0A" and int(fields[1].split(":")[1],16)==port:
+            if fields[1].split(":")[0] in ("0100007F","00000000"): inodes.add(fields[9])
+    if not inodes:return False
+    for pid in owned:
+        try:
+            for fd in Path(f"/proc/{pid}/fd").iterdir():
+                try:
+                    target=os.readlink(fd)
+                    if target.startswith("socket:[") and target[8:-1] in inodes:return True
+                except OSError: pass
+        except OSError:pass
+    return False
 
 
 def workspace_path(session):
@@ -63,7 +156,8 @@ async def command(argv, base, timeout, lock):
     env = {"PATH": "/opt/rust/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
            "HOME": str(base), "TMPDIR": str(base), "CARGO_HOME": str(base / ".cargo"),
            "CARGO_BUILD_JOBS": "1", "CARGO_INCREMENTAL": "0",
-           "RUSTFLAGS": "-C debuginfo=0"}
+           "RUSTFLAGS": "-C debuginfo=0",
+           "V3_ALLOWED_LISTEN_PORTS": ",".join(map(str, network_ports(base)))}
     process = await asyncio.create_subprocess_exec(
         "/usr/bin/python3", "-I", str(Path(__file__).resolve()), "--runner", json.dumps(argv),
         cwd=base, env=env, start_new_session=True,
@@ -100,6 +194,8 @@ async def command(argv, base, timeout, lock):
 
 
 async def execute_locked(request, lock):
+    if request["name"] == "administrator_quiesce" and not (ROOT / str(uuid.UUID(request["workspace"]))).exists():
+        return {"status": "success"}
     base = workspace_path(request["workspace"])
     args = request.get("arguments", {})
     name = request["name"]
@@ -109,8 +205,40 @@ async def execute_locked(request, lock):
         return await command(argv, base, min(max(int(request.get("timeout_seconds", 120)), 1), 600), lock)
     # The lock covers dispatch only; controls never wait for tool completion.
     fcntl.flock(lock, fcntl.LOCK_UN)
+    if name.startswith("code_index_") and name in {
+            "code_index_scan", "code_index_lookup", "code_index_coverage",
+            "code_index_trace", "code_index_progress"}:
+        return await asyncio.to_thread(administrator_plugin("code_index").execute, name, args, base)
+    if name == "administrator_git_watch":
+        module=administrator_plugin("git_control").adapter
+        value=await module.snapshot(base)
+        return {"status":"success","output":module.notice(value)}
+    if name in ("git_tool", "resolve_conflict", "commit_and_push"):
+        return await administrator_plugin("git_control").execute(name, args, base, request.get("trusted"))
+    if name in ("terminal_open", "terminal_read", "terminal_send", "terminal_wait", "terminal_list", "terminal_close"):
+        return await administrator_plugin("terminal_control").execute(name, args, base)
+    if name in ("v3_workspace_status", "v3_workspace_action"):
+        return await administrator_plugin("v3_workspace").execute(name, args, base)
+    if name == "v3_cargo_task":
+        return await administrator_plugin("v3_workspace").cargo(base, args)
+    if name in ("login_as_current_user", "login_as_current_user_v3", "dev_browser_action", "dev_browser_record"):
+        return await administrator_plugin("diagnostics").execute(name, args, base, request.get("trusted"))
+    if name == "administrator_artifact_get":
+        import base64
+        content = administrator_plugin("diagnostics").read_artifact(base, request.get("trusted"), args["artifact_id"])
+        return {"status": "success", "png_base64": base64.b64encode(content).decode()}
+    if name == "administrator_quiesce":
+        if "terminal_control" in PLUGINS:
+            await PLUGINS["terminal_control"].close_all(base)
+        if "diagnostics" in PLUGINS:
+            await PLUGINS["diagnostics"].close_all(base)
+        if "remote_tunnel" in PLUGINS:
+            await PLUGINS["remote_tunnel"].close_workspace(base)
+        return {"status": "success"}
+    if name in ("start_tunnel", "get_tunnel_url"):
+        return await administrator_plugin("remote_tunnel").execute(name, args, base)
     if name == "workspace_seed":
-        return await asyncio.to_thread(seed_workspace, base)
+        return await seed_workspace_async(base)
     if name == "source_review":
         return await asyncio.to_thread(source_review, base)
     if name == "source_patch":
@@ -126,8 +254,10 @@ def git_capture(source, arguments, limit=LIMIT, acceptable=(0,)):
            "GIT_NO_REPLACE_OBJECTS": "1"}
     argv = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
             "-c", "diff.external=", *arguments]
+    import runpy
+    restrict=runpy.run_path(str(Path(__file__).with_name("sandbox.py")))["restrict"]
     process = subprocess.Popen(argv, cwd=source, env=env, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT)
+                               stderr=subprocess.STDOUT,preexec_fn=lambda:restrict(source.parent))
     output = bytearray()
     deadline = time.monotonic() + 30
     try:
@@ -319,60 +449,208 @@ def source_patch(base, args):
             temporary.unlink(missing_ok=True)
 
 
-def seed_workspace(base):
-    """Atomically place the vetted image source snapshot in one session workspace."""
+def _seed_capture(path, include_git=False):
+    digest = hashlib.sha256()
+    count = size = 0
+    def walk(fd, prefix):
+        nonlocal count, size
+        for name in sorted(os.listdir(fd)):
+            if not prefix and name == ".git" and not include_git:
+                continue
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    walk(child, prefix + name + "/")
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(info.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                try:
+                    before = os.fstat(child)
+                    if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino):
+                        raise ValueError("seed input changed")
+                    with os.fdopen(child, "rb", closefd=False) as stream:
+                        data = stream.read(LIMIT + 1)
+                    after = os.fstat(child)
+                finally:
+                    os.close(child)
+                count += 1
+                size += len(data)
+                if len(data) > LIMIT or count > 10000 or size > 64 * LIMIT:
+                    raise ValueError("source template exceeds limit")
+                named = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                if before.st_mtime_ns != after.st_mtime_ns or before.st_mode != after.st_mode or len(data) != before.st_size or (named.st_dev, named.st_ino) != (before.st_dev, before.st_ino):
+                    raise ValueError("seed input changed")
+                digest.update((prefix + name).encode()); digest.update(b"\0")
+                digest.update(str(before.st_mode & 0o777).encode()); digest.update(b"\0"); digest.update(data)
+            else:
+                raise ValueError("invalid source template entry")
+    if isinstance(path, int):
+        walk(path, "")
+    else:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            walk(fd, "")
+        finally:
+            os.close(fd)
+    return {"sha256": digest.hexdigest(), "files": count, "bytes": size}
+
+
+def _seed_inner(spec):
+    # All copy and Git work occurs in an already restricted child. TEMPLATE
+    # alone is readable outside the workspace, never writable by this child.
+    base, template = Path(spec["base"]), Path(spec["template"])
+    stage = base / spec["stage"]
+    before = _seed_capture(template, True)
+    if before["files"] == 0 or (template / ".git").exists():
+        raise ValueError("invalid source template")
+    stage.mkdir(mode=0o700)
+    shutil.copytree(template, stage, dirs_exist_ok=True)
+    if _seed_capture(template, True) != before or _seed_capture(stage, True) != before:
+        raise ValueError("seed copy changed")
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": str(stage),
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    options = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgsign=false"]
+    def git(*argv):
+        process = subprocess.Popen(["git", *options, *argv], cwd=stage, env=env,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = bytearray(); deadline = time.monotonic() + 20
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise ValueError("seed Git timeout")
+                data = os.read(process.stdout.fileno(), 65536)
+                if not data:
+                    break
+                output.extend(data)
+                if len(output) > LIMIT:
+                    raise ValueError("seed Git output exceeds limit")
+            if process.wait(timeout=1):
+                raise ValueError("isolated seed Git rejected")
+            return output.decode().strip()
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait()
+            process.stdout.close()
+    git("init", "--quiet", "--initial-branch=main")
+    config = git("config", "--local", "--name-only", "--list").splitlines()
+    if any(key not in {"core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates"} for key in config):
+        raise ValueError("unexpected seed Git configuration")
+    git("add", "-A")
+    git("-c", "user.name=WebAgent v3", "-c", "user.email=webagent-v3@localhost", "commit", "--quiet", "-m", "Imported v3 source snapshot")
+    baseline = git("rev-parse", "HEAD")
+    if git("status", "--porcelain") or _seed_capture(stage) != before or _seed_capture(template, True) != before:
+        raise ValueError("seed baseline changed")
+    os.chmod(stage, 0o770)
+    info = stage.stat(follow_symlinks=False)
+    return {"stage": spec["stage"], "identity": [info.st_dev, info.st_ino],
+            "snapshot": _seed_capture(stage, True), "source": before, "baseline_commit": baseline}
+
+
+def _seed_spec(base):
+    base = Path(base)
+    if base.is_symlink() or not base.is_dir():
+        raise ValueError("invalid workspace")
+    base = base.resolve(strict=True)
     if not TEMPLATE.is_dir() or TEMPLATE.is_symlink():
         raise ValueError("source template unavailable")
     target = base / "webagent-v3"
     if target.exists() or target.is_symlink():
         raise ValueError("workspace source already initialized")
-    digest = hashlib.sha256()
-    count = 0
-    size = 0
-    for entry in sorted(TEMPLATE.rglob("*")):
-        if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
-            raise ValueError("invalid source template entry")
-        if entry.is_file():
-            data = entry.read_bytes()
-            count += 1
-            size += len(data)
-            if count > 5000 or size > 32 * LIMIT:
-                raise ValueError("source template exceeds limit")
-            digest.update(str(entry.relative_to(TEMPLATE)).encode())
-            digest.update(b"\0")
-            digest.update(data)
-    if count == 0:
-        raise ValueError("source template is empty")
-    staging = Path(tempfile.mkdtemp(prefix=".v3-seed-", dir=base))
+    return {"base": str(base), "template": str(TEMPLATE.resolve(strict=True)), "stage": ".v3-seed-" + uuid.uuid4().hex}
+
+
+def _seed_argv(spec):
+    worker = str(Path(__file__).resolve())
+    inner = [sys.executable, "-I", worker, "--seed-inner", json.dumps(spec)]
+    return [sys.executable, "-I", worker, "--runner", json.dumps(inner)]
+
+
+def _seed_finish(spec, raw):
+    result = json.loads(raw)
+    if "error" in result:
+        raise ValueError(result["error"])
+    if result.get("stage") != spec["stage"]:
+        raise ValueError("invalid seed response")
+    basefd = os.open(spec["base"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    stagefd = None
     try:
-        shutil.copytree(TEMPLATE, staging, dirs_exist_ok=True)
-        env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
-               "HOME": str(staging), "GIT_CONFIG_NOSYSTEM": "1",
-               "GIT_CONFIG_GLOBAL": "/dev/null"}
-        def git(*argv):
-            return subprocess.run(
-                ["git", *argv], cwd=staging, env=env, check=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30
-            ).stdout.decode().strip()
-        git("init", "--quiet", "--initial-branch=main")
-        git("add", "-A")
-        git("-c", "user.name=WebAgent v3", "-c", "user.email=webagent-v3@localhost",
-            "commit", "--quiet", "-m", "Imported v3 source snapshot")
-        baseline = git("rev-parse", "HEAD")
-        os.chmod(staging, 0o770)
+        stagefd = os.open(spec["stage"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=basefd)
+        info = os.fstat(stagefd)
+        if [info.st_dev, info.st_ino] != result["identity"] or _seed_capture(stagefd, True) != result["snapshot"]:
+            raise ValueError("seed changed before publication")
         with (CONTROL / "dispatch.lock").open("rb") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if (CONTROL / "shutoff").read_text().strip() != "0":
                 raise ValueError("execution disabled")
-            if target.exists() or target.is_symlink():
-                raise ValueError("workspace source already initialized")
-            os.rename(staging, target)
-        return {"status": "success", "output": "source seeded",
-                "path": "webagent-v3", "files": count,
-                "source_sha256": digest.hexdigest(), "baseline_commit": baseline}
+            named = os.stat(spec["stage"], dir_fd=basefd, follow_symlinks=False)
+            if (named.st_dev, named.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError("seed directory changed")
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.renameat2(basefd, spec["stage"].encode(), basefd, b"webagent-v3", 1) != 0:
+                raise ValueError("workspace source already initialized or publication unavailable")
+            os.fsync(basefd)
+        return {"status": "success", "output": "source seeded", "path": "webagent-v3",
+                "files": result["source"]["files"], "source_sha256": result["source"]["sha256"],
+                "baseline_commit": result["baseline_commit"]}
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        if stagefd is not None:
+            os.close(stagefd)
+        os.close(basefd)
+
+
+def _seed_cleanup(spec):
+    stage = Path(spec["base"]) / spec["stage"]
+    if stage.is_symlink():
+        stage.unlink(missing_ok=True)
+    elif stage.exists():
+        shutil.rmtree(stage)
+
+
+def seed_workspace(base):
+    """Synchronous trusted caller compatibility; all unsafe work stays child-side."""
+    spec = _seed_spec(base)
+    process = subprocess.Popen(_seed_argv(spec), cwd=spec["base"],
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "V3_SUPERVISOR_PARENT": str(os.getpid())}, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        raw, _ = process.communicate(timeout=90)
+        if process.returncode or len(raw) > LIMIT:
+            raise ValueError("isolated seed failed")
+        return _seed_finish(spec, raw)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL); process.wait()
+        _seed_cleanup(spec)
+
+
+async def seed_workspace_async(base):
+    spec = _seed_spec(base)
+    spawn = asyncio.create_task(asyncio.create_subprocess_exec(*_seed_argv(spec), cwd=spec["base"],
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "V3_SUPERVISOR_PARENT": str(os.getpid())}, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL, start_new_session=True))
+    try:
+        process = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        process = await asyncio.shield(spawn)
+        await terminate(process)
+        _seed_cleanup(spec)
+        raise
+    try:
+        raw, _ = await asyncio.wait_for(process.communicate(), 90)
+        if process.returncode or len(raw) > LIMIT:
+            raise ValueError("isolated seed failed")
+        return _seed_finish(spec, raw)
+    finally:
+        if process.returncode is None:
+            await terminate(process)
+        _seed_cleanup(spec)
 
 
 def file_operation(request, base, args, name):
@@ -821,7 +1099,23 @@ def runner(argv):
         raise SystemExit(143)
 
     signal.signal(signal.SIGTERM, stop)
-    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL)
+    expected_parent = int(os.environ.get("V3_SUPERVISOR_PARENT", str(os.getppid())))
+    if ctypes.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+        raise RuntimeError("supervisor parent death guard unavailable")
+    if os.getppid() != expected_parent:
+        stop(signal.SIGTERM, None)
+    # Keep the supervisor outside the restricted domain so cancellation can
+    # reap double-forked children. Only the executed child is sandboxed.
+    import runpy
+    restrict = runpy.run_path(str(Path(__file__).with_name("sandbox.py")))["restrict"]
+    read_paths = ()
+    if len(argv) == 5 and argv[:4] == [sys.executable, "-I", str(Path(__file__).resolve()), "--seed-inner"]:
+        spec = json.loads(argv[4])
+        if set(spec) != {"base", "template", "stage"} or Path(spec["base"]).resolve() != Path.cwd() or not spec["stage"].startswith(".v3-seed-") or "/" in spec["stage"]:
+            raise ValueError("invalid trusted seed invocation")
+        read_paths = (Path(spec["template"]), Path(__file__).resolve(), Path(__file__).with_name("sandbox.py").resolve())
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                             preexec_fn=lambda: restrict(Path.cwd(), read_paths=read_paths))
     try:
         result = child.wait()
     finally:
@@ -832,5 +1126,10 @@ def runner(argv):
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--runner":
         runner(json.loads(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] == "--seed-inner":
+        try:
+            print(json.dumps(_seed_inner(json.loads(sys.argv[2]))))
+        except Exception as error:
+            print(json.dumps({"error": str(error) if isinstance(error, ValueError) else "isolated seed rejected"}))
     else:
         asyncio.run(main())

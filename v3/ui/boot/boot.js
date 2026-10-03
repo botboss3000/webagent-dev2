@@ -1,28 +1,55 @@
 "use strict";
-// Synchronized with v2 index.html: curtain + seven-second independent orbit.
-(function () {
-  const curtain = document.getElementById("boot-curtain");
-  let done = false;
-  function reveal() {
-    if (done) return;
-    done = true;
-    // Remove every effect synchronously BEFORE lifting the app paint gate.
-    window.dispatchEvent(new CustomEvent('wa-boot-pointerend'));
-    document.getElementById('stargaze-bg')?.remove();
-    document.querySelector('.stargaze-overlay')?.remove();
-    document.getElementById('cursor-glow')?.remove();
-    curtain.remove();
-    document.body.classList.remove("is-booting");
-  }
-  window.__boot = {appReady: reveal, reveal};
-  window.addEventListener("error", reveal);
-  window.addEventListener("unhandledrejection", reveal);
-  setTimeout(reveal, 10000);
-  try { document.body.classList.toggle("light-mode", localStorage.getItem("v3-theme") === "light"); } catch {}
-})();
+  (function () {
+    var curtainDone = false;
+    var appReadyDone = false;
+    var curtain = document.getElementById('boot-curtain');
+    function remove() {
+      if (curtain && curtain.parentNode) curtain.parentNode.removeChild(curtain);
+      curtain = null;
+    }
+    function liftCurtain() {
+      if (curtainDone) return;
+      curtainDone = true;
+      if (!curtain) return;
+      document.body.classList.remove('is-booting');
+      curtain.classList.add('is-revealed');
+      var t = setTimeout(remove, 700);
+      curtain.addEventListener('transitionend', function (e) {
+        if (e.propertyName === 'opacity') { clearTimeout(t); remove(); }
+      });
+    }
+    function announceAppReady() {
+      if (appReadyDone) return;
+      appReadyDone = true;
+      // Announce readiness once; late listeners can inspect the revealed flag.
+      if (window.__boot) window.__boot.revealed = true;
+      try { window.dispatchEvent(new Event('webagent-app-ready')); } catch (_) {}
+    }
+    function reveal() {
+      announceAppReady();
+      liftCurtain();
+    }
+    window.__boot = {
+      _splashPending: false,
+      revealed:       false,
+      // The minimum shell is useful before catalogs, partials, or
+      // ui-config finish. Lift only the curtain; appReady() owns readiness.
+      shellReady:     liftCurtain,
+      splashWillShow: function () { this._splashPending = true; },
+      splashReady:    function () { reveal(); },
+      appReady:       function () { if (!this._splashPending) reveal(); },
+      reveal:         reveal,
+    };
+    // Safety net: never trap the user on the curtain if a boot step never reports.
+    setTimeout(reveal, 10000);
+  })();
+
+window.addEventListener("error", () => window.__boot.reveal());
+window.addEventListener("unhandledrejection", () => window.__boot.reveal());
+try { document.body.classList.toggle("light-mode", localStorage.getItem("v3-theme") === "light"); } catch {}
   // ── Boot phantom cursor ─────────────────────────────────────────────
   // While the app boots (body.is-booting, set by the pre-paint script above
-  // and cleared by tabs.js once the tab content mounts), a boot input orbits
+  // and cleared by the readiness coordinator), a boot input orbits
   // the page and drives the animated background through its own event channel.
   // Backgrounds therefore receive TWO stable inputs during load: the user's
   // real pointer and this orbit. The orbit no longer impersonates pointermove,

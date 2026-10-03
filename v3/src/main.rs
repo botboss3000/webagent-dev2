@@ -3,6 +3,7 @@
 //! for a plain-language path from a message to its single published reply.
 #[path = "access/mod.rs"] mod access;
 #[path = "access/policy.rs"] mod access_policy;
+#[path = "access/capabilities.rs"] mod capabilities;
 #[path = "storage/access.rs"] mod access_store;
 #[path = "storage/agent.rs"] mod agent_storage;
 #[path = "api/admin_access.rs"] mod phase3_api;
@@ -13,6 +14,8 @@
 #[path = "gates/controls.rs"] mod gate_controls;
 #[path = "agent_loop/tools/batch.rs"] mod parallel_batch;
 mod abilities;
+mod services;
+mod administrator_services;
 #[path = "api/browser_login.rs"] mod browser_login;
 #[path = "api/accounts.rs"] mod accounts;
 #[path = "api/registration.rs"] mod registration;

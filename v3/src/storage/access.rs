@@ -160,7 +160,13 @@ impl Store {
     }
     pub async fn save_entitlement_tier(&self, mut tier: Tier,
         expected_revision: u64) -> Result<Tier> {
-        if tier.id == "operator" { bail!("Operator tier is immutable"); }
+        if tier.id == "operator" {
+            let mut previous=self.entitlement_tier("operator").await?.ok_or_else(||anyhow!("Operator tier missing"))?;
+            previous.ability_permissions=tier.ability_permissions.clone();previous.revision=tier.revision;
+            if serde_json::to_value(&previous)?!=serde_json::to_value(&tier)? {
+                bail!("Only operator ability grants may change");
+            }
+        }
         tier.revision=expected_revision.checked_add(1).ok_or_else(||anyhow!("Tier revision overflow"))?;
         tier.validate()?;
         {
@@ -234,7 +240,9 @@ impl Store {
             let value = self.unseal(&row.get::<Vec<u8>,_>("value"))?;
             Ok(json!({"user_id":row.get::<String,_>("user_id"),"agent_id":agent_id,
                 "relationship":value["relationship"],"revision":value["revision"],
-                "agent_administrator":value["agent_administrator"].as_bool().unwrap_or(false)}))
+                "agent_administrator":value["agent_administrator"].as_bool().unwrap_or(false),
+                "capability_level_id":crate::capabilities::membership_level(Some(&value),
+                    serde_json::from_value(value["relationship"].clone())?)?}))
         }).collect()
     }
     // TENANT-ASSIGNMENT: existing accounts receive revisioned grants; no invitation identity is minted.
@@ -320,8 +328,12 @@ impl Store {
         };
         let revision = expected_revision.checked_add(1)
             .ok_or_else(|| anyhow!("Membership revision overflow"))?;
-        let value = json!({"user_id":user_id,"agent_id":agent_id,
+        let mut value = json!({"user_id":user_id,"agent_id":agent_id,
             "relationship":relationship,"agent_administrator":administrator,"revision":revision});
+        // Relationship/admin edits do not silently replace an appointed capability policy.
+        value["capability_level_id"]=json!(if let Some(level)=current.as_ref().and_then(|v|v.get("capability_level_id")) {
+            level.as_str().ok_or_else(||anyhow!("Invalid membership level"))?.to_owned()
+        } else {crate::capabilities::membership_level(Some(&value),relationship)?});
         sqlx::query("INSERT INTO agent_memberships(user_id,agent_id,value) VALUES(?,?,?)
             ON CONFLICT(user_id,agent_id) DO UPDATE SET value=excluded.value")
             .bind(user_id).bind(agent_id).bind(self.seal(&value)?)
@@ -330,7 +342,13 @@ impl Store {
         let old = Principal::from_account(&account)?.access_revision;
         account["access_revision"] = json!(old.checked_add(1)
             .ok_or_else(||anyhow!("Account revision overflow"))?);
-        account["generation"] = json!(uuid::Uuid::new_v4().to_string());
+        // INITIAL-OWNER-SESSION: new ownership grants no previously held access to revoke.
+        // Keep the creator signed in so creation can proceed to model configuration.
+        // Every later membership edit still invalidates sign-ins and access snapshots.
+        let initial_owner = owner == user_id && current.is_none() && relationship == Relationship::Owner;
+        if !initial_owner {
+            account["generation"] = json!(uuid::Uuid::new_v4().to_string());
+        }
         sqlx::query("UPDATE user_accounts SET value=? WHERE user_id=?")
             .bind(self.seal(&account)?).bind(user_id).execute(&mut *tx).await?;
         audit(&mut tx,self,"agent_membership_changed",&json!({"user_id":user_id,
@@ -486,7 +504,7 @@ mod tests {
             .await.unwrap();
         let created = store.create_user_account("second","long-hash-placeholder").await.unwrap();
         let id = created["user_id"].as_str().unwrap();
-        let tier = store.save_entitlement_tier(Tier{id:"team".into(),revision:0,
+        let tier = store.save_entitlement_tier(Tier{id:"team".into(),revision:0,ability_permissions:Default::default(),
             allowed_models:vec!["gpt-6-luna".into()],tools:Default::default(),
             max_sessions:4,max_active_runs:1},0).await.unwrap();
         assert_eq!(tier.revision,1);

@@ -54,6 +54,8 @@ pub struct AccessRevision {
     pub agent: u64,
     #[serde(default)]
     pub policy: String,
+    #[serde(default)]
+    pub capability_level: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -63,7 +65,9 @@ pub struct LiveAccess {
     pub agent_id: String,
     pub relationship: Relationship,
     pub agent_enabled: bool,
+    pub agent_administrator: bool,
     pub revision: AccessRevision,
+    pub capability_level: crate::capabilities::CapabilityLevel,
     tool_permissions: Value,
     ability_permissions: Value,
     tool_callers: Value,
@@ -78,7 +82,7 @@ impl LiveAccess {
         serde_json::json!([self.principal.user_id, self.principal.status,
             self.principal.role, self.principal.tier_id, self.principal.access_revision,
             self.tier, self.agent_id, self.relationship, self.agent_enabled,
-            self.revision, self.tool_permissions, self.ability_permissions, self.tool_callers])
+            self.revision, self.agent_administrator, self.capability_level, self.tool_permissions, self.ability_permissions, self.tool_callers])
     }
 
     pub fn admitted(&self) -> bool {
@@ -107,6 +111,10 @@ impl LiveAccess {
     }
 
     pub fn ability_permission(&self,ability_id:&str) -> Permission {
+        self.base_ability_permission(ability_id).meet(self.tier.ability_permission(ability_id))
+            .meet(self.capability_level.ability_permission(ability_id))
+    }
+    fn base_ability_permission(&self,ability_id:&str) -> Permission {
         match self.ability_permissions.get(ability_id)
             .or_else(||self.ability_permissions.get("*")) {
             None=>Permission::Auto,
@@ -142,22 +150,44 @@ impl LiveAccess {
     pub fn tool_decision_for_abilities(&self,name:&str,ability_ids:&[String],
         installation:Permission,available:bool,visible:bool,
         read_only:bool,is_read:bool) -> ToolDecision {
+        if name=="prompt_slot_write" && !self.agent_administrator {
+            return ToolDecision {permission:Permission::Deny,reason:access::Reason::CallerDenied};
+        }
         let ability=if ability_ids.is_empty() {
             if available {Permission::Deny} else {Permission::Auto}
         } else {
             ability_ids.iter().fold(Permission::Auto,
                 |permission,id|permission.meet(self.ability_permission(id)))
         };
+        // One calculation drives discovery, guidance, schemas, previews and dispatch.
+        // Report the narrowing layer without interpreting visibility as permission.
+        if installation != Permission::Deny && self.tier.tool_permission(name) != Permission::Deny {
+            if ability_ids.iter().any(|id|self.tier.ability_permission(id)==Permission::Deny) {
+                return ToolDecision {permission:Permission::Deny,reason:access::Reason::TierDenied};
+            }
+            if ability_ids.iter().any(|id|self.capability_level.ability_permission(id)==Permission::Deny) {
+                return ToolDecision {permission:Permission::Deny,reason:access::Reason::CapabilityDenied};
+            }
+        }
         self.resolve_tool(name,installation,ability,
             available,visible,read_only,is_read)
     }
 
     fn resolve_tool(&self,name:&str,installation:Permission,ability:Permission,
         available:bool,visible:bool,read_only:bool,is_read:bool) -> ToolDecision {
+        if matches!(name,"v3_build_status"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job")
+            && !self.principal.administrator() {
+            return ToolDecision {permission:Permission::Deny,reason:access::Reason::CallerDenied};
+        }
+        let level=self.capability_level.tool_permission(name);
+        if level==Permission::Deny && installation!=Permission::Deny
+            && self.tier.tool_permission(name)!=Permission::Deny && self.agent_tool_permission(name)!=Permission::Deny {
+            return ToolDecision {permission:Permission::Deny,reason:access::Reason::CapabilityDenied};
+        }
         ToolFactors {
             installation,
             tier:self.tier.tool_permission(name),
-            agent:self.agent_tool_permission(name),
+            agent:self.agent_tool_permission(name).meet(level),
             ability,
             account_active:self.principal.active(),
             relationship:self.relationship != Relationship::Revoked
@@ -229,16 +259,36 @@ impl Store {
         } else {
             (false, 0, Value::Null, Value::Null, Value::Null)
         };
+        let agent_administrator=self.agent_authority(user_id,agent_id).await?["can_manage"]==true;
+        let levels=self.capability_levels(agent_id).await?;
+        let level_id=crate::capabilities::membership_level(membership.as_ref(),relationship)?;
+        let capability_level=levels.levels.get(&level_id).ok_or_else(||anyhow!("Membership capability level is missing"))?.clone();
         let revision = AccessRevision { account:principal.access_revision,
             tier:tier.revision, membership:membership_revision, agent:agent_revision,
-            policy:crate::digest(&policy) };
+            policy:crate::digest(&policy),capability_level:levels.revision };
         let agent_enabled=agent_enabled && crate::registration::page_allowed(&policy,"main","chat",&principal);
         Ok(LiveAccess { principal,tier,agent_id:agent_id.to_owned(),
-            relationship,agent_enabled,revision,tool_permissions,ability_permissions,tool_callers })
+            relationship,agent_enabled,agent_administrator,revision,capability_level,tool_permissions,ability_permissions,tool_callers })
     }
 }
 
 impl Store {
+    pub async fn set_agent_permissions(&self,agent:&str,expected:u64,abilities:Value,tools:Value)->Result<Value> {
+        permission_map(&abilities)?;permission_map(&tools)?;
+        if !abilities.is_object() || !tools.is_object() || expected>=i64::MAX as u64 {return Err(anyhow!("Invalid permission maps"));}
+        let view=self.for_agent(agent).await?;let mut tx=view.agent_pool.begin().await?;
+        sqlx::query("UPDATE agents SET revision=revision WHERE id=?").bind(agent).execute(&mut *tx).await?;
+        let row=sqlx::query("SELECT metadata,revision FROM agents WHERE id=?").bind(agent).fetch_one(&mut *tx).await?;
+        if row.get::<i64,_>("revision") as u64!=expected {return Err(anyhow!("Agent revision changed"));}
+        let mut metadata=self.unseal(&row.get::<Vec<u8>,_>("metadata"))?;
+        metadata["ability_permissions"]=abilities.clone();metadata["tool_permissions"]=tools.clone();
+        sqlx::query("UPDATE agents SET metadata=?,revision=revision+1,updated_at=strftime('%s','now') WHERE id=?")
+            .bind(self.seal(&metadata)?).bind(agent).execute(&mut *tx).await?;
+        let receipt=serde_json::json!({"agent_id":agent,"actor_id":self.current_user_id(),"revision":expected+1});
+        sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)").bind(format!("agent:{agent}:ability_policy_audit:{}",expected+1))
+            .bind(self.seal(&receipt)?).execute(&mut *tx).await?;tx.commit().await?;
+        Ok(serde_json::json!({"revision":expected+1,"ability_permissions":abilities,"tool_permissions":tools}))
+    }
     pub async fn agent_tool_permissions(&self, agent_id: &str) -> Result<Value> {
         if !access::valid_agent_id(agent_id) {
             return Err(anyhow!("Invalid agent identity"));
@@ -425,6 +475,17 @@ mod tests {
         assert!(permission_map(&serde_json::json!({"../file_read":"auto"})).is_err());
         assert!(caller_map(&serde_json::json!({"file_read":["owner","owner"]})).is_err());
         assert!(caller_map(&serde_json::json!({"file_read":["revoked"]})).is_err());
+    }
+
+    #[tokio::test]
+    async fn new_ability_is_not_granted_by_legacy_tier_or_membership() {
+        let root=tempfile::tempdir().unwrap();
+        let store=Store::open(root.path()).await.unwrap();
+        store.create_admin_account("admin","hash","generation").await.unwrap();
+        let access=store.live_access("admin","shared_default").await.unwrap();
+        assert_eq!(access.ability_permission("codebase_admin"),Permission::Auto);
+        assert_eq!(access.ability_permission("web_access"),Permission::Auto);
+        assert_eq!(access.ability_permission("new_plugin"),Permission::Deny);
     }
 
     #[tokio::test]

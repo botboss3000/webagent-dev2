@@ -1,7 +1,7 @@
 {
   "display_name": "Base",
   "kind": "virtual_core",
-  "description": "Core conversational and self-improvement contracts. Catalog metadata only; session, skill, progress and configuration operations require independent v3 implementations.",
+  "description": "Core conversational and self-improvement contracts. Compiled UTC/fixed-offset time/date and bounded finite arithmetic are implemented; current-session reads, current-agent prompt reads and bounded bundled skill reads are implemented. Other session, progress and configuration operations still require independent v3 implementations.",
   "tools": [
     "load_tool",
     "load_ability",
@@ -38,7 +38,7 @@
   "icon": "box",
   "color": "#7dcfff",
   "order": 0,
-  "readiness": "pending",
+  "readiness": "partial",
   "config": {},
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported."
+  "migration_note": "Partial V3 port: get_time, get_date, calculate, read_attachment, search_this_session, list_skills, load_skill and read_own_prompt use compiled Rust adapters. Bundled skill loading never activates abilities or grants execution. Other declared Base tools remain unavailable. Each new ability still requires explicit installation, account-tier and membership grants; manifest metadata alone never registers a tool."
 }

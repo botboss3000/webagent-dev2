@@ -36,13 +36,6 @@ async fn run_app(app: App, run_id: &str) -> Result<App, crate::ApiError> {
 trait SessionPath { fn session_id(&self) -> &str; }
 impl SessionPath for String { fn session_id(&self) -> &str { self } }
 impl SessionPath for (String, String) { fn session_id(&self) -> &str { &self.0 } }
-macro_rules! no_args {
-    ($name:ident => $inner:ident) => {
-        async fn $name(Extension(app): Extension<App>) -> Response {
-            crate::$inner(State(app)).await.into_response()
-        }
-    };
-}
 macro_rules! json_arg {
     ($name:ident => $inner:ident) => {
         async fn $name(Extension(app): Extension<App>, Json(body): Json<Value>) -> Response {
@@ -71,9 +64,15 @@ macro_rules! path_json {
         }
     };
 }
-no_args!(sessions => sessions);
+async fn sessions(Extension(app): Extension<App>, Query(args): Query<crate::SessionListArgs>) -> Response {
+    crate::sessions(State(app),Query(args)).await.into_response()
+}
 json_arg!(create_session => create_session);
 path_arg!(snapshot => snapshot, String);
+path_json!(session_read => session_read_api, String, crate::SessionReadBody);
+path_json!(session_recycle => recycle_session_api, String, crate::store::session::SessionLifecycle);
+path_json!(session_restore => restore_session_api, String, crate::store::session::SessionLifecycle);
+path_json!(session_patch => patch_session_api, String, crate::store::session::SessionPatch);
 path_arg!(diagnostics => run_diagnostics_api, (String, String));
 path_arg!(progress => run_progress_api, (String, String));
 path_arg!(mode_get => session_mode_get, String);
@@ -152,7 +151,9 @@ pub(crate) fn router() -> Router<App> {
         .route("/sessions", get(sessions).post(create_session))
         .route("/sessions/{sid}/runs/{rid}/diagnostics", get(diagnostics))
         .route("/sessions/{sid}/runs/{rid}/progress", get(progress))
-        .route("/sessions/{id}", get(snapshot))
+        .route("/sessions/{id}", get(snapshot).patch(session_patch).delete(session_recycle))
+        .route("/sessions/{id}/restore", post(session_restore))
+        .route("/sessions/{id}/read", axum::routing::put(session_read))
         .route("/sessions/{id}/mode", get(mode_get).put(mode_set))
         .route("/sessions/{id}/abilities", get(abilities))
         .route("/sessions/{id}/abilities/{ability_id}", axum::routing::put(ability_set))

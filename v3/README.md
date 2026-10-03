@@ -1,5 +1,15 @@
 # WebAgent v3 development
 
+The abilities work is in progress. Tenant-scoped administration, account-tier
+ability grants and agent capability levels are deployed. Manifest presence
+is not execution support. See [the port ledger](docs/ability-port-ledger.md);
+readiness is promoted only after authenticated API acceptance. The eight
+Administrator coding abilities are ready; Base remains partial, while other
+groups retain their individual readiness decisions. The policy migration
+preserves existing grants beneath prior ceilings and does not automatically
+grant newly installed plugins.
+
+
 Independent Rust agent runtime, subscription provider adapter, and isolated Python tool worker.
 Source lives here within the primary development checkout; v2 remains independently available.
 
@@ -45,17 +55,34 @@ JavaScript edits to those files appear after a browser refresh without rebuildin
 the image or restarting the container. The shared files also serve v2, so keep
 v3-specific UI changes in `v3/ui`; changing the container mount list still
 requires recreation. The chat baseline lives in `v3/ui/chat/chat.html` and
-`v3/ui/chat/chat.css`; `v3/ui/app.js` mounts the partial before binding controls.
-V3 reads the existing `data/config/chat_ui.json` through an authenticated
-`GET /api/v3/auth/ui-config` route. The deployment mounts only that file
-read-only; edits to it affect both v2 and v3 after a browser refresh. Its
+`v3/ui/chat/chat.css`; `v3/ui/app.js` supplies authentication and selected-agent context to
+`v3/ui/chat/core/panel.js`, which mounts the partial and owns chat rendering,
+controls, and teardown. `chat/core/client.js` owns the existing v3 chat requests
+and sequence-based SSE connection; it uses the shell request helper for cookie
+authentication and CSRF. Remounting the panel disconnects its previous stream
+and resize observer before binding the new controls.
+Chat control configuration, pill layout, footer interaction, and sign-in adapter
+modules live in `v3/ui/chat/controls/`.
+The session selector now uses the active v2 trigger markup and adapted v2
+portal/positioning/open-close lifecycle under `chat/controls/session-dropdown/`.
+Its v3 data adapter supports title search, opening sessions, and refreshing;
+unsupported management actions are disabled, not sent to v2. This is a partial
+port: rich status/grouping, management persistence, and the remaining header
+controls are not yet equivalent to v2.
+V3 startup wiring selects its independent `v3/data/config/chat.json` through
+an authenticated `GET /api/v3/auth/ui-config` route. `deploy.sh start` seeds the
+file once from the running v2 app’s `data/config/chat_ui.json`, only when the
+v3 file is absent; later starts preserve v3 edits. The existing `/state` mount
+supplies `/state/config/chat.json` rather than a separate shared v2-file mount.
+These source changes require container recreation to take effect. Live
+configuration separation is not verified yet. Its
 `chat_common` values merge with `chat_desktop` or `chat_mobile`; arrays replace
 the common value. V3 currently applies supported header rows (agent name,
 conversation selector, previous/next, new, minimize), active/idle composer rows
 and sizes, placeholder, transcript width, and tail clearance. The composer uses the canonical v2 pill/footer markup and shared CSS.
-`v3/ui/chat/chat-pill-config.js` is a synchronized copy of
+`v3/ui/chat/controls/chat-pill-config.js` is a synchronized copy of
 `ui/shared/js/chat-pill-config.js` with only its sign-in hook adapted;
-`footer-handle.js` reuses the v2 footer drag interaction with v3-scoped
+`controls/footer-handle.js` reuses the v2 footer drag interaction with v3-scoped
 conversation persistence. Keep these copies synchronized when the v2 reference
 changes. Attachment, voice, execution-mode, model-picker, abilities, and
 notification actions remain visibly unavailable until their v3 contracts are
@@ -73,6 +100,93 @@ order, and local html, css, and entry assets; an entry module exports start(moun
 Agents currently adapts the shared v2 partial in the v3 shell. Manage Account
 is a catalog page and the header avatar opens it. Adding a page takes effect
 after a browser refresh; backend catalog code changes require a v3 rebuild.
+
+## Session metadata foundation
+
+`src/storage/session.rs` defines the typed metadata stored inside each encrypted,
+user-owned `session:<id>` document. It follows v2's title, pinned flag, lifecycle
+status and timestamps, without copying v2's plaintext schema or importing v2 data.
+V3 adds `metadata_revision`, `metadata_schema_version`, `last_active_at`,
+`read_through_seq`, and nullable `recycled_at`; status is `active` or `recycled`.
+The read marker is a durable sequence cursor, not v2's wall-clock `read_at`.
+
+On first use of each user database, an atomic, idempotent migration fills only
+missing fields, using the latest public chat timestamp for last activity, with
+creation time as the fallback. A legacy document without a creation timestamp
+uses zero to mean unknown; it is not made newly active by the migration. New
+records get a creation timestamp when absent. Partial session-document writes
+preserve omitted metadata fields. Agent binding, checkpoint state, public chat,
+run state and sequence numbers are retained. Migration completion is encrypted
+in that same user database, and an invalid record rolls back the whole backfill.
+
+Phases one and two are verified in disposable Rust databases and the authenticated
+Axum router. `GET /api/v3/sessions` returns safe active-session summaries ordered
+by pinned first, last-active descending, and session ID ascending as a stable
+tie-breaker, plus `server_time` (Unix seconds). Snapshots expose the same metadata;
+checkpoint input and runtime state are not included in session summaries.
+
+`PATCH /api/v3/sessions/{id}` accepts `client_request_id` (1-128 bytes),
+`expected_revision` (the current `metadata_revision`), and `title` and/or `pinned`.
+For example: `{"client_request_id":"rename-1","expected_revision":0,"title":"Work","pinned":true}`.
+Titles are trimmed, nonempty, at most 200 UTF-8 bytes, and contain no control
+characters. Unknown fields and malformed types are rejected. The route retains
+browser authentication, CSRF, user ownership and live agent-access checks; it
+is not added to the machine messaging API. Missing sessions return 404; recycled
+sessions, stale revisions and request-ID reuse with different input return 409.
+A success returns `{"session":<safe summary>}`. Session writes, encrypted retry
+receipts and `session_updated` events commit atomically after reserving the SQLite
+writer. Identical retries return the original result, including its original
+revision. No-op patches have receipts but do not advance revisions or add events.
+Stale runner snapshots preserve newer metadata while still updating checkpoints.
+Renaming and pinning never advance last activity.
+
+Public chat inserts now advance `last_active_at` in the same transaction as
+accepted user messages, working assistant publications, and final assistant
+replies. Duplicate publication retries do not advance activity. Non-public run
+updates, opening, renaming, and pinning do not count as activity. Activity uses
+server epoch seconds and never decreases; it does not change metadata revisions.
+
+`PUT /api/v3/sessions/{id}/read` accepts `{"through_seq":<u64>}` with browser
+authentication, CSRF, user ownership and live agent-access checks. Zero is a
+no-op; any nonzero cursor must identify an existing public chat message in that
+session (not a global sequence gap or another session's message). Invalid
+cursors return 400, missing/inaccessible sessions 404, and recycled sessions 409.
+The cursor advances by maximum, making identical retries and older tabs harmless
+without request IDs or metadata revision changes. Cursor writes and encrypted
+`session_read` events commit atomically. Reading a snapshot does not acknowledge
+anything; the browser must explicitly acknowledge rendered visible messages in
+the later dropdown integration phase. A retry returns current state, not a
+historical receipt.
+
+Lists, snapshots and metadata/read mutations expose `unread_count` and
+`is_unread`, counting assistant chat rows beyond the durable cursor, not global
+sequence gaps or user messages. Lists project counts and metadata in one database
+snapshot. Stale checkpoint writes preserve activity and read cursors even when
+metadata revisions are equal. The elapsed "last active" counter remains a later
+browser feature derived from these timestamps and server time.
+
+Reversible lifecycle (phase 4, source-tested; not deployed): browser
+`DELETE /api/v3/sessions/{id}` recycles and `POST /api/v3/sessions/{id}/restore`
+restores. Both require `{"client_request_id":"unique-id","expected_revision":<u64>}`
+and authentication, CSRF, user ownership and live agent access. Lifecycle changes,
+encrypted receipts and events commit atomically. Exact retries return the original
+receipt (even after a later restore); reused IDs with different input or revisions
+that changed return 409. Already-in-target-state requests are no-ops with receipts.
+Recycling blocks any nonterminal indexed run, including queued work, stopped runs,
+approval/recovery waits and unknown statuses. Only completed/cancelled/failed runs
+are terminal. No implicit cancellation or permanent purge occurs. History,
+checkpoint, agent binding, pinning, activity and read cursor are retained; restore
+clears `recycled_at` without counting as activity. Snapshots remain readable.
+`GET /api/v3/sessions?status=recycled` lists recycled summaries with the same stable
+ordering; the default/`status=active` lists active ones. Invalid status returns 400.
+Recycled sessions reject new messages and nonterminal run writes/claims with 409;
+storage checks the lifecycle in the write transaction, fencing independent-store
+admission races. Existing accepted-message receipts remain retryable.
+
+Pagination/search and dropdown wiring remain later
+phases.
+The Rust changes require a rebuild and authorized development deployment before
+live databases receive the migration; no deployment is performed by the tests.
 
 ## Direct messaging API
 
@@ -115,9 +229,12 @@ The model first receives `list_abilities` and `load_ability`. Loading a catalog 
 makes its currently permitted worker schemas available for that run; execution checks the
 current policy again, and writes still require approval by default. The authenticated
 `GET /api/v3/abilities` endpoint exposes the visible catalog and effective tool policies.
-The Administrator catalog includes the eight v2 ability manifests and their skill files
-under v3/plugins/abilities/Administrator/. Only Codebase Admin currently has executable
-v3 worker tools; the other ability rows show their declared tools as unavailable.
+The Administrator catalog contains ten abilities. This coding port implements Codebase Admin,
+Code Index, Git Control, Terminal Control, Diagnostics, Remote Tunnel, V3 Build and
+V3 Workspace. Computer Control and Program Screenshot are explicitly excluded. New
+adapters passed authenticated API acceptance; tier and capability-level
+grants do not expand merely because a plugin is installed. See
+[Administrator coding](docs/administrator-coding.md) for configuration and contracts.
 The loader rejects duplicate declarations. Unknown v2 tools remain catalog-only
 and cannot be discovered by the agent, loaded, or executed. The development
 container reads v3/plugins/abilities from its live v3 mount. If an ability
@@ -187,7 +304,7 @@ uses it.
 The container mounts only the v3 source directory at `/live-v3` for promotion.
 The Rust app and tool worker cannot write that mount. The broker runs as the
 checkout owner, accepts only the app's private socket, obeys global shutoff, and
-limits changes to backend source, abilities, tests, and selected v3 root files.
+limits changes to v3 source, plugins, tests, UI, docs, configuration and selected v3 root files. Runtime data and workspaces remain excluded.
 UI files and runtime data are excluded from promotion.
 
 The Python worker owns actual filesystem operations and approved shell/Python processes.
@@ -402,7 +519,9 @@ An agent owns its model roster and role assignments. Its owner can appoint agent
 administrators, who manage model configuration and assign existing accounts as
 members or visitors. Installation administrators retain oversight without becoming
 owners. Credentials and connection sharing remain under each connection owner's
-control. Membership changes invalidate access and quiesce affected runs.
+control. Membership changes invalidate access and quiesce affected runs. Creating
+an agent's initial owner membership preserves the creator's sign-in so they can
+configure models immediately; later membership edits still revoke sign-ins.
 
 `GET/PUT /api/v3/models/catalog?agent_id=<id>` returns and atomically updates a
 caller-scoped catalog using optimistic revisions. `/models/agents` lists permitted
@@ -659,3 +778,60 @@ The existing access-mode API keeps its V2-compatible values (`admin_approval` /
 `public_registered`) and writes this file atomically. Registration edits preserve
 additional JSON fields for future feature/page policies; those fields do not yet
 enforce restrictions. Do not put credentials or user records in this file.
+
+## Integral ability slices
+
+Base has a partial port: Rust-native fixed-offset time/date, finite arithmetic,
+text attachment paging, literal current-session chat search and exact bundled
+skill listing/loading, plus bounded current-agent prompt reads. Prompt reads
+hide internal slots and never accept another agent as a target. Skill reads recheck current access and bundle validity;
+loading never activates an ability or grants execution. Revoked native skill
+text is masked from future model inputs while its encrypted journal is retained.
+Only compiled
+schemas are exposed; unsupported Base declarations stay unavailable. The
+legacy account and membership migration grants only Codebase Admin and Web
+Access. New ability IDs require explicit grants beneath installation policy.
+
+The installation startup-resume service is configured through
+`GET/PUT /api/v3/admin/services/boot_orphan_resume`. It stores encrypted,
+revisioned installation configuration and actor audit records. The default
+preserves automatic safe recovery. Disabling it stops interrupted safe work at
+startup until explicitly resumed. Uncertain writes always require reconciliation;
+ordinary expired-lease recovery remains active. Agent owners cannot change this
+installation service merely by editing their agent's ability visibility.
+
+Luna model calls use a conservative 119,808-byte logical input ceiling beneath
+the requested 128,000 context limit, reserving 8,192 for output/protocol headroom.
+Tighter installation limits and operator estimates still apply. This byte budget
+does not claim an exact provider token count or set an upstream output limit.
+
+## Administrator coding authority
+
+The compiled registry in `src/agent_loop/tools/administrator.rs` owns the Administrator
+model schemas. Rust binds each call to its authenticated user, session and agent;
+model arguments never select a tenant, credential, host origin or Docker command.
+Agent-owned settings use revision-checked encrypted metadata. Cautious settings
+strengthen approvals; they cannot raise the installation or account-tier ceiling.
+Repository connections have owner-bound, separately encrypted token references;
+rotation/revocation quiesces affected resources. Public views never return tokens.
+
+The Python worker executes isolated source/index/Git/PTY operations. `sandbox.py`
+requires Landlock ABI 6 or newer and denies other workspaces, state, control sockets
+and signals outside the child domain. Preview listener ports are assigned per
+workspace below the ephemeral test-listener range. A trusted supervisor reaps
+descendants. Seeding copies only the immutable image snapshot and fences publication.
+Workspace requests keep encrypted caller-owned receipts; an interrupted mutation is
+reconciled, never silently replayed.
+
+Diagnostics browsers use short-lived current-caller cookies kept outside coding
+workspaces. PNG artifacts require authenticated ownership and current access. Preview
+quick tunnels expose only verified workspace terminal listeners through an authenticated
+expiring proxy; they never replace the permanent development tunnel.
+
+Frozen image builds and separately approved development deployment use a protected
+host broker, not a Docker socket in the app or tool worker. Only installation
+administrators can see or submit those host jobs; the same Rust policy resolver
+removes their schemas for ordinary accounts. Renewable access leases stop pending effects
+on revocation. Jobs retain rollback image/config exports and stopped containers;
+uncertain interrupted deployment requires reconciliation. Source input changes make
+a build stale even if compilation passed.

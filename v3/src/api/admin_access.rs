@@ -43,9 +43,12 @@ pub(crate) async fn quiesce_user(app: &App, user_id: &str, agent_filter: Option<
             token.cancel();
         }
         if run["uncertain"] == true || (run["pending"]["state"] == "executing"
-            && !crate::tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))) {
+            && !crate::tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+            || crate::parallel_batch::executing_write(&run) {
             run["status"] = json!("recovery");
             run["uncertain"] = json!(true);
+            // Access revocation preserves reconciliation for every in-flight write.
+            crate::parallel_batch::mark_uncertain_writes(&mut run);
             run["error"] = json!("Access changed during an uncertain tool effect; review required");
         } else {
             run["status"] = json!("stopped");
@@ -53,21 +56,77 @@ pub(crate) async fn quiesce_user(app: &App, user_id: &str, agent_filter: Option<
         }
         caller.save_override(&mut run).await?;
     }
+    let mut closure_error=None;
+    for session in caller.store.list("session:").await? {
+        let agent=session["agent_id"].as_str().unwrap_or("shared_default");
+        if agent_filter.is_some_and(|filter|filter!=agent){continue;}
+        if let Some(sid)=session["id"].as_str().filter(|sid|uuid::Uuid::parse_str(sid).is_ok()) {
+            if let Err(error)=quiesce_session_resources(&caller,sid).await {closure_error=Some(error);}
+        }
+    }
+    if let Some(error)=closure_error {return Err(error);}
     Ok(())
 }
-pub(crate) async fn quiesce_agent(app: &App, agent_id: &str) -> Result<(), ApiError> {
-    for user_id in app.store.all_user_ids().await? {
-        quiesce_user(app, &user_id, Some(agent_id)).await?;
+
+/// Close the caller-owned session's persistent resources after a durable restriction.
+pub(crate) async fn quiesce_session_resources(app:&App,sid:&str)->Result<(),ApiError> {
+    if uuid::Uuid::parse_str(sid).is_err() {return Err(invalid("Invalid session identifier"));}
+    if app.store.get(&crate::key("session",sid)).await?.is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND,"Session not found".into()));
     }
+    let host=app.store.get(&format!("administrator_host:{sid}")).await?;
+    let browser=app.store.get(&format!("administrator_browser:{sid}")).await?;
+    let mut failed=false;
+    if let Some(job)=host.as_ref() {
+        let trusted=json!({"user_id":app.store.current_user_id(),"session_id":sid,
+            "lease_until":crate::now()+30,"access_fingerprint":job["access_fingerprint"]});
+        let result=tokio::time::timeout(std::time::Duration::from_secs(2),
+            crate::tools::execute_trusted("administrator_host_revoke",&json!({}),sid,
+                std::path::Path::new("/run/v3/build/build.sock"),Some(trusted),
+                crate::CancellationToken::new())).await;
+        failed |= !matches!(result,Ok(Ok(ref value)) if value["status"]=="success");
+        if matches!(result,Ok(Ok(ref value)) if value["status"]=="success") {
+            app.store.delete(&format!("administrator_host:{sid}")).await?;
+        }
+    }
+    if let Some(browser)=browser.as_ref() {
+        if let Some(token)=browser["cookie"].as_str() {
+            app.store.delete(&format!("auth:{}",crate::digest(&json!(token)))).await?;
+        }
+        app.store.delete(&format!("administrator_browser:{sid}")).await?;
+    }
+    // Missing worker plus no authorization has no runnable persistent resources.
+    // A live socket or known authorization must acknowledge bounded shutdown.
+    if app.tool_socket.exists() || host.is_some() || browser.is_some() {
+        let result=tokio::time::timeout(std::time::Duration::from_secs(10),
+            crate::tools::execute_trusted("administrator_quiesce",&json!({}),sid,
+                &app.tool_socket,None,crate::CancellationToken::new())).await;
+        failed |= !matches!(result,Ok(Ok(ref value)) if value["status"]=="success");
+    }
+    app.store.event(sid,if failed {"administrator_quiesce_failed"} else {"administrator_quiesced"},
+        &json!({"reason":"session_access_changed"})).await?;
+    if failed {return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,
+        "Session restriction saved; persistent resource shutdown could not be confirmed".into()));}
+    Ok(())
+}
+
+pub(crate) async fn quiesce_agent(app: &App, agent_id: &str) -> Result<(), ApiError> {
+    let mut closure_error=None;
+    for user_id in app.store.all_user_ids().await? {
+        if let Err(error)=quiesce_user(app,&user_id,Some(agent_id)).await {closure_error=Some(error);}
+    }
+    if let Some(error)=closure_error {return Err(error);}
     Ok(())
 }
 async fn quiesce_tier(app: &App, tier_id: &str) -> Result<(), ApiError> {
+    let mut closure_error=None;
     for user_id in app.store.all_user_ids().await? {
         if app.store.account_by_id(&user_id).await?
             .is_some_and(|account| account["tier_id"] == tier_id) {
-            quiesce_user(app, &user_id, None).await?;
+            if let Err(error)=quiesce_user(app,&user_id,None).await {closure_error=Some(error);}
         }
     }
+    if let Some(error)=closure_error {return Err(error);}
     Ok(())
 }
 
@@ -391,5 +450,51 @@ mod tests {
         assert!(change_agent_status(State(app), Extension(admin),
             Path("shared_default".into()), Json(AgentStatusChange {
                 expected_revision:revision, status:"active".into() })).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn session_resource_quiesce_withdraws_only_own_browser_and_requires_worker_ack() {
+        use tokio::io::{AsyncBufReadExt,AsyncWriteExt,BufReader};
+        let (_root,app)=fixture().await;
+        let sid=crate::uuid();let other=crate::uuid();let cookie=crate::uuid();let other_cookie=crate::uuid();
+        for (id,token) in [(&sid,&cookie),(&other,&other_cookie)] {
+            app.store.put(&crate::key("session",id),&json!({"id":id,"agent_id":"shared_default"})).await.unwrap();
+            app.store.put(&format!("administrator_browser:{id}"),&json!({"cookie":token,"session_id":id})).await.unwrap();
+            app.store.put(&format!("auth:{}",crate::digest(&json!(token))),&json!({"user_id":"admin"})).await.unwrap();
+        }
+        app.store.put(&format!("auth:{}",crate::digest(&json!(cookie))),&json!({"user_id":"admin"})).await.unwrap();
+        let listener=tokio::net::UnixListener::bind(&app.tool_socket).unwrap();
+        let expected=sid.clone();
+        let worker=tokio::spawn(async move {
+            let (stream,_)=listener.accept().await.unwrap();
+            let mut reader=BufReader::new(stream);let mut line=String::new();
+            reader.read_line(&mut line).await.unwrap();let request:Value=serde_json::from_str(&line).unwrap();
+            assert_eq!(request["name"],"administrator_quiesce");assert_eq!(request["workspace"],expected);
+            let response=format!("{}\n",json!({"id":request["id"],"status":"success"}));
+            reader.get_mut().write_all(response.as_bytes()).await.unwrap();
+        });
+        quiesce_session_resources(&app,&sid).await.unwrap();worker.await.unwrap();
+        assert!(app.store.get(&format!("administrator_browser:{sid}")).await.unwrap().is_none());
+        assert!(app.store.get(&format!("auth:{}",crate::digest(&json!(cookie)))).await.unwrap().is_none());
+        assert!(app.store.get(&format!("administrator_browser:{other}")).await.unwrap().is_some());
+        assert!(app.store.get(&format!("auth:{}",crate::digest(&json!(other_cookie)))).await.unwrap().is_some());
+    }
+    #[tokio::test]
+    async fn failed_shutdown_keeps_restriction_durable_and_withdraws_authentication() {
+        let (_root,app)=fixture().await;let sid=crate::uuid();let cookie=crate::uuid();
+        app.store.put(&crate::key("session",&sid),&json!({"id":sid,"agent_id":"shared_default"})).await.unwrap();
+        app.store.put(&format!("administrator_browser:{sid}"),&json!({"cookie":cookie})).await.unwrap();
+        let auth=format!("auth:{}",crate::digest(&json!(cookie)));
+        app.store.put(&auth,&json!({"user_id":"admin"})).await.unwrap();
+        let result=crate::api::session_mode_set(State(app.clone()),Path(sid.clone()),
+            Json(crate::api::SessionModeBody {mode:"read_only".into()})).await;
+        assert!(matches!(result,Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,_))));
+        assert_eq!(crate::session_mode(&app,&sid).await.unwrap()["mode"],"read_only");
+        assert!(app.store.get(&auth).await.unwrap().is_none());
+        assert!(app.store.get(&format!("administrator_browser:{sid}")).await.unwrap().is_none());
+        // A caller retry can confirm no-worker shutdown without widening the saved mode.
+        let _ = crate::api::session_mode_set(State(app.clone()),Path(sid.clone()),
+            Json(crate::api::SessionModeBody {mode:"read_only".into()})).await.unwrap();
+        assert!(quiesce_session_resources(&app,&crate::uuid()).await.is_err());
     }
 }

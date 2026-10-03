@@ -15,6 +15,19 @@ pub(crate) async fn call(
                     .map(|output|json!({"status":"success","output":output})),
             _=>Ok(json!({"status":"denied","output":"Invalid state inspection arguments"})),
         }
+    } else if tools::administrator::owns(&name) {
+        tools::administrator::execute(&app,&sid,&run_id,&name,&args,&pending_id,policy_version,cancel).await
+    } else if tools::core_prompt::owns(&name) {
+        tools::core_prompt::execute(&app,&sid,&run_id,&name,&args,cancel).await
+    } else if tools::core_skills::owns(&name) {
+        // Skill reads recheck current caller, agent and bundle validity; no activation.
+        tools::core_skills::execute(&app,&sid,&run_id,&name,&args,cancel).await
+    } else if tools::core_session::owns(&name) {
+        // The authenticated runtime supplies the session; arguments cannot choose one.
+        tools::core_session::execute(&app,&sid,&name,&args,cancel).await
+    } else if tools::core_utilities::owns(&name) {
+        // Native utilities remain behind the same live Rust authorization as worker calls.
+        tools::core_utilities::execute(&name,&args,cancel).await
     } else if tools::web_access::owns(&name) {
         tools::web_access::execute(&name,&args,cancel).await
     } else {

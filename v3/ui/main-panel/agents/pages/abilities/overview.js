@@ -25,8 +25,8 @@ export function buildAbilitiesOverview() {
     </section>
     <div class="agent-abilities-summary" aria-label="Agent capability summary" aria-live="polite">
       <section class="agent-abilities-summary-group agent-abilities-tier-group">
-        <h3>TIER <span data-stat="tier-count">(1)</span></h3>
-        <div class="agent-abilities-tier-control" data-tier-selector>Base agent - admin access</div>
+        <h3>CAPABILITY LEVEL <span data-stat="tier-count"></span></h3>
+        <div class="agent-abilities-tier-control" data-tier-selector></div>
       </section>
     </div>
     <div class="agent-abilities-sync" aria-label="Template synchronization"></div>`;

@@ -5,6 +5,10 @@ mod admin;
 mod sessions;
 mod promotions;
 mod chat;
+mod ability_admin;
+mod service_admin;
+mod administrator;
+pub(crate) mod repository;
 pub(crate) use auth::*;
 pub(crate) use admin::*;
 pub(crate) use sessions::*;
@@ -17,19 +21,10 @@ pub(super) fn router(app: App) -> Router {
         .route("/status", get(overview))
         .route("/settings", put(settings))
         .nest("/admin/access", phase3_api::router())
+        .nest("/admin/services", service_admin::router())
         .route("/admin/access/registration", get(registration::access_mode).put(registration::set_mode))
         .route("/workflow/policy", get(workflow_policy_get).put(workflow_policy_set))
         .route("/agents/{id}/model", get(agent_model).put(agent_model_set))
-        .route("/agents/{id}/abilities", get(agent_ability_catalog))
-        .route("/agents/{id}/context-composition", get(agent_context_composition))
-        .route("/agents/{id}/abilities/{ability_id}/visibility", put(agent_ability_visibility_set))
-        .route("/agents/{id}/abilities/{ability_id}/skill-visibility",
-            put(agent_ability_skill_visibility_set))
-        .route("/agents/{id}/abilities/{ability_id}/tools/{tool_name}/mode",
-            put(agent_tool_mode_set))
-        .route("/agents/{id}/slots", get(prompt_slots_api))
-        .route("/agents/{id}/slots/{name}",
-            get(prompt_slot_api).put(prompt_slot_put_api).delete(prompt_slot_delete_api))
         .route("/policy", put(policy_set))
         .route("/abilities", get(ability_catalog))
         .route("/provider/login", post(provider_start))
@@ -38,7 +33,24 @@ pub(super) fn router(app: App) -> Router {
         .route_layer(middleware::from_fn_with_state(app.clone(), admin_auth));
     // Model handlers enforce tenant authority themselves; all retain browser auth and CSRF.
     let api = Router::new()
+        .route("/sessions/{sid}/administrator/artifacts/{id}",get(administrator::artifact))
+        .route("/sessions/{sid}/administrator/notices",get(administrator::notices))
         .nest("/models", model_selection_api::router())
+        .route("/agents/{id}/context-composition",get(ability_admin::composition))
+        .route("/agents/{id}/slots",get(ability_admin::slots))
+        .route("/agents/{id}/slots/{name}",get(ability_admin::slot).put(ability_admin::slot_put).delete(ability_admin::slot_delete))
+        .route("/agents/{id}/repository-connections",get(repository::read))
+        .route("/agents/{id}/repository-connections/{connection}",put(repository::put))
+        .route("/agents/{id}/abilities",get(ability_admin::read))
+        .route("/agents/{id}/abilities/{ability}/settings",put(ability_admin::settings_set))
+        .route("/agents/{id}/abilities/effective",get(ability_admin::preview))
+        .route("/agents/{id}/ability-members",get(ability_admin::members))
+        .route("/agents/{id}/ability-permissions",put(ability_admin::permissions_set))
+        .route("/agents/{id}/capability-levels/{level}",put(ability_admin::level_set))
+        .route("/agents/{id}/members/{user}/capability-level",put(ability_admin::member_set))
+        .route("/agents/{id}/abilities/{ability}/visibility",put(ability_admin::visibility_set))
+        .route("/agents/{id}/abilities/{ability}/skill-visibility",put(ability_admin::skill_set))
+        .route("/agents/{id}/abilities/{ability}/tools/{tool}/mode",put(ability_admin::tool_set))
         .route("/auth/me", get(me))
         .route("/auth/ui-config", get(chat_ui_config))
         .route("/auth/profile", put(update_profile))

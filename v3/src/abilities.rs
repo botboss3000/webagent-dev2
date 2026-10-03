@@ -19,13 +19,14 @@ enum EntryKind { Ability, VirtualCore, Oauth, Channel, Service, Placeholder }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-enum Readiness { Ready, Pending, Placeholder }
+enum Readiness { Ready, Partial, Pending, Placeholder }
 
 #[derive(Clone, Debug, Serialize)]
 struct Ability {
     id: String,
     #[serde(skip_serializing)]
     path: PathBuf,
+    manifest_digest: String,
     group: String,
     group_name: String,
     group_order: i32,
@@ -96,7 +97,13 @@ fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
     if !meta.file_type().is_file() || meta.len() > limit {
         bail!("Invalid ability file: {}", path.display());
     }
-    fs::read(path).with_context(|| format!("Cannot read ability file: {}", path.display()))
+    // A concurrent growth after metadata inspection cannot create an unbounded read.
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?.take(limit + 1).read_to_end(&mut bytes)
+        .with_context(|| format!("Cannot read ability file: {}", path.display()))?;
+    if bytes.len() as u64 > limit { bail!("Ability file grew beyond limit"); }
+    Ok(bytes)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -171,7 +178,12 @@ impl Catalog {
                     bail!("Invalid or duplicate ability identifier: {id}");
                 }
                 let ability_path = folder.path();
-                let manifest: Manifest = read_json(&ability_path.join(format!("{id}.json")))?;
+                // Pin exactly the bytes parsed here; live edits withdraw cached authority
+                // until a freshly validated catalog reload adopts the new declaration.
+                let manifest_bytes = read_bytes(&ability_path.join(format!("{id}.json")), MAX_MANIFEST_BYTES)?;
+                let manifest_digest = hex::encode(Sha256::digest(&manifest_bytes));
+                let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
+                    .with_context(|| format!("Invalid ability manifest: {id}"))?;
                 if manifest.display_name.is_empty()
                     || manifest.display_name.len() > 100
                     || manifest.description.is_empty()
@@ -197,7 +209,7 @@ impl Catalog {
                     && (readiness != Readiness::Placeholder || !manifest.tools.is_empty()) {
                     bail!("Invalid placeholder: {id}");
                 }
-                if readiness == Readiness::Ready &&
+                if matches!(readiness, Readiness::Ready | Readiness::Partial) &&
                     (!matches!(manifest.kind, EntryKind::Ability | EntryKind::VirtualCore) ||
                      !manifest.tools.iter().any(|tool| Self::supported(tool))) {
                     bail!("Ready entry has no installed adapter: {id}");
@@ -253,6 +265,7 @@ impl Catalog {
                 abilities.push(Ability {
                     id,
                     path: ability_path,
+                    manifest_digest,
                     group: group_id.clone(),
                     group_name: group_name.clone(),
                     group_order: group_meta.order,
@@ -294,13 +307,104 @@ impl Catalog {
     }
 
     fn present(ability: &Ability) -> bool {
-        fs::symlink_metadata(&ability.path).is_ok_and(|m| m.file_type().is_dir())
-            && fs::symlink_metadata(ability.path.join(format!("{}.json", ability.id)))
-                .is_ok_and(|m| m.file_type().is_file())
+        // Presence alone cannot retain an old executable declaration after an
+        // operator disables or edits its manifest. Unreadable/changed bytes fail closed.
+        [ability.path.as_path(), ability.path.parent().unwrap_or(ability.path.as_path()),
+            ability.path.parent().and_then(Path::parent).unwrap_or(ability.path.as_path())]
+            .into_iter().all(|path|fs::symlink_metadata(path).is_ok_and(|m|m.file_type().is_dir()))
+            && read_bytes(&ability.path.join(format!("{}.json", ability.id)), MAX_MANIFEST_BYTES)
+                .is_ok_and(|bytes| hex::encode(Sha256::digest(&bytes)) == ability.manifest_digest)
+    }
+
+    // Only cached, validated bundle IDs can select an asset. Live edits withdraw
+    // old guidance instead of importing instructions without a catalog reload.
+    fn skill_live(ability: &Ability, kind: &str, name: &str, text: &str) -> bool {
+        let (path, limit) = match kind {
+            "ability" if name == ability.id => (ability.path.join(format!("{name}.skill.md")), MAX_SKILL_BYTES),
+            "tool" if valid_id(name) => (ability.path.join("tools").join(format!("{name}.skill.md")), MAX_SKILL_BYTES),
+            "selectable" if valid_id(name) => (ability.path.join("skills").join(format!("{name}.skill.md")), MAX_SELECTABLE_SKILL_BYTES),
+            _ => return false,
+        };
+        path.parent().is_some_and(|parent|
+            fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_dir()))
+            && read_bytes(&path, limit).is_ok_and(|bytes| bytes == text.as_bytes())
+    }
+
+    /// Bounded validity fingerprint of cached manifests and skill assets only.
+    /// A changed file cannot become trusted guidance; it merely invalidates the
+    /// run-local schema/guidance cache until a validated reload adopts its bytes.
+    pub fn live_version(&self) -> String {
+        let validity = self.abilities.iter().map(|ability| {
+            let present = Self::present(ability);
+            let mut assets = Vec::new();
+            if let Some(text) = &ability.skill {
+                assets.push(json!(["ability", ability.id,
+                    present && Self::skill_live(ability, "ability", &ability.id, text)]));
+            }
+            for (name, text) in &ability.tool_skills {
+                assets.push(json!(["tool", name, present && Self::skill_live(ability, "tool", name, text)]));
+            }
+            for (name, text) in &ability.selectable_skills {
+                assets.push(json!(["selectable", name, present && Self::skill_live(ability, "selectable", name, text)]));
+            }
+            json!([ability.id, present, assets])
+        }).collect::<Vec<_>>();
+        hex::encode(Sha256::digest(serde_json::to_vec(&json!([self.version, validity]))
+            .expect("Cached catalog validity is serializable")))
+    }
+
+    fn bundled_candidates<'a>(
+        &'a self, ability_id: &str, visibility: &Value, state: &Value,
+        allow_ability: &impl Fn(&str) -> bool, allow_tool: &impl Fn(&str) -> bool,
+    ) -> Result<(&'a Ability, Vec<(&'static str, &'a str, &'a String)>)> {
+        if !valid_id(ability_id) { bail!("Invalid bundled ability ID"); }
+        let ability = self.abilities.iter().find(|a| a.id == ability_id)
+            .filter(|a| Self::available(a, visibility, state)
+                && Self::skill_mode(visibility, ability_id) != "off"
+                && allow_ability(ability_id)
+                && a.tools.iter().any(|tool| Self::supported(tool)
+                    && Self::tool_mode(visibility, tool) != "off" && allow_tool(tool)))
+            .context("Bundled skills unavailable under current access")?;
+        let mut assets = Vec::new();
+        if let Some(text) = &ability.skill { assets.push(("ability", ability.id.as_str(), text)); }
+        for (name, text) in &ability.tool_skills {
+            if Self::supported(name) && Self::tool_mode(visibility, name) != "off" && allow_tool(name) {
+                assets.push(("tool", name.as_str(), text));
+            }
+        }
+        for (name, text) in &ability.selectable_skills { assets.push(("selectable", name.as_str(), text)); }
+        assets.retain(|(kind, name, text)| Self::skill_live(ability, kind, name, text));
+        Ok((ability, assets))
+    }
+
+    pub(crate) fn bundled_skill_list(
+        &self, ability_id: &str, visibility: &Value, state: &Value,
+        allow_ability: impl Fn(&str) -> bool, allow_tool: impl Fn(&str) -> bool,
+    ) -> Result<Vec<Value>> {
+        let (ability, assets) = self.bundled_candidates(ability_id, visibility, state, &allow_ability, &allow_tool)?;
+        Ok(assets.into_iter().map(|(kind, name, text)| json!({
+            "ability_id":ability.id,"kind":kind,"skill_id":name,
+            "bytes":text.len(),"sha256":hex::encode(Sha256::digest(text.as_bytes()))
+        })).collect())
+    }
+
+    pub(crate) fn bundled_skill_load(
+        &self, ability_id: &str, kind: &str, skill_id: &str, visibility: &Value, state: &Value,
+        allow_ability: impl Fn(&str) -> bool, allow_tool: impl Fn(&str) -> bool,
+    ) -> Result<Value> {
+        if !valid_id(skill_id) || !matches!(kind, "ability" | "tool" | "selectable") {
+            bail!("Invalid bundled skill ID or kind");
+        }
+        let (ability, assets) = self.bundled_candidates(ability_id, visibility, state, &allow_ability, &allow_tool)?;
+        let (_, _, text) = assets.into_iter().find(|(k, name, _)| *k == kind && *name == skill_id)
+            .context("Bundled skill unavailable under current access")?;
+        Ok(json!({"ability_id":ability.id,"kind":kind,"skill_id":skill_id,
+            "bytes":text.len(),"sha256":hex::encode(Sha256::digest(text.as_bytes())),
+            "text":text,"source_kind":"untrusted_bundled_guidance","activates":false}))
     }
 
     fn executable(ability: &Ability) -> bool {
-        Self::present(ability) && ability.readiness == Readiness::Ready
+        Self::present(ability) && matches!(ability.readiness, Readiness::Ready | Readiness::Partial)
             && matches!(ability.kind, EntryKind::Ability | EntryKind::VirtualCore)
     }
 
@@ -380,8 +484,8 @@ impl Catalog {
             "kind":ability.kind,"readiness":ability.readiness,"config":ability.config,
             "skill_summary":ability.skill_summary,"migration_note":ability.migration_note,
             "icon":ability.icon,"color":ability.color,"tools":tools,
-            "has_skill":ability.skill.is_some(),
-            "selectable_skills":ability.selectable_skills.keys().collect::<Vec<_>>(),
+            "has_skill":ability.skill.as_ref().is_some_and(|text| Self::skill_live(ability, "ability", &ability.id, text)),
+            "selectable_skills":ability.selectable_skills.iter().filter(|(name, text)| Self::skill_live(ability, "selectable", name, text)).map(|(name, _)| name).collect::<Vec<_>>(),
             "skill_visibility":Self::skill_mode(visibility, &ability.id),
             "visibility":if off {"off"} else if visible {"visible"} else {"discoverable"},
             "active":Self::active(state, &ability.id)})
@@ -534,13 +638,21 @@ impl Catalog {
                 continue;
             }
             let mut part = format!("\n\nVisible ability {} ({}):", ability.id, ability.name);
+            // Only typed saved settings enter guidance; they never grant use.
+            for key in ["terminal_caution","destructive_caution"] {
+                if let Some(value)=visibility["settings"][&ability.id][key].as_str()
+                    .filter(|v|matches!(*v,"cautious"|"balanced"|"trusted")) {
+                    part.push_str(&format!("\nConfigured {key}: {value}. Live Rust policy and approval remain authoritative."));
+                }
+            }
+
             // SKILL-LIFETIME: activated discoverable guidance is rebuilt from the
             // catalog, independent of transcript compaction. Off and suppressed
             // remain authoritative; authorization was checked above.
             if Self::skill_mode(visibility, &ability.id) == "visible"
                 || (Self::skill_mode(visibility, &ability.id) == "discoverable"
                     && Self::active(state, &ability.id)) {
-                if let Some(skill) = &ability.skill {
+                if let Some(skill) = ability.skill.as_ref().filter(|text| Self::skill_live(ability, "ability", &ability.id, text)) {
                     part.push_str("\n");
                     part.push_str(skill);
                 }
@@ -548,6 +660,7 @@ impl Catalog {
             for (tool, skill) in &ability.tool_skills {
                 if Self::supported(tool) && Self::allowed(policy, tool)
                     && allow_tool(tool)
+                    && Self::skill_live(ability, "tool", tool, skill)
                     && Self::tool_mode(visibility, tool) == "visible" {
                     part.push_str("\n\nTool ");
                     part.push_str(tool);
@@ -642,12 +755,13 @@ impl Catalog {
                 let permitted_skills = entry
                     .tool_skills
                     .iter()
-                    .filter(|(tool, _)| Self::supported(tool) && Self::allowed(policy, tool) && Self::tool_mode(visibility, tool) != "off")
+                    .filter(|(tool, text)| Self::supported(tool) && Self::allowed(policy, tool) && Self::tool_mode(visibility, tool) != "off"
+                        && Self::skill_live(entry, "tool", tool, text))
                     .collect::<BTreeMap<_, _>>();
                 json!({"status":"ok","ability":ability,
-                    "skill":if Self::skill_mode(visibility, id) == "off" {None} else {entry.skill.as_ref()},
+                    "skill":if Self::skill_mode(visibility, id) == "off" {None} else {entry.skill.as_ref().filter(|text| Self::skill_live(entry, "ability", &entry.id, text))},
                     "tool_skills":permitted_skills,
-                    "selectable_skills":entry.selectable_skills.keys().collect::<Vec<_>>(),
+                    "selectable_skills":entry.selectable_skills.iter().filter(|(name, text)| Self::skill_live(entry, "selectable", name, text)).map(|(name, _)| name).collect::<Vec<_>>(),
                     "catalog_version":self.version})
             }
             _ => json!({"status":"denied","output":"Unknown discovery operation"}),
@@ -695,6 +809,116 @@ mod tests {
         .unwrap();
         let catalog = Catalog::load(root.path()).unwrap();
         (root, catalog)
+    }
+
+    #[test]
+    fn changed_manifest_withdraws_cached_loaded_tools_until_reload() {
+        for change in ["pending", "remove_tool", "malformed"] {
+            let (root, catalog) = fixture();
+            let path = root.path().join("Administrator/codebase_admin/codebase_admin.json");
+            let original = fs::read(&path).unwrap();
+            let mut manifest: Value = serde_json::from_slice(&original).unwrap();
+            let p = policy();
+            let visibility = json!({"visibility":{"codebase_admin":"visible"}});
+            let active = json!({"active":["codebase_admin"],"suppressed":[]});
+            let loaded = json!(["codebase_admin"]);
+            assert_eq!(catalog.tool_gate("file_read", &visibility, &active, &loaded), (true, true));
+            match change {
+                "pending" => manifest["readiness"] = json!("pending"),
+                "remove_tool" => manifest["tools"].as_array_mut().unwrap().retain(|t| t != "file_read"),
+                _ => {}
+            }
+            fs::write(&path, if change == "malformed" { b"{".to_vec() }
+                else { serde_json::to_vec(&manifest).unwrap() }).unwrap();
+            // All cached entry authority is withdrawn, not just the edited tool.
+            assert_eq!(catalog.tool_gate("file_read", &visibility, &active, &loaded), (false, false));
+            assert_eq!(catalog.tool_gate("file_write", &visibility, &active, &loaded), (false, false));
+            assert!(!catalog.schemas_with(&p, &loaded, &visibility, &active)
+                .iter().any(|s| s["name"] == "file_read" || s["name"] == "file_write"));
+            assert!(!catalog.known("codebase_admin"));
+            let mut run = json!({"loaded_abilities":loaded});
+            let found = catalog.discover_with("list_abilities", &json!({}),
+                &mut run, &p, &visibility, &active);
+            assert!(found["abilities"].as_array().unwrap().is_empty());
+            assert_eq!(catalog.discover_with("load_ability", &json!({"ability_id":"codebase_admin"}),
+                &mut run, &p, &visibility, &active)["status"], "denied");
+            if change == "remove_tool" {
+                let reloaded = Catalog::load(root.path()).unwrap();
+                assert_ne!(reloaded.version(), catalog.version());
+                assert_eq!(reloaded.tool_gate("file_read", &visibility, &active, &loaded), (false, false));
+                assert_eq!(reloaded.tool_gate("file_write", &visibility, &active, &loaded), (true, true));
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_skill_access_is_exact_scoped_and_withdraws_changed_assets() {
+        let (root, _) = fixture();
+        let folder = root.path().join("Administrator/codebase_admin");
+        fs::create_dir(folder.join("skills")).unwrap();
+        fs::write(folder.join("skills/ui_theming.skill.md"), "Scoped theme guidance").unwrap();
+        let catalog = Catalog::load(root.path()).unwrap();
+        let visible = json!({"visibility":{"codebase_admin":"visible"}});
+        let active = json!({"active":["codebase_admin"],"suppressed":[]});
+        let list = catalog.bundled_skill_list("codebase_admin", &visible, &active,
+            |_| true, |tool| tool == "file_read").unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(!list.iter().any(|s| s["kind"] == "tool"));
+        let loaded = catalog.bundled_skill_load("codebase_admin", "selectable", "ui_theming",
+            &visible, &active, |_| true, |_| true).unwrap();
+        assert_eq!(loaded["text"], "Scoped theme guidance");
+        assert_eq!(loaded["source_kind"], "untrusted_bundled_guidance");
+        assert_eq!(loaded["activates"], false);
+        assert_eq!(loaded["sha256"], hex::encode(Sha256::digest(b"Scoped theme guidance")));
+        assert!(catalog.bundled_skill_load("codebase_admin", "selectable", "../ui_theming",
+            &visible, &active, |_| true, |_| true).is_err());
+        assert!(catalog.bundled_skill_load("codebase_admin", "tool", "file_edit",
+            &visible, &active, |_| true, |tool| tool == "file_read").is_err());
+        assert!(catalog.bundled_skill_list("codebase_admin", &visible, &active, |_| false, |_| true).is_err());
+        let off = json!({"visibility":{"codebase_admin":"visible"},"skill_visibility":{"codebase_admin":"off"}});
+        assert!(catalog.bundled_skill_list("codebase_admin", &off, &active, |_| true, |_| true).is_err());
+        assert!(catalog.bundled_skill_list("codebase_admin", &visible,
+            &json!({"active":["codebase_admin"],"suppressed":["codebase_admin"]}), |_| true, |_| true).is_err());
+        assert!(catalog.bundled_skill_list("codebase_admin", &json!({}), &json!({}), |_| true, |_| true).is_err());
+
+        let before = catalog.live_version();
+        fs::write(folder.join("skills/ui_theming.skill.md"), "Unvalidated replacement").unwrap();
+        assert_ne!(catalog.live_version(), before);
+        assert!(catalog.bundled_skill_load("codebase_admin", "selectable", "ui_theming",
+            &visible, &active, |_| true, |_| true).is_err());
+        assert!(!catalog.bundled_skill_list("codebase_admin", &visible, &active, |_| true, |_| true)
+            .unwrap().iter().any(|s| s["skill_id"] == "ui_theming"));
+        let mut run = json!({"loaded_abilities":["codebase_admin"]});
+        let discovery = catalog.discover_with("load_ability", &json!({"ability_id":"codebase_admin"}),
+            &mut run, &policy(), &visible, &active);
+        assert!(discovery["selectable_skills"].as_array().unwrap().is_empty());
+        fs::remove_file(folder.join("codebase_admin.skill.md")).unwrap();
+        fs::remove_file(folder.join("tools/file_edit.skill.md")).unwrap();
+        let guidance = catalog.visible_guidance(&policy(), &visible, &active);
+        assert!(!guidance.contains("Use scoped workspace tools."));
+        assert!(!guidance.contains("Match one exact span."));
+        let discovery = catalog.discover_with("load_ability", &json!({"ability_id":"codebase_admin"}),
+            &mut run, &policy(), &visible, &active);
+        assert!(discovery["skill"].is_null());
+        assert!(discovery["tool_skills"].as_object().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_replacement_cannot_restore_cached_bundled_guidance() {
+        use std::os::unix::fs::symlink;
+        let (root, catalog) = fixture();
+        let folder = root.path().join("Administrator/codebase_admin");
+        let path = folder.join("codebase_admin.skill.md");
+        let original = fs::read(&path).unwrap();
+        let alternate = root.path().join("replacement.skill.md");
+        fs::write(&alternate, original).unwrap();
+        let before = catalog.live_version();
+        fs::remove_file(&path).unwrap();
+        symlink(&alternate, &path).unwrap();
+        assert_ne!(catalog.live_version(), before);
+        assert!(catalog.bundled_skill_load("codebase_admin", "ability", "codebase_admin",
+            &json!({"visibility":{"codebase_admin":"visible"}}), &json!({}), |_| true, |_| true).is_err());
     }
 
     fn policy() -> Value {
@@ -766,30 +990,56 @@ mod tests {
     }
 
     #[test]
+    fn partial_readiness_exposes_only_compiled_tools_and_withdraws_on_edit() {
+        let (root, _) = fixture();
+        let path = root.path().join("Core/base");
+        fs::create_dir_all(&path).unwrap();
+        let manifest = path.join("base.json");
+        fs::write(&manifest, r#"{"display_name":"Base","kind":"virtual_core",
+            "description":"Partial core","readiness":"partial",
+            "tools":["calculate","session_search"]}"#).unwrap();
+        let catalog = Catalog::load(root.path()).unwrap();
+        let policy = json!({"rules":{"calculate":"allow","session_search":"allow"}});
+        let visibility = json!({"visibility":{"base":"visible"}});
+        let state = json!({"active":["base"]});
+        let item = catalog.configuration_catalog(&policy, &visibility)
+            .into_iter().find(|entry| entry["id"] == "base").unwrap();
+        assert_eq!(item["readiness"], "partial");
+        assert_eq!(item["available"], true);
+        assert!(catalog.tool_available("calculate", &visibility, &state, &Value::Null));
+        assert!(!catalog.tool_available("session_search", &visibility, &state, &Value::Null));
+        fs::write(&manifest, r#"{"display_name":"Base","kind":"virtual_core",
+            "description":"Disabled","readiness":"pending","tools":["calculate"]}"#).unwrap();
+        assert!(!catalog.tool_available("calculate", &visibility, &state, &Value::Null));
+        let disabled = Catalog::load(root.path()).unwrap();
+        assert!(!disabled.tool_available("calculate", &visibility, &state, &Value::Null));
+    }
+
+    #[test]
     fn catalog_only_v2_tool_is_listed_but_never_executable() {
         let (root, _) = fixture();
-        let path = root.path().join("Administrator/diagnostics");
+        let path = root.path().join("Administrator/computer_control");
         fs::create_dir_all(&path).unwrap();
-        fs::write(path.join("diagnostics.json"),
-            r#"{"display_name":"Diagnostics","kind":"ability",
-                "description":"V2 diagnostics","tools":["read_diagnostics"]}"#).unwrap();
-        fs::write(path.join("diagnostics.skill.md"), "Inspect host diagnostics.").unwrap();
+        fs::write(path.join("computer_control.json"),
+            r#"{"display_name":"Computer Control","kind":"ability",
+                "description":"Unsupported Computer Control","tools":["computer_screenshot"]}"#).unwrap();
+        fs::write(path.join("computer_control.skill.md"), "Control the excluded attached computer.").unwrap();
         let catalog = Catalog::load(root.path()).unwrap();
         let policy = policy();
-        let visibility = json!({"visibility":{"diagnostics":"visible"}});
+        let visibility = json!({"visibility":{"computer_control":"visible"}});
         let item = catalog.configuration_catalog(&policy, &visibility)
-            .into_iter().find(|item| item["id"] == "diagnostics").unwrap();
+            .into_iter().find(|item| item["id"] == "computer_control").unwrap();
         assert_eq!(item["available"], false);
         assert_eq!(item["tools"][0]["supported"], false);
         assert!(!catalog.catalog_with(&policy, &visibility, &Value::Null)
-            .iter().any(|item| item["id"] == "diagnostics"));
+            .iter().any(|item| item["id"] == "computer_control"));
         assert!(!catalog.visible_guidance(&policy, &visibility, &Value::Null)
-            .contains("Inspect host diagnostics."));
+            .contains("Control the excluded attached computer."));
         let mut run = json!({"loaded_abilities":[]});
-        assert_eq!(catalog.discover_with("load_ability", &json!({"ability_id":"diagnostics"}),
+        assert_eq!(catalog.discover_with("load_ability", &json!({"ability_id":"computer_control"}),
             &mut run, &policy, &visibility, &Value::Null)["status"], "denied");
-        assert!(!catalog.tool_available("read_diagnostics", &visibility,
-            &json!({"active":["diagnostics"],"suppressed":[]}), &Value::Null));
+        assert!(!catalog.tool_available("computer_screenshot", &visibility,
+            &json!({"active":["computer_control"],"suppressed":[]}), &Value::Null));
     }
 
     #[test]
@@ -1056,7 +1306,13 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities");
         let catalog = Catalog::load(&root).unwrap();
         assert_eq!(catalog.abilities.len(), 82);
-        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 2);
+        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 10);
+        assert_eq!(catalog.abilities.iter().filter(|entry| entry.readiness == Readiness::Ready).count(), 9);
+        assert_eq!(catalog.abilities.iter().filter(|entry| entry.readiness == Readiness::Partial).count(), 1);
+        let base = catalog.abilities.iter().find(|entry| entry.id == "base").unwrap();
+        let mut installed: Vec<_> = base.tools.iter().filter(|name| Catalog::supported(name)).map(String::as_str).collect();
+        installed.sort();
+        assert_eq!(installed, ["calculate", "get_date", "get_time", "list_skills", "load_skill", "read_attachment", "read_own_prompt", "search_this_session"]);
         assert!(catalog.abilities.iter().any(|ability| ability.id == "codebase_admin"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "diagnostics"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "terminal_control"));

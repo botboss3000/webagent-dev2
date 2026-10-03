@@ -4,6 +4,7 @@ import fcntl
 import threading
 import hashlib
 import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -313,18 +314,90 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("edited", (path / "src/main.rs").read_text())
 
     async def test_workspace_seed_obeys_shutoff_before_publish(self):
-        original = worker.subprocess.run
-
-        def stop_after_baseline(argv, **kwargs):
-            result = original(argv, **kwargs)
-            if argv[-2:] == ["rev-parse", "HEAD"]:
-                (worker.CONTROL / "shutoff").write_text("1")
-            return result
-
-        with mock.patch.object(worker.subprocess, "run", side_effect=stop_after_baseline):
+        original = worker._seed_finish
+        def stop_before_publish(spec, raw):
+            (worker.CONTROL / "shutoff").write_text("1")
+            return original(spec, raw)
+        with mock.patch.object(worker, "_seed_finish", side_effect=stop_before_publish):
             with self.assertRaisesRegex(ValueError, "execution disabled"):
                 await self.run_tool("workspace_seed", {})
         self.assertFalse((worker.ROOT / self.session / "webagent-v3").exists())
+
+    async def test_seed_cancelled_spawn_is_reaped_without_publication(self):
+        original = asyncio.create_subprocess_exec
+        launched, release = asyncio.Event(), asyncio.Event()
+        children = []
+        async def delayed(*args, **kwargs):
+            process = await original(*args, **kwargs)
+            children.append(process); launched.set()
+            await release.wait()
+            return process
+        with mock.patch.object(worker.asyncio, "create_subprocess_exec", delayed):
+            task = asyncio.create_task(self.run_tool("workspace_seed", {}))
+            await launched.wait(); task.cancel(); release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 8)
+        self.assertIsNotNone(children[0].returncode)
+        base = worker.ROOT / self.session
+        self.assertFalse((base / "webagent-v3").exists())
+        self.assertEqual([], list(base.glob(".v3-seed-*")))
+
+    async def test_seed_child_rejects_raced_stage_directory_escape(self):
+        base = worker.workspace_path(self.session)
+        outside = Path(self.tmp.name) / "outside"; outside.mkdir()
+        (outside / "main.rs").write_text("OUTSIDE")
+        script = r"""
+import importlib.util,runpy,sys,json,shutil
+from pathlib import Path
+workerpath,base,template,outside=sys.argv[1:]
+spec=importlib.util.spec_from_file_location("seedworker",workerpath)
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+real=shutil.copytree
+def race(src,dst,*args,**kwargs):
+    if Path(src)==Path(template):
+        (Path(dst)/"src").symlink_to(outside,target_is_directory=True)
+    return real(src,dst,*args,**kwargs)
+m.shutil.copytree=race
+runpy.run_path(str(Path(workerpath).with_name("sandbox.py")))["restrict"](base,read_paths=(template,))
+try:
+    m._seed_inner({"base":base,"template":template,"stage":".v3-seed-fixture"})
+    print("UNSAFE_SUCCESS")
+except Exception:
+    print("REJECTED")
+"""
+        result = await asyncio.to_thread(subprocess.run,
+            [sys.executable, "-I", "-c", script, str(Path(worker.__file__).resolve()), str(base), str(worker.TEMPLATE), str(outside)],
+            capture_output=True, timeout=8, check=True)
+        self.assertEqual(b"REJECTED\n", result.stdout)
+        self.assertEqual("OUTSIDE", (outside / "main.rs").read_text())
+
+    async def test_seed_child_ignores_raced_precommit_hook(self):
+        base = worker.workspace_path(self.session)
+        outside = Path(self.tmp.name) / "hook-outside"
+        script = r"""
+import importlib.util,runpy,sys,subprocess
+from pathlib import Path
+workerpath,base,template,outside=sys.argv[1:]
+spec=importlib.util.spec_from_file_location("seedworker",workerpath)
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+real=subprocess.Popen
+stage=Path(base)/".v3-seed-fixture"
+def race(argv,*args,**kwargs):
+    if "commit" in argv:
+        hook=stage/".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nprintf UNSAFE > "+outside+"\n")
+        hook.chmod(0o755)
+    return real(argv,*args,**kwargs)
+m.subprocess.Popen=race
+runpy.run_path(str(Path(workerpath).with_name("sandbox.py")))["restrict"](base,read_paths=(template,))
+result=m._seed_inner({"base":base,"template":template,"stage":".v3-seed-fixture"})
+print("SEEDED" if result["baseline_commit"] else "FAILED")
+"""
+        result = await asyncio.to_thread(subprocess.run,
+            [sys.executable, "-I", "-c", script, str(Path(worker.__file__).resolve()), str(base), str(worker.TEMPLATE), str(outside)],
+            capture_output=True, timeout=8, check=True)
+        self.assertEqual(b"SEEDED\n", result.stdout)
+        self.assertFalse(outside.exists())
 
     async def test_workspace_seed_rejects_template_symlink(self):
         (worker.TEMPLATE / "escape").symlink_to("/etc/passwd")

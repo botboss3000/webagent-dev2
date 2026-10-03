@@ -159,6 +159,26 @@ async fn validate_destination(store:&Store,pool:&SqlitePool,id:&str,owner:&str) 
         }
         store.unseal(&row.value)?;
     }
+    // The first deployed ability policy slice wrote encrypted audit receipts
+    // without an agent namespace. Preserve them without accepting foreign docs.
+    let legacy_audits=sqlx::query("SELECT key,value FROM docs WHERE key LIKE 'capability_audit:%' OR key LIKE 'ability_policy_audit:%' OR key LIKE 'ability_visibility_audit:%'")
+        .fetch_all(pool).await?;
+    for row in &legacy_audits {
+        let key:String=row.get("key");
+        let (kind,suffix)=key.split_once(':').ok_or_else(||anyhow!("Invalid agent audit key"))?;
+        if !matches!(kind,"capability_audit"|"ability_policy_audit"|"ability_visibility_audit")
+            || suffix.is_empty() || !suffix.bytes().all(|b|b.is_ascii_digit()) {
+            bail!("Invalid agent audit key");
+        }
+        let revision:u64=suffix.parse()?;
+        let receipt=store.unseal(&row.get::<Vec<u8>,_>("value"))?;
+        if revision==0 || receipt["revision"].as_u64()!=Some(revision)
+            || receipt["agent_id"].as_str()!=Some(id)
+            || !receipt["actor_id"].as_str().is_some_and(access::valid_id)
+            || (kind=="capability_audit" && !receipt["level_id"].as_str().is_some_and(access::valid_id)) {
+            bail!("Foreign or invalid agent audit receipt");
+        }
+    }
     let agent_count:i64=sqlx::query_scalar("SELECT count(*) FROM agents")
         .fetch_one(pool).await?;
     let conn_count:i64=sqlx::query_scalar("SELECT count(*) FROM agent_connections")
@@ -168,7 +188,7 @@ async fn validate_destination(store:&Store,pool:&SqlitePool,id:&str,owner:&str) 
     let doc_count:i64=sqlx::query_scalar("SELECT count(*) FROM docs")
         .fetch_one(pool).await?;
     if agent_count!=1 || conn_count!=value.connections.len() as i64
-        || prompt_count!=value.prompts.len() as i64 || doc_count!=value.docs.len() as i64 {
+        || prompt_count!=value.prompts.len() as i64 || doc_count!=(value.docs.len()+legacy_audits.len()) as i64 {
         bail!("Agent database contains foreign rows");
     }
     Ok(())
@@ -326,6 +346,46 @@ mod tests {
         assert_eq!(source.agent.model,"model-old");
         store.migrate_agent_storage(dir.path()).await.unwrap();
     }
+    #[tokio::test]
+    async fn audit_receipts_reopen_and_foreign_receipts_remain_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).await.unwrap();
+        store.create_admin_account("admin", "fixture-hash", "generation").await.unwrap();
+        let metadata = store.seal(&json!({"owner_id":"admin","ability_revision":0})).unwrap();
+        sqlx::query("INSERT INTO agents(id,name,description,provider,model,status,metadata,revision,created_at,updated_at) VALUES('audit_agent','Audit','','openai_subscription','fixture','active',?,1,1,1)")
+            .bind(metadata).execute(&store.agent_pool).await.unwrap();
+        store.migrate_agent_storage(dir.path()).await.unwrap();
+        let agent = store.for_agent("audit_agent").await.unwrap();
+        let levels = store.capability_levels("audit_agent").await.unwrap();
+        store.save_capability_level("audit_agent", levels.levels["member"].clone(), 0).await.unwrap();
+        let revision: i64 = sqlx::query_scalar("SELECT revision FROM agents WHERE id='audit_agent'")
+            .fetch_one(&agent.agent_pool).await.unwrap();
+        store.set_agent_permissions("audit_agent", revision as u64, json!({}), json!({})).await.unwrap();
+        let mut visibility = agent.agent_abilities().await.unwrap();
+        visibility["revision"] = json!(1);
+        agent.save_agent_abilities(&visibility, 0).await.unwrap();
+        // Compatibility preserves already-deployed unnamespaced encrypted receipts.
+        for key in ["capability_audit:97", "ability_policy_audit:97", "ability_visibility_audit:97"] {
+            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
+                .bind(key).bind(store.seal(&json!({"agent_id":"audit_agent","actor_id":"admin","level_id":"member","revision":97})).unwrap())
+                .execute(&agent.agent_pool).await.unwrap();
+        }
+        store.migrate_agent_storage(dir.path()).await.unwrap();
+        let reopened = Store::open(dir.path()).await.unwrap();
+        reopened.migrate_agent_storage(dir.path()).await.unwrap();
+        for (key, receipt) in [
+            ("capability_audit:98", json!({"agent_id":"other_agent","actor_id":"admin","level_id":"member","revision":98})),
+            ("ability_policy_audit:0", json!({"agent_id":"audit_agent","actor_id":"admin","revision":0})),
+            ("ability_visibility_audit:98", json!({"agent_id":"audit_agent","actor_id":"admin","revision":99})),
+            ("foreign:document", json!({"agent_id":"audit_agent","actor_id":"admin","revision":98})),
+        ] {
+            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
+                .bind(key).bind(store.seal(&receipt).unwrap()).execute(&agent.agent_pool).await.unwrap();
+            assert!(store.migrate_agent_storage(dir.path()).await.is_err());
+            sqlx::query("DELETE FROM docs WHERE key=?").bind(key).execute(&agent.agent_pool).await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn reopen_rejects_malformed_destination_after_marker() {
         let dir=tempfile::tempdir().unwrap();

@@ -22,10 +22,17 @@ impl Context {
  /// Output reserve is budgeting only, not a claim about upstream output controls.
  pub fn ceiling(&self,selection:&crate::provider::ProviderSelection)->Result<usize> {
   let provider=match selection.provider {crate::provider::ProviderId::Deepseek=>"deepseek",crate::provider::ProviderId::OpenaiSubscription=>"openai_subscription"};
+  // Luna's requested 128,000 context ceiling is a hard upper bound. Without a
+  // provider tokenizer, use one token per logical JSON byte and reserve 8,192
+  // for output/protocol overhead. Operator profiles may tighten this ceiling.
+  let ceiling=if matches!(selection.provider,crate::provider::ProviderId::OpenaiSubscription)
+      && selection.model=="gpt-6-luna" {
+      self.max_context_bytes.min(128_000-8_192)
+  } else {self.max_context_bytes};
   match self.model_profiles.get(&format!("{provider}/{}",selection.model)) {
-   None=>Ok(self.max_context_bytes), Some(p)=> {
+   None=>Ok(ceiling), Some(p)=> {
     if p.context_tokens==0 || p.output_reserve_tokens>=p.context_tokens || !(1..=8).contains(&p.bytes_per_token) {bail!("Invalid model budget profile");}
-    Ok(self.max_context_bytes.min((p.context_tokens-p.output_reserve_tokens).checked_mul(p.bytes_per_token).ok_or_else(||anyhow::anyhow!("Model budget overflow"))?))
+    Ok(ceiling.min((p.context_tokens-p.output_reserve_tokens).checked_mul(p.bytes_per_token).ok_or_else(||anyhow::anyhow!("Model budget overflow"))?))
    }
   }
  }
@@ -132,5 +139,25 @@ impl Config {
   c.context.model_profiles.insert("deepseek/fixture".into(),ModelBudget{context_tokens:1000,output_reserve_tokens:100,bytes_per_token:2});
   c.validate().unwrap();assert_eq!(c.context.ceiling(&selection).unwrap(),1800);
   c.context.model_profiles.get_mut("deepseek/fixture").unwrap().output_reserve_tokens=1000;assert!(c.validate().is_err());
+ }
+}
+
+#[cfg(test)] mod luna_budget_tests {
+ use super::*;
+ #[test]
+ fn luna_ceiling_reserves_headroom_and_cannot_be_expanded_by_a_profile() {
+  let luna=crate::provider::ProviderSelection {provider:crate::provider::ProviderId::OpenaiSubscription,model:"gpt-6-luna".into()};
+  let other=crate::provider::ProviderSelection {provider:crate::provider::ProviderId::OpenaiSubscription,model:"fixture".into()};
+  let mut context=Config::default().context;
+  assert_eq!(context.ceiling(&luna).unwrap(),119_808);
+  assert_eq!(context.ceiling(&other).unwrap(),262_144);
+  context.model_profiles.insert("openai_subscription/gpt-6-luna".into(),
+      ModelBudget {context_tokens:1_000_000,output_reserve_tokens:8192,bytes_per_token:8});
+  assert_eq!(context.ceiling(&luna).unwrap(),119_808);
+  context.model_profiles.insert("openai_subscription/gpt-6-luna".into(),
+      ModelBudget {context_tokens:10_000,output_reserve_tokens:1000,bytes_per_token:2});
+  assert_eq!(context.ceiling(&luna).unwrap(),18_000);
+  context.max_context_bytes=4096;
+  assert_eq!(context.ceiling(&luna).unwrap(),4096);
  }
 }

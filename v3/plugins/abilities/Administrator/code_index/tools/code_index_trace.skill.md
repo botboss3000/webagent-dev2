@@ -1,3 +1,5 @@
-# Code Index Trace
+# Trace exact static references
 
-Use `code_index_trace` only for its matching Code Index operation. Read `code_index.skill.md` for the UI scope, line-coverage contract, and the limits of static analysis.
+Required `kind` is `symbol`, `selector`, `event`, `endpoint`, `data_attribute`, `import` or `asset`; required `value` is matched exactly. `root` defaults to the current session's `webagent-v3` snapshot.
+
+Results include source path, line/span, owner and a live stale flag. Dynamic runtime edges are outside this static index. Reads do not rescan. Follow `next_offset` for pages; narrow values when the bounded query reports `result_cap_reached`.

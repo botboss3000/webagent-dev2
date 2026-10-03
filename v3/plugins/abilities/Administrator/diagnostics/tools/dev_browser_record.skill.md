@@ -1,5 +1,5 @@
-# Browser recorder
+# Record bounded PNG frames
 
-Use `dev_browser_record` only when a visual workflow must be captured as a recorder artifact. Start it immediately before the focused interaction, and always stop it once capture is complete. Do not use it for ordinary screenshots or static inspection.
+Actions: `start`, `status`, `stop`. Capture runs only in this caller's authenticated private V3 browser and stops after 30 seconds or 30 frames, on quota failure, or when authorization is withdrawn.
 
-Actions: `start`, `status`, `stop`.
+The response includes actual PNG artifact metadata and `format: bounded_png_frames`, `video: false`. It does not claim an encoded video. Stop after the relevant interaction and close the browser. Screenshot capture invalidates input observations, so read again immediately before each input.

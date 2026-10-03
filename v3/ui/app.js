@@ -6,9 +6,12 @@ const privateHost=document.querySelector('[data-private-access-form]');
 const privateReveal=document.querySelector('[data-private-access-reveal]');
 privateReveal.onclick=()=>{privateHost.hidden=false;privateReveal.hidden=true;privateReveal.setAttribute('aria-expanded','true');document.getElementById('login-username').focus({preventScroll:true});};
 function privateVisible(visible){document.body.classList.toggle('app-restricted',visible);document.getElementById('app-restricted-overlay').setAttribute('aria-hidden',String(!visible));privateHost.hidden=true;privateReveal.hidden=false;privateReveal.setAttribute('aria-expanded','false');}
+import { initHeaderCarousel } from './shared/header-carousel.js';
+initHeaderCarousel();
 import { wirePageTabDrag } from './shared/page-tabs.js';
 import { purgeAllBrowserData } from './browser-data-reset.js';
-import { initChatConfig, applyChatConfig } from './chat/chat-config.js';
+import { initChatConfig } from './chat/controls/chat-config.js';
+import { mountChatPanel } from './chat/core/panel.js';
 
 // v2 dom-utils imports v1 auth and uploads; v3 uses text nodes and its own transport.
 import { renderAbilities } from './main-panel/agents/pages/abilities/page.js';
@@ -18,7 +21,6 @@ let selectionTable;
 let agentPages=[];
 const $=id=>document.getElementById(id);
 let agentId=new URL(location.href).searchParams.get('agent')||'shared_default';
-let sessionAgentId='shared_default';
 let explicitAssignment=false;
 const initialTab=new URL(location.href).searchParams.get('tab');
 let agentModel='';
@@ -100,7 +102,7 @@ async function loadMainPages(){
     }
     const tab=document.createElement('button');
     tab.id='tab-button-'+page.id;tab.type='button';tab.className='main-tab';
-    tab.setAttribute('role','tab');tab.textContent=page.label;
+    tab.dataset.value=page.id;tab.setAttribute('role','tab');tab.textContent=page.label;
     tab.onclick=()=>showMainPage(page.id);
     $('main-tabs').append(tab);
     const option=document.createElement('option');
@@ -137,39 +139,19 @@ function updateMainPageState(){
   }
   $('main-tab-select').value=activeMainPage;
 }
-async function mountChat(){
-  const response=await fetch('/v3-ui/chat/chat.html?v=chat-partial-20260930',{credentials:'same-origin'});
-  if(!response.ok)throw Error('Chat shell unavailable');
-  const template=document.createElement('template');
-  template.innerHTML=await response.text();
-  for(const id of ['chat-header','chat-messages','chat-messages-inner','sessions','new','runs','composer','chat-input','chat-send','chat-stop-btn']){
-    if(!template.content.querySelector('#'+id))throw Error('Chat shell is incomplete: '+id);
-  }
-  $('chat-panel').replaceChildren(template.content);
-}
-await mountChat();
-const chatPanel=$('chat-panel');
-const updateChatClearance=()=>{
-  const header=$('chat-header').getBoundingClientRect().height;
-  const footer=$('chat-input-area').getBoundingClientRect().height + (parseFloat(getComputedStyle($('chat-input-area')).bottom)||0);
-  if(header)chatPanel.style.setProperty('--v3-chat-header-clearance',`${Math.ceil(header)+12}px`);
-  if(footer)chatPanel.style.setProperty('--v3-chat-footer-clearance',`${Math.ceil(footer)+16}px`);
-};
-const chatClearanceObserver=new ResizeObserver(updateChatClearance);
-chatClearanceObserver.observe($('chat-header'));
-chatClearanceObserver.observe($('chat-input-area'));
-await loadMainPages();
-
-let csrf='',session='',source,epoch=0,state={},poll;
+let csrf='',state={},poll;
 const ids=new Map();
 const keyId=key=>{if(!ids.has(key))ids.set(key,crypto.randomUUID());return ids.get(key);};
 const note=text=>{$('notice').textContent=text;};
 async function api(path,method='GET',body){const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':csrf})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401)out();const error=Error(data.error||data.message||'Request failed ('+response.status+')');error.status=response.status;throw error;}return data;}
 const guard=fn=>async event=>{event?.preventDefault();try{await fn(event);note('');}catch(error){note(error.message);}};
-// Members reach their scoped Models page; installation-only ability editing stays separate.
+const chat = await mountChatPanel({request:api, guard, note, keyId, forgetKey:key=>ids.delete(key), refresh, getState:()=>state, getAgentId:()=>agentId});
+await loadMainPages();
+
+// Agent pages resolve tenant authority independently; members see effective read-only abilities.
 async function showAgentView(view){
   const pages=[{id:'config',panelId:'config-page'},...agentPages];
-  const selected=accountMe&&!accountMe.is_admin?'model':pages.some(page=>page.id===view)?view:'config';
+  const selected=accountMe&&!accountMe.is_admin&&!['model','abilities'].includes(view)?'model':pages.some(page=>page.id===view)?view:'config';
   for(const page of pages){
     $(page.panelId).hidden=page.id!==selected;
     const tab=$('agent-tab-'+page.id);
@@ -182,7 +164,7 @@ async function showAgentView(view){
   const route=new URL(location.href);
   route.searchParams.set('agentView',selected);
   history.replaceState({},'',route);
-  if(selected==='abilities'){if(agentId==='shared_default')await renderAbilities($('abilities-page'),api);else $('abilities-page').textContent='Per-agent ability editing is pending. This agent does not inherit default-agent abilities.';}
+  if(selected==='abilities')await renderAbilities($('abilities-page'),api,{agentId});
 }
 for(const page of [{id:'config'},...agentPages]){
   $('agent-tab-'+page.id).onclick=guard(()=>showAgentView(page.id));
@@ -210,25 +192,12 @@ function saveAgentTabs(){
 }
 syncAgentTabs();
 wirePageTabDrag(document.querySelector('#agents-grid .agent-card-tabs'), { getOrder: () => agentTabOrder, save: saveAgentTabs, prefix: 'agent-tab-' });
-function button(text,fn){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=guard(fn);return node;}
 async function loadGuestPolicy(){try{const policy=await api('/auth/access-mode');$('guest-login').hidden=!policy.guest_access;document.querySelector('.private-access-approval').hidden=!!policy.guest_access;}catch{$('guest-login').hidden=true;}}
 $('guest-login').onclick=async()=>{const btn=$('guest-login');btn.disabled=true;try{const result=await api('/auth/guest-login','POST',{});csrf=result.csrf_token;await boot();}catch(error){$('registration-status').textContent=error.message;}finally{btn.disabled=false;}};
-function out(){window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';source?.close();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
-function message(role,content){const row=document.createElement('article');row.className='v3-message '+role;const label=document.createElement('span');label.className='message-role';label.textContent=role==='user'?'You':role==='assistant'?'Agent':role;const body=document.createElement('div');body.className='message-content';body.textContent=typeof content==='string'?content:JSON.stringify(content);row.append(label,body);$('chat-messages-inner').append(row);return body;}
-function tail(){const box=$('chat-messages');box.scrollTop=box.scrollHeight;}
-async function sessions(){const data=await api('/sessions');$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=(item.title||'Conversation')+' — '+(item.agent_id||'shared_default');$('sessions').append(option);}$('sessions').value=session;return data.sessions;}
-async function open(id){const turn=++epoch;source?.close();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);const data=await api('/sessions/'+encodeURIComponent(id));if(turn!==epoch)return;sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content);tail();runs(data.runs||[]);let last=data.last_seq||0;source=new EventSource('/api/v3/sessions/'+encodeURIComponent(id)+'/events?after='+last);source.onmessage=event=>{if(turn!==epoch)return;try{const item=JSON.parse(event.data);if(item.seq<=last)return;last=item.seq;message(item.role,item.content);tail();}catch{note('Unable to read chat event. Reload to recover.');}};source.onerror=()=>note('Connection interrupted. Reconnecting…');source.onopen=()=>note('');}
-async function cancel(id){await api('/runs/'+id+'/cancel','POST',{client_request_id:keyId('cancel:'+id)});await refresh();}
-function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!state.shutoff;
-// CONTEXT-REPORT-UI: render only backend allowlisted counts as text, including
-// completed runs. Bytes are logical envelope measurements, not billed tokens.
-for(const run of relevant){if(run.context_summary){const summary=run.context_summary;const detail=document.createElement('details');detail.className='run-card';const heading=document.createElement('summary');heading.textContent='Context usage — measured bytes';const text=document.createElement('p');text.textContent='Envelope '+summary.envelope_bytes+' / '+summary.max_bytes+' bytes. History '+summary.history_json_bytes+'; instructions '+summary.instruction_json_bytes+'; tools '+summary.schemas_json_bytes+'. Not provider tokens. Turn '+summary.turn+', call '+summary.call+'.';detail.append(heading,text);$('runs').append(detail);}if(run.status==='completed')continue;const card=document.createElement('section');card.className='run-card';const title=document.createElement('strong');title.textContent=run.status+(run.error?' — '+run.error:'');card.append(title);
-if(run.pending && run.status==='waiting_approval'){const p=run.pending,pre=document.createElement('pre');pre.textContent=p.name+'\n'+JSON.stringify(p.arguments,null,2);card.append(pre);for(const decision of ['approve','deny'])card.append(button(decision==='approve'?'Approve action':'Deny action',async()=>{await api('/approvals/'+p.id+'/decision','POST',{decision,client_request_id:keyId('approval:'+p.id+':'+decision)});await refresh();}));}
-if(run.uncertain || run.status==='recovery'){const text=document.createElement('p');text.textContent='The previous action may have completed. Verify its outcome before retrying.';const output=document.createElement('textarea');output.placeholder='Known result to accept';output.setAttribute('aria-label','Known action result');card.append(text,output);for(const decision of ['accept','retry','abandon'])card.append(button({accept:'Accept known result',retry:'Authorize retry',abandon:'Abandon run'}[decision],async()=>{await api('/runs/'+run.id+'/recovery','POST',{decision,output:output.value,client_request_id:keyId('recovery:'+run.id+':'+decision+':'+output.value)});await refresh();}));}
-if(!run.uncertain && ['paused','stopped','failed'].includes(run.status))card.append(button('Resume run',async()=>{await api('/runs/'+run.id+'/resume','POST',{client_request_id:crypto.randomUUID()});await refresh();}));if(active?.id===run.id)card.append(button('Cancel run',()=>cancel(run.id)));$('runs').append(card);}}
-async function refresh(){if(accountMe&&!accountMe.is_admin){state=await api('/user/status');$('shutoff').hidden=true;runs(state.runs||[]);return;}state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}runs(state.runs||[]);}
+function out(){window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';chat.disconnect();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
+async function refresh(){if(accountMe&&!accountMe.is_admin){state=await api('/user/status');$('shutoff').hidden=true;chat.runs(state.runs||[]);return;}state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}chat.runs(state.runs||[]);}
 // Explicit role administration replaces the legacy default-model form for every agent.
-async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);window.dispatchEvent(new Event('v3-identity-changed'));privateVisible(false);$('app').hidden=false;await refresh();selectionTable?.destroy();$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;try{selectionTable=await mountSelectionTable($('selection-model-table'),{request:api,agentId,onAgent:async id=>{agentId=id;const route=new URL(location.href);route.searchParams.set('agent',id);history.replaceState({},'',route);await showAgentView(route.searchParams.get('agentView')||'model');},onAssignment:async(id,assignment)=>{explicitAssignment=!!assignment?.roles?.standard;$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;}});}catch(error){if(error.status===401)throw error;selectionTable=null;const warning=document.createElement('p');warning.className='ac-hint';warning.setAttribute('role','status');warning.textContent=error.status===404?'Model role management requires a backend update.':'Model assignment management unavailable: '+error.message;$('selection-model-table').replaceChildren(warning);if(agentId!=='shared_default')throw Error('This agent requires model-management support; update the backend before chatting.');}await showAgentView(new URL(location.href).searchParams.get('agentView')||(me.is_admin?'config':'model'));const items=await sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await open(route||items[0].id);if(initialTab==='account')showAccountPanel();window.__boot?.appReady();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
+async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);window.dispatchEvent(new Event('v3-identity-changed'));privateVisible(false);$('app').hidden=false;await refresh();selectionTable?.destroy();$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;try{selectionTable=await mountSelectionTable($('selection-model-table'),{request:api,agentId,onAgent:async id=>{agentId=id;const route=new URL(location.href);route.searchParams.set('agent',id);history.replaceState({},'',route);await showAgentView(route.searchParams.get('agentView')||'model');},onAssignment:async(id,assignment)=>{explicitAssignment=!!assignment?.roles?.standard;$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;}});}catch(error){if(error.status===401)throw error;selectionTable=null;const warning=document.createElement('p');warning.className='ac-hint';warning.setAttribute('role','status');warning.textContent=error.status===404?'Model role management requires a backend update.':'Model assignment management unavailable: '+error.message;$('selection-model-table').replaceChildren(warning);if(agentId!=='shared_default')throw Error('This agent requires model-management support; update the backend before chatting.');}await showAgentView(new URL(location.href).searchParams.get('agentView')||(me.is_admin?'config':'model'));const items=await chat.sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await chat.open(route||items[0].id);if(initialTab==='account')showAccountPanel();window.__boot?.appReady();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
 // Registration mirrors V2's mode switch; V3 retains independent cookie authentication.
 let registerMode=false;
 $('register-toggle').onclick=()=>{
@@ -463,11 +432,6 @@ function setupHeaderPullRefresh(){
 setupHeaderPullRefresh();
 $('logout').onclick=guard(async()=>{await api('/auth/logout','POST',{});out();});
 $('theme').onclick=()=>{document.body.classList.toggle('light-mode');localStorage.setItem('v3-theme',document.body.classList.contains('light-mode')?'light':'dark');};document.body.classList.toggle('light-mode',localStorage.getItem('v3-theme')==='light');
-$('sessions').onchange=guard(()=>open($('sessions').value));
-$('new').onclick=guard(async()=>{const item=await api('/sessions','POST',{title:'New conversation',agent_id:agentId,client_request_id:crypto.randomUUID()});await sessions();await open(item.id);});
-$('composer').onsubmit=guard(async()=>{const text=$('chat-input').value.trim();if(!text)return;if(!session){const item=await api('/sessions','POST',{title:text.slice(0,60),agent_id:agentId,client_request_id:keyId('session:'+text)});await sessions();await open(item.id);}await api('/sessions/'+session+'/messages','POST',{text,client_message_id:keyId('message:'+session+':'+text)});ids.delete('message:'+session+':'+text);$('chat-input').value='';applyChatConfig();await refresh();});
-$('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('chat-send').disabled)$('composer').requestSubmit();}};
-$('chat-stop-btn').onclick=guard(()=>cancel($('chat-stop-btn').dataset.run));
 $('shutoff').onclick=guard(async()=>{await api('/control','PUT',{shutoff:!state.shutoff,client_request_id:crypto.randomUUID()});await refresh();});
 $('connect').onclick=guard(async()=>{await api('/provider/login','POST',{});await refresh();$('device').scrollIntoView({block:'nearest'});});
 $('disconnect').onclick=guard(async()=>{await api('/provider/logout','POST',{});await refresh();});

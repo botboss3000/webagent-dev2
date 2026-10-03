@@ -3,9 +3,9 @@
   "kind": "ability",
   "icon": "terminal",
   "color": "#f7768e",
-  "description": "Lets the agent open and drive interactive terminal programs (REPLs, CLIs) — effectively shell access, so grant per agent with care.",
-  "skill_summary": "How to drive interactive, keystroke-driven terminal programs (coding agents, REPLs, SSH, TUI installers) with the open→read→send→wait→read loop. Load when you must operate a program that takes over the terminal; for one-shot non-interactive commands use run_command instead.",
-  "migration_note": "Catalog metadata only. V3 adapter, configuration and credential lifecycle remain pending; v2 runtime and skills are not imported.",
+  "description": "Lets the agent open and drive interactive terminal programs (REPLs, CLIs) \u2014 effectively shell access, so grant per agent with care.",
+  "skill_summary": "Drive a session-scoped PTY with open, read, send, wait and close. Read before every send; use Codebase Admin shell for one-shot commands.",
+  "migration_note": "Compiled V3 adapter, scoped policy and configuration passed focused tests and authenticated V3 API acceptance. Execution still requires applicable installation, account-tier, agent, membership and session grants.",
   "order": 4,
   "placeholder": false,
   "tools": [
@@ -16,7 +16,7 @@
     "terminal_list",
     "terminal_close"
   ],
-  "readiness": "pending",
+  "readiness": "ready",
   "config": {
     "bias": {
       "key": "terminal_caution",

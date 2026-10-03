@@ -1,7 +1,5 @@
-Resolves a **direct deep link** with current-user ownership verification, without
-driving the browser first. Pass a relative `path` (default `/app`) and, for a
-chat, the `chat_session_id`; it returns the exact route (for example,
-`/app?session=…`) and confirms the session belongs to this user.
+# Resolve the development route
 
-Prefer this over clicking through the application to reach a test target, then
-open the resolved route with `dev_browser_action(action="open", path="…")`.
+Use the native V3 route helper to obtain the fixed development origin and an allowed current-agent/current-session route. Follow registered V3 routes. A returned URL does not create a browser or grant access.
+
+External origins, another tenant's agent and another conversation are unavailable. The server determines the caller and target scope.

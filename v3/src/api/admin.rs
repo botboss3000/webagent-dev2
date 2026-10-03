@@ -278,6 +278,7 @@ pub(crate) async fn policy_set(State(app): State<App>, Json(body): Json<Value>) 
     app.store
         .event("", "policy_changed", &json!({"version":value["version"]}))
         .await?;
+    for user_id in app.store.all_user_ids().await? {phase3_api::quiesce_user(&app,&user_id,None).await?;}
     Ok(Json(value))
 }
 // Tenant connections are the sole credential authority after the catalog migration.

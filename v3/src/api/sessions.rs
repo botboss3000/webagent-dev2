@@ -1,14 +1,24 @@
 //! HTTP handlers for sessions operations.
 use super::*;
-pub(crate) async fn sessions(State(app): State<App>) -> Api {
-    let list = app
-        .store
-        .list("session:")
-        .await?
-        .into_iter()
-        .map(|v| json!({"id":v["id"],"agent_id":v["agent_id"].as_str().unwrap_or("shared_default"),"title":v["title"]}))
-        .collect::<Vec<_>>();
-    Ok(Json(json!({"sessions":list})))
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SessionListArgs { pub status: Option<String> }
+pub(crate) async fn sessions(State(app): State<App>, Query(args): Query<SessionListArgs>) -> Api {
+    let recycled = match args.status.as_deref().unwrap_or("active") {
+        "active" => false, "recycled" => true, _ => return Err(bad("Invalid session status")),
+    };
+    let list = app.store.ordered_sessions_status(recycled).await?;
+    Ok(Json(json!({"sessions":list,"server_time":now()})))
+}
+pub(crate) async fn patch_session_api(State(app): State<App>, Path(id): Path<String>,
+    Json(body): Json<crate::store::session::SessionPatch>) -> Api {
+    use crate::store::session::SessionPatchOutcome;
+    match app.store.patch_session(&id, &body).await? {
+        SessionPatchOutcome::Saved(value) => Ok(Json(value)),
+        SessionPatchOutcome::NotFound => Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into())),
+        SessionPatchOutcome::Conflict(message) => Err(conflict(message)),
+        SessionPatchOutcome::Invalid(message) => Err(bad(message)),
+    }
 }
 pub(crate) async fn create_session(State(app): State<App>, Json(body): Json<Value>) -> Api {
     let request_id = required(&body, "client_request_id", 128)?;
@@ -55,7 +65,7 @@ pub(crate) async fn create_session(State(app): State<App>, Json(body): Json<Valu
 }
 pub(crate) async fn snapshot(State(app): State<App>, Path(id): Path<String>) -> Api {
     let _guard = app.gate.lock().await;
-    let session = app
+    let _session = app
         .store
         .get(&key("session", &id))
         .await?
@@ -69,7 +79,7 @@ pub(crate) async fn snapshot(State(app): State<App>, Path(id): Path<String>) -> 
         .map(public_run)
         .collect::<Vec<_>>();
     Ok(Json(
-        json!({"session":{"id":session["id"],"title":session["title"],"agent_id":session["agent_id"].as_str().unwrap_or("shared_default")},
+        json!({"session":app.store.session_read_summary(&id).await?,
         "messages":messages,"runs":runs,"last_seq":last_seq}),
     ))
 }
@@ -218,6 +228,11 @@ pub(crate) fn prompt_slot_error(error: anyhow::Error) -> ApiError {
     }
 }
 pub(crate) async fn execute_prompt_slot(app: &App, name: &str, args: &Value) -> Result<Value> {
+    // A tool grant controls use; editing agent configuration also requires tenant authority.
+    if name=="prompt_slot_write" && !app.store.agent_authority(app.store.current_user_id(),app.store.current_agent_id()).await?
+        ["can_manage"].as_bool().unwrap_or(false) {
+        return Ok(json!({"status":"denied","output":"Agent administration required to edit prompts"}));
+    }
     if name == "prompt_slot_read" {
         let Ok(query) = serde_json::from_value::<PromptReadArgs>(args.clone()) else {
             return Ok(json!({"status":"denied","output":"Invalid prompt slot read arguments"}));
@@ -425,6 +440,7 @@ pub(crate) async fn session_ability_set(
         }
     };
     if unchanged {
+        if desired=="suppressed" {phase3_api::quiesce_session_resources(&app,&id).await?;}
         return Ok(Json(state));
     }
     state["active"]
@@ -457,6 +473,7 @@ pub(crate) async fn session_ability_set(
     app.store
         .atomic_docs_event(docs, &id, "session_abilities_changed", &state)
         .await?;
+    phase3_api::quiesce_session_resources(&app,&id).await?;
     Ok(Json(state))
 }
 #[derive(Deserialize)]
@@ -484,6 +501,7 @@ pub(crate) async fn session_mode_set(
     }
     let current = session_mode(&app, &id).await?;
     if current["mode"] == body.mode {
+        if body.mode=="read_only" {phase3_api::quiesce_session_resources(&app,&id).await?;}
         return Ok(Json(current));
     }
     let next = json!({"mode":body.mode,"revision":current["revision"].as_u64().unwrap()+1});
@@ -502,6 +520,7 @@ pub(crate) async fn session_mode_set(
     app.store
         .atomic_docs_event(docs, &id, "session_mode_changed", &next)
         .await?;
+    phase3_api::quiesce_session_resources(&app,&id).await?;
     Ok(Json(next))
 }
 pub(crate) async fn session_abilities(State(app): State<App>, Path(id): Path<String>) -> Api {
@@ -551,4 +570,33 @@ pub(crate) async fn source_review(State(app): State<App>, Path(id): Path<String>
     )
     .await?;
     Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SessionReadBody { pub through_seq: u64 }
+pub(crate) async fn session_read_api(State(app): State<App>, Path(id): Path<String>, Json(body): Json<SessionReadBody>) -> Api {
+    use crate::store::session::SessionPatchOutcome;
+    match app.store.acknowledge_session_read(&id, body.through_seq).await? {
+        SessionPatchOutcome::Saved(value) => Ok(Json(value)),
+        SessionPatchOutcome::NotFound => Err(ApiError(StatusCode::NOT_FOUND,"Session not found".into())),
+        SessionPatchOutcome::Invalid(message) => Err(bad(message)),
+        SessionPatchOutcome::Conflict(message) => Err(conflict(message)),
+    }
+}
+
+pub(crate) async fn recycle_session_api(State(app): State<App>, Path(id): Path<String>, Json(body): Json<crate::store::session::SessionLifecycle>) -> Api {
+    lifecycle_session_api(app,id,body,false).await
+}
+pub(crate) async fn restore_session_api(State(app): State<App>, Path(id): Path<String>, Json(body): Json<crate::store::session::SessionLifecycle>) -> Api {
+    lifecycle_session_api(app,id,body,true).await
+}
+async fn lifecycle_session_api(app: App, id: String, body: crate::store::session::SessionLifecycle, restore: bool) -> Api {
+    use crate::store::session::SessionPatchOutcome;
+    match app.store.lifecycle_session(&id,&body,restore).await? {
+        SessionPatchOutcome::Saved(value) => Ok(Json(value)),
+        SessionPatchOutcome::NotFound => Err(ApiError(StatusCode::NOT_FOUND,"Session not found".into())),
+        SessionPatchOutcome::Conflict(message) => Err(conflict(message)),
+        SessionPatchOutcome::Invalid(message) => Err(bad(message)),
+    }
 }

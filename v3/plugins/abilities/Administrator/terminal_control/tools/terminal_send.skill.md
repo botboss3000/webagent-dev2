@@ -1,11 +1,3 @@
-# Terminal Send
+# terminal_send
 
-Use `terminal_send` only when it is the exact action the request calls for. This belongs to the Terminal Control ability.
-
-Follow the tool schema that arrives with this file. Supply every required field,
-inspect the returned result before taking a dependent action, and surface any
-reported warning, limitation, or refusal accurately rather than retrying the
-same failed request unchanged.
-
-For ability-wide selection rules, safety boundaries, and cross-tool workflows,
-follow `terminal_control.skill.md` alongside this tool skill.
+Provide `terminal_id`, `expected_sequence` from a fresh read or wait, and exactly one of `text` or `keys`. Text is at most 8192 UTF-8 bytes. Keys is a list of 1–32 names: enter, esc, tab, backspace, up, down, left, right, ctrl+c, ctrl+d, ctrl+z. Sending invalidates the observation even if output has not arrived. Read again before another send. Stale, closed, or uncertain input must not be retried blindly. Requires execution permission and any required approval.

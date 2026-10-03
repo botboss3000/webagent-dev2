@@ -46,24 +46,36 @@ pub struct Tier {
     pub revision: u64,
     pub allowed_models: Vec<String>,
     pub tools: BTreeMap<String, Permission>,
+    // Missing legacy grants preserve only the two already executable adapters.
+    // Newly registered ability IDs remain denied until explicitly appointed.
+    #[serde(default = "legacy_ability_grants")]
+    pub ability_permissions: BTreeMap<String, Permission>,
     pub max_sessions: u32,
     pub max_active_runs: u32,
+}
+pub fn legacy_ability_grants() -> BTreeMap<String, Permission> {
+    [("codebase_admin".into(),Permission::Auto),("web_access".into(),Permission::Auto)].into()
 }
 impl Tier {
     pub fn validate(&self) -> Result<()> {
         if !valid_id(&self.id) || self.revision == 0
-            || self.allowed_models.len() > 64 || self.tools.len() > 128
+            || self.allowed_models.len() > 64 || self.tools.len() > 128 || self.ability_permissions.len() > 128
             || self.max_sessions > 10_000 || self.max_active_runs > 200 {
             bail!("Invalid entitlement tier");
         }
         if self.allowed_models.iter().any(|model| model != "*" && !valid_model(model))
-            || self.tools.keys().any(|tool| tool != "*" && !valid_id(tool)) {
+            || self.tools.keys().any(|tool| tool != "*" && !valid_id(tool))
+            || self.ability_permissions.keys().any(|id| id != "*" && !valid_id(id)) {
             bail!("Invalid entitlement grant");
         }
         Ok(())
     }
     pub fn allows_model(&self, model: &str) -> bool {
         self.allowed_models.iter().any(|item| item == "*" || item == model)
+    }
+    pub fn ability_permission(&self, id: &str) -> Permission {
+        self.ability_permissions.get(id).or_else(||self.ability_permissions.get("*"))
+            .copied().unwrap_or(Permission::Deny)
     }
     pub fn tool_permission(&self, name: &str) -> Permission {
         self.tools.get(name).or_else(|| self.tools.get("*"))
@@ -144,7 +156,7 @@ pub struct ToolFactors {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason { Allowed, ApprovalRequired, PolicyDenied, TierDenied, AgentDenied, AbilityDenied,
-    AccountInactive, CallerDenied, AgentDisabled, Unavailable, Hidden, ReadOnly }
+    AccountInactive, CallerDenied, AgentDisabled, CapabilityDenied, Unavailable, Hidden, ReadOnly }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct ToolDecision { pub permission: Permission, pub reason: Reason }
 impl ToolFactors {
@@ -217,7 +229,7 @@ mod tests {
     #[test]
     fn tier_is_explicit_and_bounded() {
         let mut tier = Tier {id:"basic".into(),revision:1,
-            allowed_models:vec!["gpt-6-luna".into()],tools:BTreeMap::new(),
+            allowed_models:vec!["gpt-6-luna".into()],tools:BTreeMap::new(),ability_permissions:legacy_ability_grants(),
             max_sessions:10,max_active_runs:2};
         tier.validate().unwrap();
         assert!(!tier.allows_model("other"));

@@ -102,7 +102,7 @@ fn checkpoint_pre_tool(name: &str) -> workflow::Input {
 #[tokio::test]
 async fn chat_ui_config_reads_data_config_on_each_request_and_requires_auth() {
     let (root, mut app) = fixture().await;
-    app.chat_ui_config_path = root.path().join("config/chat_ui.json");
+    app.chat_ui_config_path = root.path().join("config/chat.json");
     std::fs::create_dir_all(app.chat_ui_config_path.parent().unwrap()).unwrap();
     std::fs::write(
         &app.chat_ui_config_path,
@@ -1078,6 +1078,53 @@ async fn recovery_holds_uncertain_writes_and_requeues_safe_reads() {
 }
 
 #[tokio::test]
+async fn startup_resume_setting_stops_safe_runs_but_preserves_uncertain_writes() {
+    let (_root, app) = fixture().await;
+    crate::services::save_boot_orphan_resume(&app.store, "admin", false, 0).await.unwrap();
+    let sid = conversation(&app).await;
+    let read_id = queued(&app, &sid).await;
+    running(&app, &read_id, "read-generation").await;
+    let mut read = app.run(&read_id).await.unwrap();
+    read["pending"] = json!({"name":"file_read","state":"executing"});
+    app.save(&mut read).await.unwrap();
+    let sid2 = conversation(&app).await;
+    let write_id = queued(&app, &sid2).await;
+    running(&app, &write_id, "write-generation").await;
+    let mut write = app.run(&write_id).await.unwrap();
+    write["pending"] = json!({"name":"file_write","state":"executing"});
+    app.save(&mut write).await.unwrap();
+    recover(&app, true).await.unwrap();
+    let stopped = app.run(&read_id).await.unwrap();
+    assert_eq!(stopped["status"], "stopped");
+    assert_eq!(stopped["pending"]["state"], "requested");
+    assert!(stopped["error"].as_str().unwrap().contains("disabled"));
+    let uncertain = app.run(&write_id).await.unwrap();
+    assert_eq!(uncertain["status"], "recovery");
+    assert_eq!(uncertain["uncertain"], true);
+    assert_eq!(uncertain["pending"]["state"], "executing");
+    // Non-startup recovery must still repair expired read leases.
+    let sid3 = conversation(&app).await;
+    let lease_id = queued(&app, &sid3).await;
+    running(&app, &lease_id, "lease-generation").await;
+    recover(&app, false).await.unwrap();
+    assert_eq!(app.run(&lease_id).await.unwrap()["status"], "queued");
+    // Corrupt optional configuration must not suppress mandatory classification.
+    sqlx::query("UPDATE docs SET value=? WHERE key='service:boot_orphan_resume'")
+        .bind(app.store.seal(&json!({"enabled":"invalid","revision":2})).unwrap())
+        .execute(&app.store.app_pool).await.unwrap();
+    for (name, expected) in [("file_read", "stopped"), ("file_write", "recovery")] {
+        let sid = conversation(&app).await;
+        let id = queued(&app, &sid).await;
+        running(&app, &id, "corrupt-config-generation").await;
+        let mut run = app.run(&id).await.unwrap();
+        run["pending"] = json!({"name":name,"state":"executing"});
+        app.save(&mut run).await.unwrap();
+        recover(&app, true).await.unwrap();
+        assert_eq!(app.run(&id).await.unwrap()["status"], expected);
+    }
+}
+
+#[tokio::test]
 async fn shutoff_survives_storage_reopen_and_clear_requires_explicit_resume() {
     let (root, app) = fixture().await;
     let sid = conversation(&app).await;
@@ -1198,20 +1245,28 @@ async fn agent_loop_creates_reviewable_proposal_without_dispatching_broker() {
     let worker_listener = UnixListener::bind(&app.tool_socket).unwrap();
     let worker_digest = expected.clone();
     let worker = tokio::spawn(async move {
-        let (stream, _) = worker_listener.accept().await.unwrap();
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let call: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(call["name"], "source_review");
-        let reply = json!({"id":call["id"],"status":"success","truncated":false,
-            "baseline_commit":baseline,"review_sha256":worker_digest,
-            "status_output":" M src/main.rs","diff":"patch"});
-        reader
-            .get_mut()
-            .write_all(format!("{reply}\n").as_bytes())
-            .await
-            .unwrap();
+        for _ in 0..4 {
+            let (stream, _) = worker_listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let call: Value = serde_json::from_str(&line).unwrap();
+            if call["name"] == "administrator_quiesce" {
+                assert_eq!(call["arguments"], json!({}));
+                let reply = json!({"id":call["id"],"status":"success"});
+                reader.get_mut().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                continue;
+            }
+            // Only the review may reach this fixture worker. Promotion remains
+            // a native proposal; no broker mutation is dispatched.
+            assert_eq!(call["name"], "source_review");
+            let reply = json!({"id":call["id"],"status":"success","truncated":false,
+                "baseline_commit":baseline,"review_sha256":worker_digest,
+                "status_output":" M src/main.rs","diff":"patch"});
+            reader.get_mut().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            return;
+        }
+        panic!("source review missing after bounded shutdown acknowledgements");
     });
     let sid = conversation(&app).await;
     activate_codebase(&app, &sid).await;
@@ -1581,6 +1636,8 @@ async fn long_run_compacts_before_model_and_keeps_full_message_history() {
 async fn failed_context_summary_keeps_original_input_for_resume() {
     use axum::routing::post;
     let (root, mut app) = fixture().await;
+    // Test invalid summaries, independently of Luna's smaller context budget.
+    fixture_model(&app,"fixture").await;
     let config_path = app.compaction_config_path.clone();
     let mut config = context_compaction::Config::read(&config_path).unwrap();
     config.tail_tokens = 20000;
@@ -3007,6 +3064,52 @@ async fn ability_auth(app: &App) -> String {
 }
 
 #[tokio::test]
+async fn session_metadata_routes_enforce_auth_csrf_ownership_and_retries() {
+    use axum::http::Method;
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let uri = format!("/api/v3/sessions/{sid}");
+    let cookie = ability_auth(&app).await;
+    let body = json!({"client_request_id":"rename-pin","expected_revision":0,
+        "title":"  Renamed session  ","pinned":true});
+    assert_eq!(ability_request(&app,Method::PATCH,&uri,Some(body.clone()),None,None).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(ability_request(&app,Method::PATCH,&uri,Some(body.clone()),Some(&cookie),None).await.0,StatusCode::FORBIDDEN);
+    let (status,result) = ability_request(&app,Method::PATCH,&uri,Some(body.clone()),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(result["session"]["title"],"Renamed session");
+    assert_eq!(result["session"]["pinned"],true);
+    assert_eq!(result["session"]["metadata_revision"],1);
+    let (_,retry) = ability_request(&app,Method::PATCH,&uri,Some(body.clone()),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(retry,result);
+    let mut changed = body.clone(); changed["title"] = json!("Different input");
+    assert_eq!(ability_request(&app,Method::PATCH,&uri,Some(changed),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::CONFLICT);
+    assert_eq!(ability_request(&app,Method::PATCH,&uri,Some(json!({"client_request_id":"stale","expected_revision":0,"pinned":false})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::CONFLICT);
+    assert_eq!(ability_request(&app,Method::PATCH,&uri,Some(json!({"client_request_id":"empty","expected_revision":1,"title":"  "})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::BAD_REQUEST);
+    let invalid = Request::builder().method(Method::PATCH).uri(&uri)
+        .header("cookie",&cookie).header("x-csrf-token","ability-fixture")
+        .header("content-type","application/json")
+        .body(Body::from(json!({"client_request_id":"invalid","expected_revision":1,"pinned":"yes"}).to_string())).unwrap();
+    assert_eq!(router(app.clone()).oneshot(invalid).await.unwrap().status(),StatusCode::UNPROCESSABLE_ENTITY);
+    let (status,snapshot) = ability_request(&app,Method::GET,&uri,None,Some(&cookie),None).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(snapshot["session"],result["session"]);
+    let (status,list) = ability_request(&app,Method::GET,"/api/v3/sessions",None,Some(&cookie),None).await;
+    assert_eq!(status,StatusCode::OK);
+    assert!(list["server_time"].as_i64().is_some());
+    assert_eq!(list["sessions"][0],result["session"]);
+    assert!(list["sessions"][0].get("checkpoint_input").is_none());
+    // A session in another user's database is indistinguishable from missing.
+    sqlx::query("INSERT INTO user_accounts(user_id,username,value) VALUES('other','other',?)")
+        .bind(app.store.seal(&json!({"user_id":"other","username":"other"})).unwrap())
+        .execute(&app.store.app_pool).await.unwrap();
+    let other = app.store.for_user("other").await.unwrap();
+    other.put("session:foreign",&json!({"id":"foreign","agent_id":"shared_default"})).await.unwrap();
+    assert_eq!(ability_request(&app,Method::PATCH,"/api/v3/sessions/foreign",Some(body.clone()),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+    app.store.put("session:no-access",&json!({"id":"no-access","agent_id":"missing-agent"})).await.unwrap();
+    assert_eq!(ability_request(&app,Method::PATCH,"/api/v3/sessions/no-access",Some(body),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn ability_management_routes_enforce_auth_revisions_and_session_boundaries() {
     use axum::http::Method;
     let (_root, app) = fixture().await;
@@ -3892,6 +3995,10 @@ async fn diagnostics_route_is_authenticated_session_bound_and_redacted() {
     let sentinel = "secret tool arguments 8319";
     let mut run = app.run(&id).await.unwrap();
     run["pending"] = json!({"arguments":{"content":sentinel}});
+    run["context_assembly_report"] = json!({"version":1,"scope":"logical_call_envelope",
+        "envelope_bytes":8192,"max_bytes":262144,"history_json_bytes":1024,
+        "instruction_json_bytes":4096,"schemas_json_bytes":2048,"turn":0,"call":0,
+        "private_overlay":sentinel});
     workflow::record(&mut run, &workflow::Policy::resolve(None).unwrap(),
         &checkpoint_pre_tool("file_write"),
         workflow::Decision::Reject { reason:sentinel.into() }).unwrap();
@@ -3921,7 +4028,10 @@ async fn diagnostics_route_is_authenticated_session_bound_and_redacted() {
     assert_eq!(denied["decision"], "reject");
     assert_eq!(denied["reason_code"], "rejected");
     assert_eq!(denied.as_object().unwrap().len(), 6);
-    assert_eq!(body.as_object().unwrap().len(), 5);
+    assert_eq!(body["context_summary"]["envelope_bytes"], 8192);
+    assert_eq!(body["context_summary"]["accounting"], "serialized_json_bytes_not_provider_tokens");
+    assert_eq!(body["context_summary"].as_object().unwrap().len(), 8);
+    assert_eq!(body.as_object().unwrap().len(), 6);
 }
 
 #[tokio::test]
@@ -4414,10 +4524,10 @@ async fn model_catalog_api_uses_profile_admin_role_and_enforces_csrf_and_retries
         let body: Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),65536).await.unwrap()).unwrap();
         if created.is_null() {
             created=body.clone();
-            let generation=app.store.account_by_id("admin").await.unwrap().unwrap()["generation"].clone();
-            app.store.put(&format!("auth:{}",digest(&json!(token))),
-                &json!({"csrf":"catalog-csrf","expires":now()+3600,
-                    "generation":generation,"user_id":"admin"})).await.unwrap();
+            // Creating initial ownership must preserve the creator's authenticated session.
+            let path=format!("/api/v3/models/catalog?agent_id={}",body["id"].as_str().unwrap());
+            let response=router(app.clone()).oneshot(request("GET",&path,true,false,Value::Null)).await.unwrap();
+            assert_eq!(response.status(),StatusCode::OK);
         }
         assert_eq!(body,created);
     }
@@ -4637,7 +4747,7 @@ async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
     let response=router(app.clone()).oneshot(request(&admin_token,"admin-csrf","PUT",
         "/api/v3/admin/access/tiers/basic",
         json!({"expected_revision":1,"tier":{"id":"basic","revision":1,
-            "allowed_models":[granted_model],"tools":{"file_read":"auto","file_write":"ask"},
+            "allowed_models":[granted_model],"tools":{"file_read":"auto","file_write":"ask","v3_build_status":"auto"},
             "max_sessions":10,"max_active_runs":2}}))).await.unwrap();
     assert_eq!(response.status(),StatusCode::OK);
     let access=app.store.live_access(&user_id,"shared_default").await.unwrap();
@@ -4647,6 +4757,9 @@ async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
         access::Permission::Auto,true,true,false,false).permission,access::Permission::Ask);
     assert_eq!(access.tool_decision_for_abilities("shell",&["codebase_admin".into()],
         access::Permission::Auto,true,true,false,false).permission,access::Permission::Deny);
+    let host=access.tool_decision("v3_build_status",access::Permission::Auto,true,true,false,true);
+    assert_eq!(host.permission,access::Permission::Deny);
+    assert_eq!(host.reason,access::Reason::CallerDenied);
     let user_generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
     app.store.put(&format!("auth:{}",digest(&json!(user_token))),
         &json!({"user_id":user_id,"generation":user_generation,
@@ -4974,4 +5087,322 @@ async fn web_access_native_dispatch_needs_no_worker_and_cancels() {
     let cancel=CancellationToken::new();cancel.cancel();
     assert!(tools::call(app,sid,uuid(),"maps_geocode".into(),args,uuid(),1,cancel).await.is_err());
     for name in ["web_search","get_weather","maps_geocode"] {assert!(tools::is_read(name));}
+}
+
+#[tokio::test]
+async fn tenant_ability_http_levels_effective_views_and_stale_updates() {
+    let (_root,app)=fixture().await;selection_fixture(&app).await;
+    let account=app.store.create_user_account("ability_member","fixture-only-password-hash").await.unwrap();
+    let user=account["user_id"].as_str().unwrap().to_owned();
+    app.store.update_account_access(&user,1,access::AccountStatus::Active,access::Role::User,"operator").await.unwrap();
+    app.store.set_agent_membership(&user,"agent-a",access::Relationship::Member,0).await.unwrap();
+    app.store.set_agent_membership(&user,"shared_default",access::Relationship::Member,0).await.unwrap();
+    let token=uuid();let member_token=uuid();
+    for (user,token,csrf) in [("admin",token.as_str(),"a"),(user.as_str(),member_token.as_str(),"m")] {
+        let generation=app.store.account_by_id(user).await.unwrap().unwrap()["generation"].clone();
+        app.store.put(&format!("auth:{}",digest(&json!(token))),&json!({"user_id":user,"generation":generation,"csrf":csrf,"expires":now()+3600})).await.unwrap();
+    }
+    async fn call(app:&App,token:&str,csrf:&str,method:&str,path:&str,body:Value)->(StatusCode,Value) {
+        let req=Request::builder().method(method).uri(path).header("content-type","application/json")
+            .header("cookie",format!("v3_session={token}")).header("x-csrf-token",csrf).body(Body::from(body.to_string())).unwrap();
+        let response=router(app.clone()).oneshot(req).await.unwrap();let status=response.status();
+        let bytes=axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
+        (status,serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+    let path="/api/v3/agents/agent-a/abilities";
+    let (status,view)=call(&app,&token,"a","GET",path,Value::Null).await;
+    assert_eq!(status,StatusCode::OK);assert_eq!(view["authority"]["can_manage"],true);
+    let (_,member_view)=call(&app,&member_token,"m","GET",path,Value::Null).await;
+    assert_eq!(member_view["authority"]["can_manage"],false);
+    assert_eq!(member_view["permissions"],json!({}));assert_eq!(member_view["tool_modes"],json!({}));
+    assert!(!member_view["abilities"].as_array().unwrap().iter().any(|a|a["readiness"]!="ready"));
+    let level=json!({"id":"limited","name":"Limited","revision":1,"ability_permissions":{"web_access":"auto"},"tool_permissions":{}});
+    let update=json!({"expected_revision":0,"level":level});
+    let level_path="/api/v3/agents/agent-a/capability-levels/limited";
+    assert_eq!(call(&app,&member_token,"m","PUT",level_path,update.clone()).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(call(&app,&token,"wrong","PUT",level_path,update.clone()).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(call(&app,&token,"a","PUT",level_path,update.clone()).await.0,StatusCode::OK);
+    assert_eq!(call(&app,&token,"a","PUT",level_path,update).await.0,StatusCode::CONFLICT);
+    let assign=format!("/api/v3/agents/agent-a/members/{user}/capability-level");
+    assert_eq!(call(&app,&token,"a","PUT",&assign,json!({"expected_revision":1,"capability_level_id":"limited"})).await.0,StatusCode::OK);
+    assert_eq!(call(&app,&member_token,"m","GET",path,Value::Null).await.0,StatusCode::UNAUTHORIZED);
+    let (_,preview)=call(&app,&token,"a","GET",&format!("{path}/effective?user_id={user}"),Value::Null).await;
+    let codebase=preview["abilities"].as_array().unwrap().iter().find(|a|a["id"]=="codebase_admin").unwrap();
+    assert_eq!(codebase["effective"]["permission"],"deny");assert_eq!(codebase["effective"]["reason"],"capability_denied");
+    assert_eq!(app.store.live_access(&user,"shared_default").await.unwrap().ability_permission("codebase_admin"),access::Permission::Auto);
+    assert_eq!(app.store.live_access("admin","agent-a").await.unwrap().ability_permission("codebase_admin"),access::Permission::Auto);
+    let visibility_path=format!("{path}/codebase_admin/visibility");
+    assert_eq!(call(&app,&token,"a","PUT",&visibility_path,json!({"expected_revision":0,"visibility":"off"})).await.0,StatusCode::OK);
+    let (_,view)=call(&app,&token,"a","GET",path,Value::Null).await;
+    let codebase=view["abilities"].as_array().unwrap().iter().find(|a|a["id"]=="codebase_admin").unwrap();
+    assert_eq!(codebase["available"],false);assert_eq!(codebase["effective"]["permission"],"deny");
+}
+
+#[tokio::test]
+async fn ability_revocation_keeps_parallel_write_outcomes_uncertain() {
+    let (_root,app)=fixture().await;let sid=conversation(&app).await;let id=queued(&app,&sid).await;
+    running(&app,&id,"in-flight").await;
+    let mut run=app.run(&id).await.unwrap();
+    run["batch"]=json!([{"state":"executing","pending":{"name":"file_write","call_id":"write"}},
+        {"state":"executing","pending":{"name":"file_read","call_id":"read"}}]);
+    app.save(&mut run).await.unwrap();let _guard=app.gate.lock().await;
+    phase3_api::quiesce_agent(&app,"shared_default").await.unwrap();let after=app.run(&id).await.unwrap();
+    assert_eq!(after["status"],"recovery");assert_eq!(after["uncertain"],true);
+    assert_eq!(after["batch"][0]["state"],"uncertain");assert_eq!(after["batch"][1]["state"],"executing");
+    assert!(!app.store.context(&sid).await.unwrap().iter().any(|row|row["role"]=="assistant"));
+}
+
+#[tokio::test]
+async fn removed_manifest_withdraws_cached_schemas_and_guidance_within_run() {
+    use axum::routing::post;
+    let (root, mut app) = fixture().await;
+    let catalog_root = root.path().join("abilities");
+    let directory = catalog_root.join("Administrator/codebase_admin");
+    std::fs::create_dir_all(&directory).unwrap();
+    let manifest = directory.join("codebase_admin.json");
+    std::fs::write(&manifest, serde_json::to_vec(&json!({
+        "display_name":"Codebase Admin","description":"Isolated cache fixture",
+        "kind":"ability","readiness":"ready","tools":["state_inspect"]})).unwrap()).unwrap();
+    std::fs::write(directory.join("codebase_admin.skill.md"),
+        "CACHE_WITHDRAWAL_GUIDANCE_SENTINEL").unwrap();
+    app.abilities = Arc::new(abilities::Catalog::load(&catalog_root).unwrap());
+    let mut visibility=app.store.agent_abilities().await.unwrap();
+    let revision=visibility["revision"].as_u64().unwrap();
+    visibility["visibility"]["codebase_admin"]=json!("visible");
+    app.store.save_agent_abilities(&visibility,revision).await.unwrap();
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = requests.clone();
+    let mock = Router::new().route("/responses", post(move |Json(body):Json<Value>| {
+        let captured = captured.clone();
+        let manifest = manifest.clone();
+        async move {
+            let mut captured = captured.lock().await;
+            captured.push(body);
+            let output = if captured.len()==1 {
+                std::fs::remove_file(manifest).unwrap();
+                json!([{"type":"function_call","call_id":"removed-call",
+                    "name":"state_inspect","arguments":"{\"resource\":\"catalog\"}"}])
+            } else {
+                json!([{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Done."}]}])
+            };
+            let event=json!({"type":"response.completed","response":{
+                "status":"completed","output":output}});
+            ([("content-type","text/event-stream")],format!("data: {event}\n\n"))
+        }
+    }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move {axum::serve(listener,mock).await.unwrap()});
+    app.provider=provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid=conversation(&app).await;
+    let id=queued(&app,&sid).await;
+    running(&app,&id,"manifest-removal").await;
+    execute_run(app.clone(),id.clone(),"manifest-removal".into(),
+        CancellationToken::new()).await.unwrap();
+    assert_eq!(app.run(&id).await.unwrap()["status"],"completed");
+    let requests=requests.lock().await;
+    assert_eq!(requests.len(),2);
+    assert!(requests[0]["tools"].as_array().unwrap().iter()
+        .any(|schema|schema["name"]=="state_inspect"));
+    assert!(requests[0]["instructions"].as_str().unwrap()
+        .contains("CACHE_WITHDRAWAL_GUIDANCE_SENTINEL"));
+    assert!(!requests[1]["tools"].as_array().unwrap().iter()
+        .any(|schema|schema["name"]=="state_inspect"));
+    assert!(!requests[1]["instructions"].as_str().unwrap()
+        .contains("CACHE_WITHDRAWAL_GUIDANCE_SENTINEL"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn revoked_native_skill_is_masked_before_provider_while_journal_is_retained() {
+    use axum::routing::post;
+    use sha2::{Digest,Sha256};
+    let (_root,mut app)=fixture().await;
+    let requests=Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured=requests.clone();
+    let mock=Router::new().route("/responses",post(move |Json(body):Json<Value>| {
+        let captured=captured.clone();
+        async move {
+            captured.lock().await.push(body);
+            let event=json!({"type":"response.completed","response":{"status":"completed",
+                "output":[{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Done."}]}]}});
+            ([("content-type","text/event-stream")],format!("data: {event}\n\n"))
+        }
+    }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move {axum::serve(listener,mock).await.unwrap()});
+    app.provider=provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid=conversation(&app).await;
+    let id=queued(&app,&sid).await;
+    let sentinel="PRIVATE_REVOKED_SKILL_SENTINEL";
+    let result=json!({"status":"success","output":{"ability_id":"base","kind":"tool",
+        "skill_id":"get_time","text":sentinel,"bytes":sentinel.len(),
+        "sha256":hex::encode(Sha256::digest(sentinel.as_bytes())),
+        "source_kind":"untrusted_bundled_guidance","activates":false}});
+    let mut run=app.run(&id).await.unwrap();
+    run["input"]=json!([
+        {"type":"function_call","name":"load_skill","call_id":"old-skill",
+            "arguments":json!({"ability_id":"base","kind":"tool","skill_id":"get_time"}).to_string()},
+        {"type":"function_call_output","call_id":"old-skill","output":result.to_string()}]);
+    run["context_hydration_pending"]=json!(false);
+    let call=run["input"][0].clone();
+    app.store.save_run(&mut run,"model_output",&json!({"output":[call]})).await.unwrap();
+    app.store.save_run(&mut run,"tool_result",&json!({"run_id":id,"name":"load_skill",
+        "result":result})).await.unwrap();
+    assert_eq!(app.store.live_access("admin","shared_default").await.unwrap()
+        .ability_permission("base"),access::Permission::Deny);
+    running(&app,&id,"skill-withdrawal").await;
+    execute_run(app.clone(),id.clone(),"skill-withdrawal".into(),
+        CancellationToken::new()).await.unwrap();
+    assert_eq!(app.run(&id).await.unwrap()["status"],"completed");
+    let requests=requests.lock().await;
+    assert_eq!(requests.len(),1);
+    assert!(!requests[0].to_string().contains(sentinel));
+    assert!(requests[0]["input"].to_string().contains("bundled_skill_withdrawn"));
+    assert!(app.store.context(&sid).await.unwrap().iter().any(|item|
+        item["type"]=="function_call_output" && item["output"].as_str()
+            .is_some_and(|output|output.contains(sentinel))));
+    server.abort();
+}
+
+#[tokio::test]
+async fn bundle_withdrawal_during_credentials_blocks_provider_dispatch() {
+    use axum::routing::post;
+    for cancelled in [false,true] {
+    let (root,mut app)=fixture().await;
+    let catalog_root=root.path().join("dispatch-abilities");
+    let directory=catalog_root.join("Administrator/codebase_admin");
+    std::fs::create_dir_all(&directory).unwrap();
+    let manifest=directory.join("codebase_admin.json");
+    std::fs::write(&manifest,serde_json::to_vec(&json!({
+        "display_name":"Codebase Admin","description":"Dispatch race fixture",
+        "kind":"ability","readiness":"ready","tools":["state_inspect"]})).unwrap()).unwrap();
+    std::fs::write(directory.join("codebase_admin.skill.md"),"DISPATCH_RACE_GUIDANCE").unwrap();
+    app.abilities=Arc::new(abilities::Catalog::load(&catalog_root).unwrap());
+    let mut visibility=app.store.agent_abilities().await.unwrap();
+    let revision=visibility["revision"].as_u64().unwrap();
+    visibility["visibility"]["codebase_admin"]=json!("visible");
+    app.store.save_agent_abilities(&visibility,revision).await.unwrap();
+    let requests=Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured=requests.clone();
+    let mock=Router::new().route("/responses",post(move |Json(body):Json<Value>| {
+        let captured=captured.clone();
+        async move {
+            captured.lock().await.push(body);
+            let event=json!({"type":"response.completed","response":{"status":"completed",
+                "output":[{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Done."}]}]}});
+            ([("content-type","text/event-stream")],format!("data: {event}\n\n"))
+        }
+    }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move {axum::serve(listener,mock).await.unwrap()});
+    app.provider=provider::Provider::for_test(format!("http://{address}/responses"));
+    let sid=conversation(&app).await;
+    let id=queued(&app,&sid).await;
+    running(&app,&id,"dispatch-race").await;
+    // tokens_at cannot proceed until this lock is released.
+    let credentials=app.refresh.lock().await;
+    let task_app=app.clone();let task_id=id.clone();
+    let task=tokio::spawn(async move {execute_run(task_app,task_id,"dispatch-race".into(),
+        CancellationToken::new()).await});
+    tokio::time::timeout(Duration::from_secs(10),async {
+        loop {
+            if !app.run(&id).await.unwrap()["context_assembly_report"].is_null() {break;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    if cancelled {
+        let _guard=app.gate.lock().await;
+        let mut run=app.run(&id).await.unwrap();
+        run["status"]=json!("cancelled");
+        app.save(&mut run).await.unwrap();
+    }
+    std::fs::remove_file(manifest).unwrap();
+    drop(credentials);
+    tokio::time::timeout(Duration::from_secs(10),task).await.unwrap().unwrap().unwrap();
+    let run=app.run(&id).await.unwrap();
+    if cancelled {assert_eq!(run["status"],"cancelled");}
+    else {
+        assert_eq!(run["status"],"stopped");
+        assert!(run["error"].as_str().unwrap().contains("bundle changed"));
+    }
+    assert!(requests.lock().await.is_empty());
+    assert!(!app.store.context(&sid).await.unwrap().iter().any(|item|item["role"]=="assistant"));
+    server.abort();
+    }
+}
+
+#[tokio::test]
+async fn session_read_routes_enforce_auth_csrf_ownership_and_monotonicity() {
+    use axum::http::Method;
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let other = conversation(&app).await;
+    app.store.atomic_docs_event(vec![], &sid, "message", &json!({"role":"user","run_id":"read-run","content":"hello"})).await.unwrap();
+    app.store.atomic_docs_event(vec![], &other, "message", &json!({"role":"user","run_id":"foreign-read-run","content":"other"})).await.unwrap();
+    let cursor = app.store.chat_snapshot(&sid).await.unwrap().1;
+    let foreign = app.store.chat_snapshot(&other).await.unwrap().1;
+    let cookie = ability_auth(&app).await;
+    let uri = format!("/api/v3/sessions/{sid}/read");
+    let body = json!({"through_seq":cursor});
+    assert_eq!(ability_request(&app,Method::PUT,&uri,Some(body.clone()),None,None).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(ability_request(&app,Method::PUT,&uri,Some(body.clone()),Some(&cookie),None).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(ability_request(&app,Method::PUT,&uri,Some(json!({"through_seq":foreign})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::BAD_REQUEST);
+    let (status, result) = ability_request(&app,Method::PUT,&uri,Some(body.clone()),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(result["session"]["read_through_seq"],cursor);
+    assert_eq!(result["session"]["metadata_revision"],0);
+    let (_, retry) = ability_request(&app,Method::PUT,&uri,Some(body),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(result,retry);
+    let (_, older) = ability_request(&app,Method::PUT,&uri,Some(json!({"through_seq":0})),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(older["session"]["read_through_seq"],cursor);
+    assert_eq!(ability_request(&app,Method::PUT,"/api/v3/sessions/missing/read",Some(json!({"through_seq":0})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+    let (_, snapshot) = ability_request(&app,Method::GET,&format!("/api/v3/sessions/{sid}"),None,Some(&cookie),None).await;
+    assert_eq!(snapshot["session"],result["session"]);
+}
+
+#[tokio::test]
+async fn session_lifecycle_routes_enforce_auth_csrf_history_and_conflicts() {
+    use axum::http::Method;
+    let (_root,app) = fixture().await; let sid = conversation(&app).await;
+    let uri = format!("/api/v3/sessions/{sid}"); let cookie = ability_auth(&app).await;
+    let body = json!({"client_request_id":"recycle","expected_revision":0});
+    assert_eq!(ability_request(&app,Method::DELETE,&uri,Some(body.clone()),None,None).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(ability_request(&app,Method::DELETE,&uri,Some(body.clone()),Some(&cookie),None).await.0,StatusCode::FORBIDDEN);
+    let (status,recycled) = ability_request(&app,Method::DELETE,&uri,Some(body.clone()),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(status,StatusCode::OK); assert_eq!(recycled["session"]["status"],"recycled");
+    assert_eq!(ability_request(&app,Method::DELETE,&uri,Some(body),Some(&cookie),Some("ability-fixture")).await.1,recycled);
+    let (_,list) = ability_request(&app,Method::GET,"/api/v3/sessions",None,Some(&cookie),None).await; assert_eq!(list["sessions"].as_array().unwrap().len(),0);
+    let (_,list) = ability_request(&app,Method::GET,"/api/v3/sessions?status=recycled",None,Some(&cookie),None).await; assert_eq!(list["sessions"][0]["id"],sid);
+    assert_eq!(ability_request(&app,Method::GET,"/api/v3/sessions?status=invalid",None,Some(&cookie),None).await.0,StatusCode::BAD_REQUEST);
+    assert_eq!(ability_request(&app,Method::GET,&uri,None,Some(&cookie),None).await.0,StatusCode::OK);
+    let message = json!({"text":"blocked","client_message_id":"blocked"});
+    assert_eq!(ability_request(&app,Method::POST,&format!("{uri}/messages"),Some(message),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::CONFLICT);
+    let restore = json!({"client_request_id":"restore","expected_revision":1});
+    assert_eq!(ability_request(&app,Method::POST,&format!("{uri}/restore"),Some(restore.clone()),Some(&cookie),None).await.0,StatusCode::FORBIDDEN);
+    let (status,result) = ability_request(&app,Method::POST,&format!("{uri}/restore"),Some(restore.clone()),Some(&cookie),Some("ability-fixture")).await;
+    assert_eq!(status,StatusCode::OK); assert_eq!(result["session"]["status"],"active");
+    assert_eq!(ability_request(&app,Method::POST,&format!("{uri}/restore"),Some(restore),Some(&cookie),Some("ability-fixture")).await.1,result);
+    assert_eq!(ability_request(&app,Method::DELETE,"/api/v3/sessions/missing",Some(json!({"client_request_id":"missing","expected_revision":0})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+    // Lifecycle cannot cross the user authority or an inaccessible agent binding.
+    sqlx::query("INSERT INTO user_accounts(user_id,username,value) VALUES('lifecycleother','lifecycleother',?)")
+        .bind(app.store.seal(&json!({"user_id":"lifecycleother","username":"lifecycleother"})).unwrap())
+        .execute(&app.store.app_pool).await.unwrap();
+    let other = app.store.for_user("lifecycleother").await.unwrap();
+    other.put("session:foreign-lifecycle",&json!({"id":"foreign-lifecycle","agent_id":"shared_default"})).await.unwrap();
+    for method in [Method::DELETE,Method::POST] {
+        let path = if method == Method::DELETE { "/api/v3/sessions/foreign-lifecycle" } else { "/api/v3/sessions/foreign-lifecycle/restore" };
+        assert_eq!(ability_request(&app,method,path,Some(json!({"client_request_id":"foreign","expected_revision":0})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+    }
+    app.store.put("session:inaccessible-lifecycle",&json!({"id":"inaccessible-lifecycle","agent_id":"missing-agent"})).await.unwrap();
+    assert_eq!(ability_request(&app,Method::DELETE,"/api/v3/sessions/inaccessible-lifecycle",Some(json!({"client_request_id":"inaccessible","expected_revision":0})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
+    // A nonterminal run is a conflict; there is no implicit cancellation.
+    app.store.put("run:lifecycle-blocker",&json!({"id":"lifecycle-blocker","session_id":sid,"status":"waiting_approval"})).await.unwrap();
+    assert_eq!(ability_request(&app,Method::DELETE,&uri,Some(json!({"client_request_id":"blocked-by-run","expected_revision":2})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::CONFLICT);
+
 }

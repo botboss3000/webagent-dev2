@@ -1,11 +1,3 @@
-# Terminal List
+# terminal_list
 
-Use `terminal_list` only when it is the exact action the request calls for. This belongs to the Terminal Control ability.
-
-Follow the tool schema that arrives with this file. Supply every required field,
-inspect the returned result before taking a dependent action, and surface any
-reported warning, limitation, or refusal accurately rather than retrying the
-same failed request unchanged.
-
-For ability-wide selection rules, safety boundaries, and cross-tool workflows,
-follow `terminal_control.skill.md` alongside this tool skill.
+List only this workspace's terminals, their commands, running state, sequence and byte cursor. This does not satisfy read-before-send. Other sessions' terminal IDs and output are not exposed.

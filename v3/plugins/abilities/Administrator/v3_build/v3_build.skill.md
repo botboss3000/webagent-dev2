@@ -1,0 +1,15 @@
+# V3 development builds
+
+Workspace Cargo checks run through the isolated workspace worker. Installation image builds and deployments run through a private host broker; the application and tool worker have no Docker socket or arbitrary host command access. Host operations require installation administrator authority in Rust in addition to the effective tool policy and any required approval.
+
+Before compilation or an image build, coordinate source writers and the shared target. Use `v3_build_status` to obtain `inputs_sha256`. It hashes the full frozen build context, including untracked source within the explicit allowlist. Runtime databases, workspaces and provider credentials are excluded; only the two named nonsecret gate JSONs are admitted from runtime config. A build that raced an edit is stale even if its tests passed.
+
+Submit `v3_build_image` with a stable `request_id` and `expected_inputs_sha256`, then poll `v3_worker_job` with the returned `job_id`. The API and loop images both run their pinned locked Rust tests in Docker. A completed job contains immutable image IDs. There is one active host job; a busy target is rejected, not silently queued.
+
+Deployment is a separate approved action: explain the brief V3 interruption, then call `v3_worker_submit` with `operation: deploy`, the successful build `job_id`, a new stable `request_id`, and the same source digest. It may deploy only this session's completed unchanged build. It replaces only webagent-dev-v3 and webagent-dev-v3-loop, preserves private environment and configured mounts, adopts the new images' defaults, retains stopped prior containers and protected image/config exports, and checks both replacement containers' health. It never operates on v2, production, or the named Cloudflare connector.
+
+Host jobs use short authorization leases renewed by Rust after checking the live caller, tier, agent and session policy. Revocation, an access revision change or lease expiry stops a pending deployment before its first container mutation. After an effect has begun, it stops further phases and records an uncertain outcome; inspect and reconcile before continuing. A restart does not revive an expired lease.
+
+Identical request IDs and bodies return the existing durable receipt; changed bodies are rejected. Polling does not repeat the operation. After interruption, recovery reconciles known image identities and health; uncertain external effects are never automatically replayed. Reconcile an uncertain deployment before any further replacement. New source edits require a fresh build. Broker receipts and private rollback exports are not session database access.
+
+`login_as_current_user_v3` uses the current caller's V3 authentication path, never v2 credentials or an administrator impersonation fallback. Browser journeys are unnecessary when the user requests API validation.

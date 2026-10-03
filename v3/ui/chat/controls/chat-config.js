@@ -1,6 +1,6 @@
 import { applyChatPillLayout } from './chat-pill-config.js';
 import { initFooterHandle } from './footer-handle.js';
-// V3 reads the data/config chat_ui.json schema. Unknown controls are
+// V3 reads the v3/data/config/chat.json schema. Unknown controls are
 // skipped until their v3 features exist; the controls below are live in v3.
 const byId = id => document.getElementById(id);
 let documentConfig = null;
@@ -19,7 +19,7 @@ export function mergeProfile(base, override) {
 }
 
 function surfaceName() {
-  return window.matchMedia('(max-width:800px)').matches ? 'chat_mobile' : 'chat_desktop';
+  return (byId('chat-panel')?.clientWidth || window.innerWidth) <= 768 ? 'chat_mobile' : 'chat_desktop';
 }
 
 export function currentChatProfile() {
@@ -27,21 +27,23 @@ export function currentChatProfile() {
   return mergeProfile(documentConfig.chat_common, documentConfig[surfaceName()]);
 }
 
+// SISTER-PANEL: v2 chat-controls-config sizing; row defaults precede overrides.
 function sizeControl(node, config) {
   if (!node || !config) return;
   const size = config.container_size || config.box_size;
+  const icon = node.querySelector('svg') || node.querySelector('i');
+  const iconSize = config.element_size || config.size || (size && size !== 'auto' ? Math.floor(parseFloat(size) * .7) + 'px' : null);
+  if (icon && iconSize) for (const key of ['width','height']) icon.style.setProperty(key,iconSize,'important');
   if (size && size !== 'auto') {
-    node.style.height = size;
-    if (config.square !== false) node.style.width = size;
+    for (const key of ['height','min-height']) node.style.setProperty(key,size,'important');
+    if (config.square !== false) { node.style.setProperty('width',size,'important'); node.style.padding='0'; node.style.justifyContent='center'; }
   }
-  if (config.min_width) node.style.minWidth = config.min_width;
-  if (config.max_width) node.style.maxWidth = config.max_width;
-  const icon = node.querySelector('svg');
-  const iconSize = config.element_size || config.size;
-  if (icon && iconSize) {
-    icon.style.width = iconSize;
-    icon.style.height = iconSize;
-  }
+  const trigger = node.querySelector('.session-dropdown-trigger');
+  if (trigger) { trigger.style.height='100%'; trigger.style.minHeight='0'; trigger.style.boxSizing='border-box'; }
+  if (config.font_size) { node.style.fontSize=config.font_size; if(trigger) trigger.style.fontSize=config.font_size; }
+  if (config.border_radius) node.style.borderRadius=config.border_radius === 'pill' ? `calc(${size || '40px'} / 2)` : config.border_radius;
+  if (config.min_width) node.style.minWidth=config.min_width;
+  if (config.max_width) node.style.maxWidth=config.max_width;
 }
 
 function headerControl(name) {
@@ -49,19 +51,19 @@ function headerControl(name) {
     const select = byId('sessions');
     headerNodes = {
       agent_name: byId('chat-header-agent-name').closest('.chat-header-name-row'),
-      session_dropdown: select.closest('.session-dropdown'),
+      session_dropdown: byId('session-dropdown'),
       new_session: byId('new'),
     };
     for (const [name, delta, label, symbol] of [
-      ['session_prev', -1, 'Previous conversation', '‹'],
-      ['session_next', 1, 'Next conversation', '›'],
+      ['session_prev', -1, 'Previous conversation', 'arrow-big-left'],
+      ['session_next', 1, 'Next conversation', 'arrow-big-right'],
     ]) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'v3-chat-nav-button';
+      button.className = 'session-nav-btn';
       button.setAttribute('aria-label', label);
       button.title = label;
-      button.textContent = symbol;
+      button.innerHTML = '<i data-lucide="' + symbol + '"></i>';
       button.onclick = () => {
         const next = select.selectedIndex + delta;
         if (next < 0 || next >= select.options.length) return;
@@ -72,10 +74,10 @@ function headerControl(name) {
     }
     const minimize = document.createElement('button');
     minimize.type = 'button';
-    minimize.className = 'v3-chat-nav-button';
+    minimize.className = 'chat-header-minimize';
     minimize.setAttribute('aria-label', 'Minimize chat');
     minimize.title = 'Minimize chat';
-    minimize.textContent = '−';
+    minimize.innerHTML = '<i data-lucide="minus"></i>';
     minimize.onclick = () => byId('chat-toggle-btn').click();
     headerNodes.minimize = minimize;
   }
@@ -90,6 +92,8 @@ function applyHeader(profile) {
   header.style.setProperty('--chat-header-max-width', config.max_width || profile.content_max_width || '100%');
   const rows = Array.isArray(config.rows) ? config.rows : [];
   headerControl('agent_name');
+  headerNodes.session_dropdown.configure?.(config.controls?.session_dropdown);
+  headerNodes.session_dropdown._sessionDropdownController?.close({immediate:true});
   header.replaceChildren();
   for (const row of rows) {
     const line = document.createElement('div');
@@ -99,9 +103,11 @@ function applyHeader(profile) {
       zone.className = 'chat-header-zone chat-header-zone-' + zoneName;
       for (const name of row[zoneName] || []) {
         const node = headerControl(name);
-        const controlConfig = config.controls?.[name] || {};
+        const controlConfig = { ...config.row_sizes?.primary, ...config.controls?.[name] };
+        if (name === 'agent_name') controlConfig.square = false;
         if (!node || controlConfig.enabled === false) continue;
         node.hidden = false;
+        node.dataset.headerControl = name;
         sizeControl(node, controlConfig);
         zone.append(node);
       }
@@ -161,7 +167,8 @@ function applyFooter(profile, mode) {
     area.style.setProperty('--idle-pill-width',profile.idle_footer?.chat_pill?.pill_width || '500px');
     area.style.setProperty('--idle-margin-bottom',profile.idle_footer?.margin_bottom || '24px');
     area.style.setProperty('bottom',footer.margin_bottom || '0px','important');
-    surface.style.setProperty('--chat-surface-max-width',profile.content_max_width || '1000px');
+    const contentProfile = mergeProfile(documentConfig.chat_common, documentConfig[window.innerWidth <= 768 ? 'chat_mobile' : 'chat_desktop']);
+    surface.style.setProperty('--chat-surface-max-width',contentProfile.content_max_width || '1000px');
     if(profile.messages?.pill_placeholder)footerNodes.input.placeholder=profile.messages.pill_placeholder;
     applyChatPillLayout(footerNodes,pill);
     footerNodes.stop.dataset.configEnabled=String(pill.controls?.stop?.enabled !== false);
@@ -213,7 +220,8 @@ export function applyChatConfig() {
   currentSurface = surface;
   currentFooterMode = mode;
   const panel = byId('chat-panel');
-  panel.style.setProperty('--v3-content-max-width', profile.content_max_width || '100%');
+  const contentProfile = mergeProfile(documentConfig.chat_common, documentConfig[window.innerWidth <= 768 ? 'chat_mobile' : 'chat_desktop']);
+  panel.style.setProperty('--v3-content-max-width', contentProfile.content_max_width || '100%');
   panel.style.setProperty('--v3-tail-gap', (profile.transcript_tail_clearance?.gap_px ?? 16) + 'px');
   applyHeader(profile);
   applyFooter(profile, mode);
@@ -225,13 +233,16 @@ export async function initChatConfig() {
   const data = await response.json();
   const config = data.chat_ui || data;
   if (!config?.chat_common) return;
+  // A remount replaces the partial; never reuse detached header/pill nodes.
+  if (footerNodes && footerNodes.input !== byId('chat-input')) { headerNodes=null; footerNodes=null; footerControls=null; currentSurface=''; currentFooterMode=''; }
   documentConfig = config;
   currentSurface = '';
   currentFooterMode = '';
   applyChatConfig();
   if (!listenersBound) {
     listenersBound = true;
-    window.addEventListener('resize', applyChatConfig);
+    window.addEventListener('resize', () => { currentSurface = ''; applyChatConfig(); });
+    new ResizeObserver(applyChatConfig).observe(byId('chat-panel'));
     const input = byId('chat-input');
     for (const eventName of ['focus', 'blur', 'input']) input.addEventListener(eventName, applyChatConfig);
   }

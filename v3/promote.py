@@ -15,10 +15,11 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("V3_LIVE_SOURCE_ROOT", "/live-v3"))
 MAX_PATCH = 1024 * 1024
-ALLOWED_DIRS = {"src", "abilities", "tests"}
+ALLOWED_DIRS = {"src", "plugins", "tests", "ui", "docs", "config"}
 ALLOWED_FILES = {
     "Cargo.toml", "Cargo.lock", "Dockerfile", ".gitignore",
-    "README.md", "deploy.sh", "launch.py", "worker.py", "promote.py",
+    "README.md", "deploy.sh", "launch.py", "worker.py", "sandbox.py", "promote.py",
+    "Dockerfile.loop", "ui-baseline.json",
 }
 
 

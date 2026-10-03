@@ -33,7 +33,10 @@ impl IntoResponse for ApiError {
     }
 }
 impl From<anyhow::Error> for ApiError {
-    fn from(_e: anyhow::Error) -> Self {
+    fn from(error: anyhow::Error) -> Self {
+        if error.downcast_ref::<crate::store::session::RecycledSession>().is_some() {
+            return conflict("Session is recycled; restore it first");
+        }
         tracing::error!("Request storage or execution operation failed");
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -123,7 +126,8 @@ fn run_diagnostics(run: &Value) -> Value {
             "call_index":receipt["call_index"]}))
     }).collect::<Vec<_>>();
     json!({"run_id":run["id"],"session_id":run["session_id"],"status":run["status"],
-        "uncertain":run["uncertain"],"checkpoints":checkpoints})
+        "uncertain":run["uncertain"],"checkpoints":checkpoints,
+        "context_summary":public_context_summary(run)})
 }
 async fn run_diagnostics_api(
     State(app): State<App>,
@@ -256,7 +260,12 @@ mod system_budget_tests {
     }
 }
 fn policy_default() -> Value {
-    json!({"version":1,"rules":{"list_abilities":"allow","load_ability":"allow","web_search":"allow","get_weather":"allow","maps_geocode":"allow","file_list":"allow","file_read":"allow","file_search":"allow","state_inspect":"allow","prompt_slot_read":"allow","prompt_slot_write":"require_approval","file_write":"require_approval","file_edit":"require_approval","workspace_seed":"require_approval","source_review":"allow","source_patch":"require_approval","promotion_propose":"allow","shell":"require_approval","python":"require_approval"}})
+    let mut policy=json!({"version":1,"rules":{"list_abilities":"allow","load_ability":"allow","list_skills":"allow","load_skill":"allow","get_time":"allow","get_date":"allow","calculate":"allow","read_attachment":"allow","search_this_session":"allow","read_own_prompt":"allow","web_search":"allow","get_weather":"allow","maps_geocode":"allow","file_list":"allow","file_read":"allow","file_search":"allow","state_inspect":"allow","prompt_slot_read":"allow","prompt_slot_write":"require_approval","file_write":"require_approval","file_edit":"require_approval","workspace_seed":"require_approval","source_review":"allow","source_patch":"require_approval","promotion_propose":"allow","shell":"require_approval","python":"require_approval"}});
+    for schema in tools::administrator::schemas() {
+        let name=schema["name"].as_str().unwrap();
+        policy["rules"][name]=json!(if tools::is_read(name){"allow"}else{"require_approval"});
+    }
+    policy
 }
 fn policy_decision<'a>(policy: &'a Value, name: &str) -> &'a str {
     policy["rules"][name].as_str().unwrap_or("deny")
@@ -268,7 +277,11 @@ fn live_tool_decision(app:&App, access:&access_policy::LiveAccess, name:&str,
         .unwrap_or(access::Permission::Deny);
     let (available,visible)=app.abilities.tool_gate(name,visibility,state,loaded);
     let ability_ids=app.abilities.tool_abilities(name,visibility,state,loaded);
-    access.tool_decision_for_abilities(name,&ability_ids,installation,
+    let caution=if !tools::is_read(name) && ability_ids.iter().any(|id| {
+        let key=match id.as_str(){"terminal_control"=>"terminal_caution","codebase_admin"=>"destructive_caution",_=>return false};
+        visibility["settings"][id][key]=="cautious"
+    }) {access::Permission::Ask}else{access::Permission::Auto};
+    access.tool_decision_for_abilities(name,&ability_ids,installation.meet(caution),
         available,visible,read_only,tools::is_read(name))
 }
 fn filter_ability_entry(app:&App, access:&access_policy::LiveAccess, entry:&mut Value,
@@ -566,7 +579,7 @@ async fn run_process() -> Result<()> {
         secure: std::env::var("V3_SECURE_COOKIE").unwrap_or_else(|_| "true".into()) != "false",
         chat_ui_config_path: PathBuf::from(
             std::env::var("V3_CHAT_UI_CONFIG_PATH")
-                .unwrap_or_else(|_| "/opt/v3/chat_ui.json".into()),
+                .unwrap_or_else(|_| "/state/config/chat.json".into()),
         ),
     };
     if role=="loop" {
@@ -600,6 +613,7 @@ async fn run_process() -> Result<()> {
     )
     .await?;
     tracing::info!("WebAgent v3 API ready");
+    let administrator_watch=tokio::spawn(administrator_services::watch(app.clone()));
     let shutdown = app.clone();
     axum::serve(listener, router(app.clone()))
         .with_graceful_shutdown(async move {
@@ -610,6 +624,8 @@ async fn run_process() -> Result<()> {
             shutdown.ready.store(false, Ordering::Release);
         })
         .await?;
+    app.stop.cancel();
+    let _=administrator_watch.await;
     app.store.pool.close().await;
     app.store.agent_pool.close().await;
     app.store.app_pool.close().await;

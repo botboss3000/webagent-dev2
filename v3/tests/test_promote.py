@@ -46,6 +46,15 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(result["paths"], ["src/main.rs"])
         self.assertEqual((self.root / "src/main.rs").read_text(), "new\n")
 
+    def test_coding_paths_are_promotable_without_runtime_paths(self):
+        for path in ("ui/app.js", "plugins/abilities/example.py", "tests/test_example.py", "docs/example.md", "config/example.json", "sandbox.py"):
+            target=self.root/path
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_text("old\n")
+            result=self.apply(self.patch(path=path))
+            self.assertEqual(result["status"],"success",path)
+            self.assertEqual(target.read_text(),"new\n")
+
     def test_preflight_rejects_invalid_second_hunk_without_partial_edit(self):
         patch = self.patch() + self.patch(
             path="src/other.rs", before="missing", after="new")
@@ -53,9 +62,9 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(result["status"], "denied")
         self.assertEqual((self.root / "src/main.rs").read_text(), "old\n")
 
-    def test_rejects_metadata_runtime_ui_and_escape_paths(self):
+    def test_rejects_metadata_runtime_and_escape_paths(self):
         for path in (".git/config", "data/key", "workspaces/other",
-                     "ui/app.js", "../outside.txt"):
+                     "runtime/control", "build-jobs/job", "../outside.txt"):
             patch = (
                 f"diff --git a/{path} b/{path}\n"
                 "new file mode 100644\n"

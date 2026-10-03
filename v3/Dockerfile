@@ -1,3 +1,4 @@
+FROM cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38 AS preview_tunnel
 FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
 WORKDIR /build
 COPY v3/Cargo.toml v3/Cargo.lock ./
@@ -16,13 +17,14 @@ RUN cargo test --locked
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
-RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates curl tini git ripgrep build-essential pkg-config \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates curl tini git ripgrep build-essential pkg-config chromium chromium-driver python3-selenium \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1100 v3 && useradd -u 1100 -g 1100 -M -s /usr/sbin/nologin v3app \
     && useradd -u 1101 -g 1100 -M -s /usr/sbin/nologin v3tools
+COPY --from=preview_tunnel /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY --from=builder /build/target/release/webagent-v3 /usr/local/bin/webagent-v3
 COPY --from=builder /usr/local/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu /opt/rust
-COPY v3/worker.py v3/launch.py v3/promote.py /opt/v3/
+COPY v3/worker.py v3/sandbox.py v3/launch.py v3/promote.py /opt/v3/
 COPY v3/plugins/abilities /opt/v3/plugins/abilities
 COPY v3/plugins/gates /opt/v3/plugins/gates
 COPY v3 /opt/v3/source-template

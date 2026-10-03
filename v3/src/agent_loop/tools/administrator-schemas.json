@@ -1,0 +1,865 @@
+[
+  {
+    "type": "function",
+    "name": "code_index_scan",
+    "description": "code index scan in this session isolated source snapshot; freshness is explicit",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "file_path": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "batch_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "discover",
+            "scan",
+            "scan_file"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "code_index_lookup",
+    "description": "code index lookup in this session isolated source snapshot; freshness is explicit",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "file_path": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "line_no": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "edge",
+            "file",
+            "line",
+            "symbol"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "code_index_coverage",
+    "description": "code index coverage in this session isolated source snapshot; freshness is explicit",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "gaps",
+            "report",
+            "stale"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "code_index_trace",
+    "description": "code index trace in this session isolated source snapshot; freshness is explicit",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "asset",
+            "data_attribute",
+            "endpoint",
+            "event",
+            "import",
+            "selector",
+            "symbol"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "code_index_progress",
+    "description": "code index progress in this session isolated source snapshot; freshness is explicit",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "batch_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "list"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_tool",
+    "description": "Typed Git operations in the current workspace; mutations need approval and an exact HEAD fence",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "status",
+            "diff",
+            "log",
+            "show",
+            "branch_list",
+            "branch_create",
+            "branch_delete",
+            "tag_list",
+            "tag_create",
+            "tag_delete",
+            "checkout",
+            "stash_list",
+            "stash_push",
+            "stash_pop",
+            "add",
+            "reset",
+            "pull",
+            "push"
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100
+        },
+        "ref": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cached": {
+          "type": "boolean"
+        },
+        "expected_head": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "resolve_conflict",
+    "description": "Resolve one conflict with an exact file hash; never stage implicitly",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "ours",
+            "theirs",
+            "both"
+          ]
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "strategy",
+        "expected_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "commit_and_push",
+    "description": "Commit explicit reviewed paths and push without force; reconcile any uncertain result",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100
+        },
+        "message": {
+          "type": "string"
+        },
+        "expected_head": {
+          "type": "string"
+        },
+        "expected_review_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "remote": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "paths",
+        "message",
+        "expected_head",
+        "expected_review_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_open",
+    "description": "Open a persistent isolated workspace PTY; approval required",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 240
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_read",
+    "description": "Read bounded PTY output and receive a fresh observation sequence",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "terminal_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_send",
+    "description": "Send text or a named key after a fresh observation; approval required",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "expected_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "terminal_id",
+        "expected_sequence"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_wait",
+    "description": "Wait for bounded PTY output",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        }
+      },
+      "required": [
+        "terminal_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_list",
+    "description": "List only this session persistent PTYs",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "terminal_close",
+    "description": "Close a PTY and its descendant processes; approval required",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_workspace_status",
+    "description": "Inspect this session isolated source snapshot, never live application data",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_workspace_action",
+    "description": "Perform a fixed source operation with a durable request receipt; approval required",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "seed",
+            "review",
+            "read",
+            "patch",
+            "check",
+            "test",
+            "propose"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "patch": {
+          "type": "string"
+        },
+        "expected_review_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_workspace_receipt",
+    "description": "Read this session durable operation receipt before retrying",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_cargo_task",
+    "description": "Run fixed locked Cargo verification on a reviewed isolated snapshot; approval required",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "enum": [
+            "check",
+            "test",
+            "release"
+          ]
+        },
+        "expected_review_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "task",
+        "expected_review_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_build_status",
+    "description": "Read development build broker status; installation administrator only",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_build_image",
+    "description": "Submit an immutable development image build; never deploy implicitly",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "expected_inputs_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "request_id",
+        "expected_inputs_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_worker_submit",
+    "description": "Submit a fixed build or approved development deployment; installation administrator only",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "build",
+            "deploy"
+          ]
+        },
+        "expected_inputs_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "operation",
+        "expected_inputs_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_worker_job",
+    "description": "Poll a caller-owned durable build job; never rerun a mutation",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "read_diagnostics",
+    "description": "Read bounded content-free diagnostics for the current session run",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "description": "Omit, leave empty, or use current for the active run; otherwise provide a known canonical run UUID from this session"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "login_as_current_user",
+    "description": "Open a development browser authenticated as the current caller; never returns credentials",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "login_as_current_user_v3",
+    "description": "Open a development browser authenticated as the current caller; never returns credentials",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "dev_browser_url",
+    "description": "Get an authenticated development route for the current session",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "dev_browser_action",
+    "description": "Operate the current caller development browser; input requires a fresh observation and approval",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "navigate",
+            "read",
+            "click",
+            "type",
+            "screenshot",
+            "close"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "dev_browser_record",
+    "description": "Record bounded screenshots of the development browser",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "start",
+            "stop",
+            "status"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "start_tunnel",
+    "description": "Create a bounded authenticated preview lease for this session isolated app",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 1800
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "get_tunnel_url",
+    "description": "Read this session active preview lease",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "repository_access",
+    "description": "Report current-agent repository configuration and bounded GitHub metadata; never prints credentials or infers push permission from token presence",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "verify_remote": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+]

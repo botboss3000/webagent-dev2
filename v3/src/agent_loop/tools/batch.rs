@@ -168,8 +168,9 @@ pub(super) async fn execute_parallel_batch(
         for (idx,name,args,pending_id,policy_version) in dispatch {
             let task_app=app.clone();let task_sid=sid.clone();let task_run=id.to_owned();
             let task_cancel=cancel.clone();
+            let task_generation=generation.to_owned();
             futures.push(async move {
-                let result=tools::call(task_app,task_sid,task_run,name.clone(),args,
+                let result=tools::call(task_app,task_sid,task_run,task_generation,name.clone(),args,
                     pending_id.clone(),policy_version,task_cancel).await;
                 (idx,name,pending_id,result)
             });

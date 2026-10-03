@@ -28,7 +28,16 @@ export function createChatClient({request, note, EventSourceClass = EventSource}
   }
   return {
     open, disconnect,
-    sessions: () => request('/sessions'),
+    sessions: (status = 'active') => request('/sessions?status=' + encodeURIComponent(status)),
+    search: ({q, status = 'active', continuation}) => {
+      const params = new URLSearchParams({q, status, limit: '20'});
+      if (continuation) params.set('continuation', continuation);
+      return request('/sessions/search?' + params);
+    },
+    patch: (id, body) => request('/sessions/' + encodeURIComponent(id), 'PATCH', body),
+    recycle: (id, body) => request('/sessions/' + encodeURIComponent(id), 'DELETE', body),
+    restore: (id, body) => request('/sessions/' + encodeURIComponent(id) + '/restore', 'POST', body),
+    read: (id, through_seq) => request('/sessions/' + encodeURIComponent(id) + '/read', 'PUT', {through_seq}),
     create: body => request('/sessions', 'POST', body),
     send: (id, body) => request('/sessions/' + id + '/messages', 'POST', body),
     cancel: (id, body) => request('/runs/' + id + '/cancel', 'POST', body),

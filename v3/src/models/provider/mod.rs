@@ -13,7 +13,7 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_INSTRUCTIONS: usize = 96 * 1024;
-pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When a task needs workspace access, use list_abilities to find a suitable ability and load_ability to make its tools available.";
+pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When asked what abilities or tools are available, check list_abilities; an empty loaded list does not mean the catalog is empty. When a task needs workspace access, use list_abilities to find a suitable ability and load_ability to make its tools available.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

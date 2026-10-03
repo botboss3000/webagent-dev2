@@ -2,6 +2,9 @@
 //! A run revision and a time-limited lease stop stale processes from replacing
 //! newer progress. See docs/code-tour.md before following the SQL below.
 pub(crate) mod session;
+pub(crate) mod search;
+pub(crate) mod own_skills;
+pub(crate) mod base_task;
 
 use crate::access;
 use crate::cache::{Cache, ContextCache};
@@ -503,6 +506,7 @@ impl Store {
             &self.agent_pool
         } else if key.starts_with("session:")
             || key.starts_with("session_mode:")
+            || key.starts_with("compaction_segment:")
             || key.starts_with("session_ability_state:")
             || key.starts_with("run:")
             || key.starts_with("run_view:")
@@ -516,6 +520,7 @@ impl Store {
             || key.starts_with("receipt:session:")
             || key.starts_with("receipt:message:")
             || key.starts_with("receipt:run:")
+            || key.starts_with("receipt:session_mode:")
             || key.starts_with("receipt:approval:")
         {
             &self.pool
@@ -1582,6 +1587,31 @@ impl Store {
             .await?;
             session["checkpoint_input"] = run["input"].clone();
             session["checkpoint_through"] = json!(through);
+            // The original source and the new checkpoint share this user-plane
+            // transaction. A recall segment cannot appear without its summary.
+            let source=payload["source"].as_array()
+                .ok_or_else(|| anyhow!("Compaction source missing"))?;
+            let source_bytes=serde_json::to_vec(source)?;
+            let source_digest=payload["source_digest"].as_str()
+                .ok_or_else(|| anyhow!("Compaction source digest missing"))?;
+            let segment_id=payload["segment_id"].as_str()
+                .ok_or_else(|| anyhow!("Compaction segment identity missing"))?;
+            if source.is_empty() || source.len()!=payload["dropped_items"].as_u64().unwrap_or(0) as usize
+                || source_bytes.len()>262_144 || crate::digest(source)!=source_digest
+                || segment_id!=format!("{}-{}",rid,run["compactions"].as_u64().unwrap_or(0)) {
+                return Err(anyhow!("Invalid compaction segment provenance"));
+            }
+            let created_at=crate::now();
+            let segment=json!({"schema_version":1,"session_id":sid,"segment_id":segment_id,
+                "source_digest":source_digest,"source":source,"created_at":created_at});
+            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
+                .bind(format!("compaction_segment:{sid}:{segment_id}"))
+                .bind(self.seal(&segment)?).execute(&mut *tx).await?;
+            let mut entries=session["compaction_segments"].as_array().cloned().unwrap_or_default();
+            if entries.len()>=32 {entries.remove(0);}
+            entries.push(json!({"segment_id":segment_id,"source_digest":source_digest,
+                "item_count":source.len(),"created_at":created_at}));
+            session["compaction_segments"]=json!(entries);
             sqlx::query("UPDATE docs SET value=? WHERE key=?")
                 .bind(self.seal(&session)?)
                 .bind(&session_key)
@@ -2165,13 +2195,15 @@ mod tests {
             .unwrap();
         assert_eq!(store.context("s").await.unwrap()[0]["content"], "old");
         let summary = json!({"role":"user","content":"summary"});
+        let source=json!([{"role":"user","content":"old"}]);
         let mut checkpoint=json!({"id":"r1","session_id":"s","status":"running",
-            "input":[summary.clone()],"updated_at":1});
+            "input":[summary.clone()],"compactions":1,"updated_at":1});
         store
             .save_run(
                 &mut checkpoint,
                 "context_compacted",
-                &json!({"run_id":"r1"}),
+                &json!({"run_id":"r1","segment_id":"r1-1","source_digest":crate::digest(&source),
+                    "source":source,"dropped_items":1}),
             )
             .await
             .unwrap();
@@ -2216,13 +2248,15 @@ mod tests {
             ));
         }
         let mut checkpoint=json!({"id":"r1","session_id":"s","status":"running",
-            "input":[],"updated_at":1});
+            "input":[],"compactions":1,"updated_at":1});
         checkpoint["input"]=json!([{"role":"user","content":"new checkpoint"}]);
+        let source=json!([{"role":"user","content":"old"}]);
         store
             .save_run(
                 &mut checkpoint,
                 "context_compacted",
-                &json!({"run_id":"r1"}),
+                &json!({"run_id":"r1","segment_id":"r1-1","source_digest":crate::digest(&source),
+                    "source":source,"dropped_items":1}),
             )
             .await
             .unwrap();

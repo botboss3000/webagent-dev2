@@ -10,6 +10,18 @@ pub(crate) mod core_session;
 pub(crate) mod core_skills;
 #[path = "../../../plugins/abilities/Core/base/prompt_adapter.rs"]
 pub(crate) mod core_prompt;
+#[path = "../../../plugins/abilities/Core/base/search_adapter.rs"]
+pub(crate) mod core_search;
+#[path = "../../../plugins/abilities/Core/base/self_edit_adapter.rs"]
+pub(crate) mod core_self_edit;
+#[path = "../../../plugins/abilities/Core/base/task_adapter.rs"]
+pub(crate) mod core_task;
+#[path = "../../../plugins/abilities/Core/base/mode_adapter.rs"]
+pub(crate) mod core_mode;
+#[path = "../../../plugins/abilities/Core/base/compaction_adapter.rs"]
+pub(crate) mod core_compaction;
+#[path = "../../../plugins/abilities/Core/base/recall_adapter.rs"]
+pub(crate) mod core_recall;
 mod dispatch;
 pub(crate) mod administrator;
 pub(crate) use dispatch::call;
@@ -32,6 +44,11 @@ pub fn is_read(name: &str) -> bool {
             | "list_skills"
             | "load_skill"
             | "read_own_prompt"
+            | "session_search"
+            | "similar_sessions"
+            | "get_task_checkpoint"
+            | "compact_context"
+            | "recall_compacted"
             | "web_search"
             | "get_weather"
             | "maps_geocode"
@@ -41,6 +58,7 @@ pub fn is_read(name: &str) -> bool {
             | "source_review"
             | "state_inspect"
             | "prompt_slot_read"
+            | "set_execution_mode"
             | "code_index_lookup"
             | "code_index_coverage"
             | "code_index_trace"
@@ -86,6 +104,12 @@ pub fn schemas() -> Vec<Value> {
         schemas.extend(core_session::schemas());
         schemas.extend(core_skills::schemas());
         schemas.extend(core_prompt::schemas());
+        schemas.extend(core_search::schemas());
+        schemas.extend(core_self_edit::schemas());
+        schemas.extend(core_task::schemas());
+        schemas.extend(core_compaction::schemas());
+        schemas.extend(core_recall::schemas());
+        schemas.extend(core_mode::schemas());
         schemas
     }).clone()
 }

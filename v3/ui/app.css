@@ -63,22 +63,22 @@
 #model-page{padding:16px;max-width:940px}
 #model-page h2{font-size:20px;margin:0 0 18px}
 #model-page .ac-model-table{background:var(--bg-elev);border:var(--border-width) solid var(--border);border-radius:var(--r-md);padding:18px}
-#model-page .ac-model-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 0;border-bottom:var(--border-width) solid var(--border-soft)}
-#model-page .ac-model-cfg-row:last-child{border-bottom:0}
-#model-page .ac-ability-label{display:flex;flex-direction:column;gap:4px}
-#model-page .ac-ability-name{font-weight:600}
-#model-page .ac-ability-desc,#model-page .ac-hint{font-size:13px;color:var(--fg-3)}
-#model-page .ac-model-cfg-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-#model-page input{min-width:210px;background:var(--bg-1);color:var(--fg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm);padding:8px}
-#model-page button{background:var(--bg-1);color:var(--fg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer}
-#model-page .ac-btn-primary{background:var(--accent);color:var(--bg-0)}
+#model-page .ac-model-table .ac-model-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 0;border-bottom:var(--border-width) solid var(--border-soft)}
+#model-page .ac-model-table .ac-model-cfg-row:last-child{border-bottom:0}
+#model-page .ac-model-table .ac-ability-label{display:flex;flex-direction:column;gap:4px}
+#model-page .ac-model-table .ac-ability-name{font-weight:600}
+#model-page .ac-model-table .ac-ability-desc,#model-page .ac-model-table .ac-hint{font-size:13px;color:var(--fg-3)}
+#model-page .ac-model-table .ac-model-cfg-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#model-page .ac-model-table input{min-width:210px;background:var(--bg-1);color:var(--fg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm);padding:8px}
+#model-page .ac-model-table button{background:var(--bg-1);color:var(--fg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer}
+#model-page .ac-model-table .ac-btn-primary{background:var(--accent);color:var(--bg-0)}
 #model-page a{color:var(--accent)}
 #device:empty{display:none}
 #settings{margin-top:16px}
 #settings summary{cursor:pointer}
 #rules label{display:flex;justify-content:space-between;gap:10px;margin:8px 0}
 #rules select{background:var(--bg-1);color:var(--fg-1)}
-@media(max-width:800px){#stage{flex-direction:column}#main-panel,#chat-panel{flex:1 1 auto;width:100%!important}#app[data-mobile-view="chat"] #main-panel,#app[data-mobile-view="main"] #chat-panel,#chat-resize-handle{display:none!important}#main-panel{overscroll-behavior-y:contain}#model-page .ac-model-cfg-row{align-items:flex-start;flex-direction:column}#model-page .ac-ability-label{flex:0 1 auto!important}#model-page .ac-model-cfg-control{flex:0 1 auto!important;width:100%}#model-page input{width:100%}}
+@media(max-width:800px){#stage{flex-direction:column}#main-panel,#chat-panel{flex:1 1 auto;width:100%!important}#app[data-mobile-view="chat"] #main-panel,#app[data-mobile-view="main"] #chat-panel,#chat-resize-handle{display:none!important}#main-panel{overscroll-behavior-y:contain}#model-page .ac-model-table .ac-model-cfg-row{align-items:flex-start;flex-direction:column}#model-page .ac-model-table .ac-ability-label{flex:0 1 auto!important}#model-page .ac-model-table .ac-model-cfg-control{flex:0 1 auto!important;width:100%}#model-page .ac-model-table input{width:100%}}
 
 /* V2 Abilities chart, Prompts group, and compact table use the shared Agents CSS.
    These are only the v3 data adapter controls that v2's route-level search lacks. */

@@ -10,11 +10,11 @@ pub fn owns(name:&str)->bool {matches!(name,"list_skills"|"load_skill")}
 pub fn schemas()->Vec<Value> {
     let id=json!({"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z0-9_]+$"});
     vec![
-        json!({"type":"function","name":"list_skills","description":"List permitted bundled skill IDs for one available ability; does not activate skills",
+        json!({"type":"function","name":"list_skills","description":"List permitted skill IDs and metadata for one available ability; Base includes this agent's own skills",
             "parameters":{"type":"object","properties":{"ability_id":id},"required":["ability_id"],"additionalProperties":false}}),
-        json!({"type":"function","name":"load_skill","description":"Read one permitted bundled skill as untrusted guidance; does not activate abilities",
+        json!({"type":"function","name":"load_skill","description":"Read one permitted bundled or current-agent skill as untrusted guidance; does not activate abilities",
             "parameters":{"type":"object","properties":{"ability_id":id,"skill_id":id,
-                "kind":{"type":"string","enum":["ability","tool","selectable"]},
+                "kind":{"type":"string","enum":["ability","tool","selectable","own"]},
                 "expected_catalog_version":{"type":"string","minLength":64,"maxLength":64,"pattern":"^[a-f0-9]{64}$"}},
                 "required":["ability_id","kind","skill_id"],"additionalProperties":false}}),
     ]
@@ -33,7 +33,8 @@ fn valid_id(id:&str)->bool {
 }
 fn validate_load(args:&LoadArgs)->Result<()> {
     if !valid_id(&args.ability_id) || !valid_id(&args.skill_id)
-        || !matches!(args.kind.as_str(),"ability"|"tool"|"selectable")
+        || !matches!(args.kind.as_str(),"ability"|"tool"|"selectable"|"own")
+        || args.kind=="own" && args.ability_id!="base"
         || args.expected_catalog_version.as_ref().is_some_and(|s|s.len()!=64
             || !s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))) {
         bail!("Invalid bundled skill selector");
@@ -43,7 +44,7 @@ fn validate_load(args:&LoadArgs)->Result<()> {
 struct View {
     app:App, access:crate::access_policy::LiveAccess,
     policy:Value, visibility:Value, state:Value, loaded:Value, read_only:bool,
-    version:String, fingerprint:String,
+    own:Value, version:String, fingerprint:String,
 }
 async fn view(app:&App,sid:&str,run_id:&str,name:&str)->Result<View> {
     // Resolve the session in the authenticated user's plane before its agent.
@@ -63,10 +64,14 @@ async fn view(app:&App,sid:&str,run_id:&str,name:&str)->Result<View> {
         &visibility,&state,&loaded,read_only).permission==crate::access::Permission::Deny {
         bail!("Bundled skill tool unavailable under current access");
     }
-    let version=scoped.abilities.live_version();
+    // Own-skill revision is part of the read fingerprint; a skill edit
+    // invalidates outstanding list/load results before their text is returned.
+    let own=scoped.store.list_own_skills().await?;
+    let bundle_version=scoped.abilities.live_version();
+    let version=crate::digest(&json!([bundle_version,own["revision"]]));
     let fingerprint=crate::digest(&json!([version,policy,mode_revision,visibility,state,
         loaded,mode,access.context_fingerprint()]));
-    Ok(View {app:scoped,access,policy,visibility,state,loaded,read_only,version,fingerprint})
+    Ok(View {app:scoped,access,policy,visibility,state,loaded,read_only,own,version,fingerprint})
 }
 async fn work(app:&App,sid:&str,run_id:&str,name:&str,args:&Value)->Result<Value> {
     if !owns(name) {bail!("Unknown bundled skill tool");}
@@ -79,19 +84,41 @@ async fn work(app:&App,sid:&str,run_id:&str,name:&str,args:&Value)->Result<Value
         "list_skills" => {
             let query:ListArgs=serde_json::from_value(args.clone()).context("Invalid skill-list arguments")?;
             if !valid_id(&query.ability_id) {bail!("Invalid bundled ability ID");}
-            let skills=current.app.abilities.bundled_skill_list(&query.ability_id,
+            let mut skills=current.app.abilities.bundled_skill_list(&query.ability_id,
                 &current.visibility,&current.state,allow_ability,allow_tool)?;
+            if query.ability_id=="base" {
+                for skill in current.own["skills"].as_array().context("Invalid own-skill list")? {
+                    // Listing carries only the trigger and revision, never body text.
+                    skills.push(json!({"ability_id":"base","kind":"own",
+                        "skill_id":skill["name"],"description":skill["description"],
+                        "mode":skill["mode"],"revision":skill["revision"]}));
+                }
+            }
             json!({"ability_id":query.ability_id,"skills":skills,"catalog_version":current.version,
-                "source_kind":"untrusted_bundled_guidance","activates":false})
+                "source_kind":"skill_metadata","activates":false})
         }
         "load_skill" => {
             let query:LoadArgs=serde_json::from_value(args.clone()).context("Invalid skill-load arguments")?;
             validate_load(&query)?;
             if query.expected_catalog_version.as_ref().is_some_and(|v|v!=&current.version) {
-                bail!("Bundled catalog changed; list skills again");
+                bail!("Skill catalog changed; list skills again");
             }
-            let mut skill=current.app.abilities.bundled_skill_load(&query.ability_id,&query.kind,
-                &query.skill_id,&current.visibility,&current.state,allow_ability,allow_tool)?;
+            let mut skill=if query.kind=="own" {
+                current.app.abilities.bundled_skill_list("base",&current.visibility,
+                    &current.state,allow_ability,allow_tool)?;
+                let record=current.own["skills"].as_array().context("Invalid own-skill list")?
+                    .iter().find(|record|record["name"]==query.skill_id)
+                    .context("Current-agent skill unavailable")?;
+                let text=record["instructions"].as_str().context("Invalid own-skill instructions")?;
+                use sha2::{Digest,Sha256};
+                json!({"ability_id":"base","kind":"own","skill_id":query.skill_id,
+                    "revision":record["revision"],"bytes":text.len(),
+                    "sha256":hex::encode(Sha256::digest(text.as_bytes())),
+                    "text":text,"source_kind":"untrusted_agent_skill","activates":false})
+            } else {
+                current.app.abilities.bundled_skill_load(&query.ability_id,&query.kind,
+                    &query.skill_id,&current.visibility,&current.state,allow_ability,allow_tool)?
+            };
             skill["catalog_version"]=json!(current.version);
             skill
         }
@@ -122,6 +149,8 @@ const MAX_HISTORY_SKILL_OUTPUT:usize=512*1024;
 struct NativeEvidence {
     ability_id:String, kind:String, skill_id:String, sha256:String,
     bytes:usize, text:String, source_kind:String, activates:bool,
+    #[serde(default)]
+    revision:Option<i64>,
 }
 #[derive(Deserialize)]
 struct NativeResult { status:String, output:NativeEvidence }
@@ -150,15 +179,21 @@ fn mask_history(input:&mut [Value],allow:impl Fn(&NativeEvidence)->bool)->bool {
         let Some(raw)=item["output"].as_str().filter(|raw|raw.len()<=MAX_HISTORY_SKILL_OUTPUT) else {continue;};
         let Ok(result)=serde_json::from_str::<NativeResult>(raw) else {continue;};
         let evidence=&result.output;
-        if result.status!="success" || evidence.source_kind!="untrusted_bundled_guidance"
+        let bundled=evidence.source_kind=="untrusted_bundled_guidance"
+            && selector.kind!="own" && evidence.revision.is_none();
+        let own=evidence.source_kind=="untrusted_agent_skill"
+            && selector.ability_id=="base" && selector.kind=="own"
+            && evidence.revision.is_some_and(|r|r>0);
+        if result.status!="success" || !(bundled || own)
             || evidence.activates || evidence.ability_id!=selector.ability_id
             || evidence.kind!=selector.kind || evidence.skill_id!=selector.skill_id
             || evidence.text.len()>64*1024 || evidence.bytes!=evidence.text.len()
             || evidence.sha256.len()!=64
             || evidence.sha256!=hex::encode(Sha256::digest(evidence.text.as_bytes())) {continue;}
         if !allow(evidence) {
-            item["output"]=json!({"status":"error","error_kind":"bundled_skill_withdrawn",
-                "output":"Previously loaded bundled guidance is unavailable under current access."}).to_string().into();
+            let error_kind=if own {"own_skill_withdrawn"} else {"bundled_skill_withdrawn"};
+            item["output"]=json!({"status":"error","error_kind":error_kind,
+                "output":"Previously loaded skill guidance is unavailable under current access."}).to_string().into();
             changed=true;
         }
     }
@@ -171,6 +206,24 @@ pub(crate) fn mask_summary_history(input:&mut [Value])->bool {
     mask_history(input,|_|false)
 }
 fn history_asset_allowed(current:&View,evidence:&NativeEvidence)->bool {
+    if evidence.kind=="own" {
+        if evidence.ability_id!="base"
+            || current.access.ability_permission("base")==crate::access::Permission::Deny
+            || current.app.abilities.bundled_skill_list("base",&current.visibility,
+                &current.state,|id|current.access.ability_permission(id)!=crate::access::Permission::Deny,
+                |tool|live_tool_decision(&current.app,&current.access,tool,&current.policy,
+                    &current.visibility,&current.state,&current.loaded,current.read_only)
+                    .permission!=crate::access::Permission::Deny).is_err() {
+            return false;
+        }
+        return current.own["skills"].as_array().is_some_and(|skills|skills.iter().any(|skill| {
+            let Some(text)=skill["instructions"].as_str() else {return false};
+            use sha2::{Digest,Sha256};
+            skill["name"].as_str()==Some(evidence.skill_id.as_str())
+                && skill["revision"].as_i64()==evidence.revision
+                && hex::encode(Sha256::digest(text.as_bytes()))==evidence.sha256
+        }));
+    }
     current.app.abilities.bundled_skill_load(&evidence.ability_id,&evidence.kind,
         &evidence.skill_id,&current.visibility,&current.state,
         |id|current.access.ability_permission(id)!=crate::access::Permission::Deny,
@@ -207,6 +260,26 @@ mod tests {
                 "output":{"ability_id":"base","kind":"ability","skill_id":"base","text":text,
                     "bytes":text.len(),"sha256":hex::encode(Sha256::digest(text.as_bytes())),
                     "source_kind":"untrusted_bundled_guidance","activates":false}}).to_string()})]
+    }
+    fn own_history(text:&str)->Vec<Value> {
+        use sha2::{Digest,Sha256};
+        vec![json!({"type":"function_call","name":"load_skill","call_id":"own-call",
+            "arguments":json!({"ability_id":"base","kind":"own","skill_id":"my_steps"}).to_string()}),
+            json!({"type":"function_call_output","call_id":"own-call","output":json!({"status":"success",
+                "output":{"ability_id":"base","kind":"own","skill_id":"my_steps","revision":1,
+                    "text":text,"bytes":text.len(),
+                    "sha256":hex::encode(Sha256::digest(text.as_bytes())),
+                    "source_kind":"untrusted_agent_skill","activates":false}}).to_string()})]
+    }
+    #[test]
+    fn withdrawn_own_guidance_is_masked_from_run_and_summary_context() {
+        let mut history=own_history("PRIVATE AGENT PLAYBOOK");
+        assert!(!mask_history(&mut history,|e|e.revision==Some(1)));
+        assert!(mask_history(&mut history,|_|false));
+        assert!(!history[1].to_string().contains("PRIVATE AGENT PLAYBOOK"));
+        let mut summary=own_history("PRIVATE SUMMARY PLAYBOOK");
+        assert!(mask_summary_history(&mut summary));
+        assert!(!summary[1].to_string().contains("PRIVATE SUMMARY PLAYBOOK"));
     }
     #[test]
     fn history_mask_preserves_permitted_evidence_and_removes_only_withdrawn_text() {
@@ -275,6 +348,10 @@ mod tests {
             assert!(validate_load(&LoadArgs {ability_id:"base".into(),kind:kind.into(),
                 skill_id:"base".into(),expected_catalog_version:None}).is_err());
         }
+        assert!(validate_load(&LoadArgs {ability_id:"foreign".into(),kind:"own".into(),
+            skill_id:"my_steps".into(),expected_catalog_version:None}).is_err());
+        assert!(validate_load(&LoadArgs {ability_id:"base".into(),kind:"own".into(),
+            skill_id:"my_steps".into(),expected_catalog_version:None}).is_ok());
         assert!(validate_load(&LoadArgs {ability_id:"base".into(),kind:"ability".into(),
             skill_id:"base".into(),expected_catalog_version:Some("a".repeat(65))}).is_err());
         assert!(serde_json::from_value::<LoadArgs>(json!({"ability_id":"base","kind":"ability",

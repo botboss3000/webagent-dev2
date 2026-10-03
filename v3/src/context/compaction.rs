@@ -162,35 +162,44 @@ fn call_id(item: &Value) -> Option<&str> {
 fn plan(input: &[Value], max_bytes: usize, reserve_bytes: usize) -> Result<Option<Plan>> {
     let mut config = Config::configured()?;
     config.summary_reserve_bytes = reserve_bytes;
-    plan_with_config(input, max_bytes, &config, false)
+    plan_with_config(input, max_bytes, &config, false, false)
 }
 
 /// COMPACTION POLICY: history targets are estimated characters/tokens, not the
 /// serialized request ceiling supplied by context_assembly.rs. Either can trigger a fold.
 pub fn plan_rolling(input: &[Value], max_bytes: usize, config: &Config) -> Result<Option<Plan>> {
     config.validate()?;
-    plan_with_config(input, max_bytes, config, true)
+    plan_with_config(input, max_bytes, config, true, false)
+}
+
+/// A model-requested fold uses the same completed-exchange boundary as automatic
+/// compaction, even when the ordinary size trigger has not fired. The caller
+/// records the request with its tool result and invokes this at the next model
+/// boundary, once that exchange is complete.
+pub fn plan_manual(input: &[Value], max_bytes: usize, config: &Config) -> Result<Option<Plan>> {
+    config.validate()?;
+    plan_with_config(input, max_bytes, config, true, true)
 }
 
 // The live rolling planner and the test-only legacy planner share this
 // measurement path, so release builds must include it.
-fn plan_with_config(input: &[Value], max_bytes: usize, config: &Config, rolling: bool) -> Result<Option<Plan>> {
+fn plan_with_config(input: &[Value], max_bytes: usize, config: &Config, rolling: bool, force: bool) -> Result<Option<Plan>> {
     let reserve_bytes = config.summary_reserve_bytes;
     if max_bytes < 2 || reserve_bytes == 0 || reserve_bytes >= max_bytes {
         bail!("Invalid context budget");
     }
     let sizes = input.iter().map(encoded_len).collect::<Result<Vec<_>>>()?;
     let characters = input.iter().map(|item| serde_json::to_string(item).map(|text| text.chars().count())).collect::<std::result::Result<Vec<_>, _>>()?;
-    plan_measured(input, max_bytes, config, rolling, &sizes, &characters)
+    plan_measured(input, max_bytes, config, rolling, force, &sizes, &characters)
 }
 
 /// Consume append-only accounting without serializing unchanged history. Full source
 /// copying and hashing occur only after a safe compaction boundary is selected.
 pub fn plan_cached(input: &[Value], max_bytes: usize, config: &Config, sizes: &[usize], characters: &[usize]) -> Result<Option<Plan>> {
     config.validate()?;
-    plan_measured(input, max_bytes, config, true, sizes, characters)
+    plan_measured(input, max_bytes, config, true, false, sizes, characters)
 }
-fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bool, sizes: &[usize], characters: &[usize]) -> Result<Option<Plan>> {
+fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bool, force: bool, sizes: &[usize], characters: &[usize]) -> Result<Option<Plan>> {
     let reserve_bytes = config.summary_reserve_bytes;
     if sizes.len()!=input.len() || characters.len()!=input.len() || reserve_bytes>=max_bytes { bail!("Invalid compaction measurements or budget"); }
     let total = 2usize
@@ -199,7 +208,7 @@ fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bo
         .ok_or_else(|| anyhow!("Context size overflow"))?;
     let history_triggered = rolling && characters.iter().sum::<usize>()
         > config.trigger_tokens * config.characters_per_token;
-    if total <= max_bytes && !history_triggered {
+    if total <= max_bytes && !history_triggered && !force {
         return Ok(None);
     }
 
@@ -454,6 +463,16 @@ mod tests {
         c.summary_tokens = 20;
         c.summary_reserve_bytes = 300;
         c
+    }
+    #[test]
+    fn manual_fold_waits_for_a_safe_completed_exchange() {
+        let c = rolling_config();
+        let input = vec![user("old request"), assistant("old answer"), user("current request")];
+        assert!(plan_rolling(&input, 4096, &c).unwrap().is_none());
+        let requested = plan_manual(&input, 4096, &c).unwrap().unwrap();
+        assert_eq!(requested.drop_until, 2);
+        assert_eq!(&apply_summary(&input, &requested, "prior answer").unwrap()[1..], &input[2..]);
+        assert!(plan_manual(&[user("only request")], 4096, &c).is_err());
     }
     #[test]
     fn rolling_trigger_is_independent_of_byte_ceiling_and_keeps_tail() {

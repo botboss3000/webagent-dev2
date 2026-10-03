@@ -109,6 +109,12 @@ existing storage and API contracts stay stable through this source move.
 5. **Prepare and call the model.** The loop assembles history, instructions,
    and available tools. Configured model-dispatch gates add trusted, call-scoped
    guidance and private control schemas; this guidance is not durable chat text.
+   Before each call, Rust filters the installed ability catalog and tool schemas
+   through live agent, account-tier, membership, installation, and session rules.
+   It generates a compact # [ABILITIES] menu for discoverable abilities and a
+   # [TOOLS] list for tools callable now. load_ability reveals a selected ability's
+   skill and tools for the session; the menu itself grants nothing. This mirrors
+   V2's generated indexes without copying its authored bootstrap_tools slot.
    The integral gate JSON under `v3/data/config/gates` is both the build input
    and live configuration. Optional modules live under `v3/plugins/gates`. [workflow.rs](../src/workflow.rs) names the fixed
    checkpoints; [context/input.rs](../src/context/input.rs) defines borrowed inputs
@@ -223,7 +229,19 @@ journal remains intact. Compacted history remains past evidence, not permission.
 Base read_own_prompt resolves the current caller-owned session before the agent
 and rechecks live access and bundle validity around bounded prompt-slot reads.
 Internal slots are omitted; locked slots and nonmanagers are reported read-only.
-This does not install the separate edit_own_prompt contract.
+The separate edit_own_prompt, save_own_skill and remove_own_skill tools now
+target that agent, require manager authority and compare-and-swap revisions,
+and save idempotency receipts. Self-authored skills remain selectable only;
+loading one never grants execution.
+
+Base's cross-session search reads only caller-owned sessions and rechecks agent
+admission. Similarity is lexical. Manual compaction runs only at the next safe
+model boundary; the source segment and checkpoint save atomically in encrypted
+user storage. Recall pages that source after masking revocable guidance. Task
+checkpoints and declarative components use run-generation fences and revisions.
+The session snapshot projects components as display-only data; the chat panel
+renders them as text on reload. A model-generated choice, form or approval
+display does not submit an answer or authorize an action.
 
 ## Administrator coding path
 

@@ -129,12 +129,19 @@ pub(crate) async fn execute_run(
                                 .permission!=access::Permission::Deny
                         }
                     }).collect::<Vec<_>>();
-                let guidance = app.abilities.visible_guidance_filtered(&policy,&visibility,
+                // Build the model menu from the same filtered catalog and schemas
+                // used for this caller; the menu never grants execution.
+                let mut entries=app.abilities.catalog_with(&policy,&visibility,&ability_state);
+                entries.retain_mut(|entry|filter_ability_entry(&app,&access,entry,
+                    &policy,&visibility,&ability_state,&run["loaded_abilities"],read_only));
+                let index=abilities::Catalog::model_index(&entries,&schemas);
+                let visible=app.abilities.visible_guidance_filtered(&policy,&visibility,
                     &ability_state,
                     |id|access.ability_permission(id)!=access::Permission::Deny,
                     |name|live_tool_decision(&app,&access,name,&policy,&visibility,
                         &ability_state,&run["loaded_abilities"],read_only)
                         .permission!=access::Permission::Deny);
+                let guidance=format!("{index}{visible}");
                 context_assets = Some((asset_key, schemas, guidance));
             }
             let (assembled_asset_key, base_schemas, guidance) = context_assets.as_ref().unwrap();
@@ -207,6 +214,25 @@ pub(crate) async fn execute_run(
                     return Ok(());
                 }
             };
+            // A manual request is only acted on after its tool result has been
+            // saved, so no pending call is split across the summary boundary.
+            let assembled=if run["manual_compaction_requested"]==true {
+                match assembled {
+                    context_assembly::Prepared::Ready(ref envelope) => {
+                        match context_compaction::plan_manual(run["input"].as_array().unwrap(),
+                            envelope.report.history_budget_bytes,&compaction_config) {
+                            Ok(Some(plan)) => context_assembly::Prepared::Compact(plan),
+                            _ => {
+                                run["status"]=json!("paused");
+                                run["error"]=json!("Manual compaction has no safe completed boundary; review this run");
+                                app.save(&mut run).await?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                    prepared => prepared,
+                }
+            } else { assembled };
             // The assembler only plans; the loop owns summarization and persistence.
             if let context_assembly::Prepared::Compact(plan) = assembled {
                 // Compaction dispatches only its admission-pinned System role and backup cursor.
@@ -368,13 +394,16 @@ pub(crate) async fn execute_run(
                 run["input"] = json!(compacted);
                 context_accounting.reset();
                 run["compactions"] = json!(run["compactions"].as_u64().unwrap_or(0) + 1);
+                run["manual_compaction_requested"] = json!(false);
                 run["updated_at"] = json!(now());
                 run["error"] = Value::Null;
+                let segment_id=format!("{}-{}",id,run["compactions"].as_u64().unwrap());
                 app.store
                     .save_run(
                         &mut run,
                         "context_compacted",
                         &json!({"run_id":id,"source_digest":plan.source_digest,
+                            "segment_id":segment_id,"source":plan.source,
                             "dropped_items":plan.drop_until,"summary_bytes":summary.unwrap().len()}),
                     )
                     .await?;
@@ -688,7 +717,7 @@ pub(crate) async fn execute_run(
         } else {
             if run["calls"].as_array().is_some_and(|calls|calls.len()>1
                 && !calls.iter().any(|call|matches!(call["name"].as_str(),
-                    Some("publish_main_message" | "set_closer_status")))) {
+                    Some("publish_main_message" | "set_closer_status" | "compact_context")))) {
                 // NATIVE-GATE-SERIAL: private controls keep provider order and
                 // never enter a parallel batch or the Python tool worker.
                 run["closing"]=Value::Null;
@@ -782,7 +811,7 @@ pub(crate) async fn execute_run(
             let (policy, mode_revision, visibility, mut ability_state) =
                 ability_controls(&app, &sid).await?;
             let read_only=session_mode(&app,&sid).await?["mode"]=="read_only";
-            let effective=if abilities::is_discovery(&name) {
+            let mut effective=if abilities::is_discovery(&name) {
                 let installation=access::Permission::from_policy(policy_decision(&policy,&name))
                     .unwrap_or(access::Permission::Deny);
                 access.tool_decision(&name,installation,true,true,read_only,true)
@@ -804,6 +833,13 @@ pub(crate) async fn execute_run(
                     "ability_state_revision":ability_state["revision"],
                     "access_revision":access.revision.clone(),
                     "state":"requested","decision":null});
+            }
+            // A model may narrow its own session without approval. Restoring
+            // write authority from read_only always crosses a human checkpoint,
+            // even when an administrator otherwise grants automatic use.
+            if name=="set_execution_mode" && read_only && args["mode"]=="write"
+                && effective.permission!=access::Permission::Deny {
+                effective.permission=access::Permission::Ask;
             }
             if run["pending"]["policy_version"] != policy["version"]
                 || run["pending"]["access_revision"] != json!(access.revision)
@@ -934,6 +970,7 @@ pub(crate) async fn execute_run(
                 return Err(anyhow!("Tool argument digest mismatch"));
             }
             run["pending"]["state"] = json!("executing");
+            run["pending"]["human_approved"] = json!(run["pending"]["decision"] == "approve");
             run["pending"]["decision"] = json!("consumed");
             let model=run["provider_selection"]["model"].as_str().unwrap_or("");
             let valid=app.store.live_access(app.store.current_user_id(),&agent_id).await
@@ -951,7 +988,7 @@ pub(crate) async fn execute_run(
             app.save(&mut run).await?;
             drop(_guard);
             let result = tools::call(
-                app.clone(), sid.clone(), id.clone(), name.clone(), args.clone(),
+                app.clone(), sid.clone(), id.clone(), generation.clone(), name.clone(), args.clone(),
                 run["pending"]["id"].as_str().unwrap().to_owned(),
                 run["pending"]["policy_version"].as_u64().unwrap_or(0),
                 cancel.clone(),
@@ -982,6 +1019,10 @@ pub(crate) async fn execute_run(
                         return Ok(());
                     }
                     append_tool(&mut run, &value)?;
+                    if name=="compact_context" && value["status"]=="success"
+                        && value["control"]=="manual_compaction_requested" {
+                        run["manual_compaction_requested"]=json!(true);
+                    }
                     app.store
                         .save_run(
                             &mut run,

@@ -5082,10 +5082,10 @@ async fn web_access_native_dispatch_needs_no_worker_and_cancels() {
     let (_root,app)=fixture().await;let sid=conversation(&app).await;
     let args=json!({"action":"distance","lat":0,"lon":0,"lat2":0,"lon2":1});
     assert!(!app.tool_socket.exists());
-    let result=tools::call(app.clone(),sid.clone(),uuid(),"maps_geocode".into(),args.clone(),uuid(),1,CancellationToken::new()).await.unwrap();
+    let result=tools::call(app.clone(),sid.clone(),uuid(),"fixture-generation".into(),"maps_geocode".into(),args.clone(),uuid(),1,CancellationToken::new()).await.unwrap();
     assert_eq!(result["status"],"success");assert_eq!(result["output"]["km"],111.195);
     let cancel=CancellationToken::new();cancel.cancel();
-    assert!(tools::call(app,sid,uuid(),"maps_geocode".into(),args,uuid(),1,cancel).await.is_err());
+    assert!(tools::call(app,sid,uuid(),"fixture-generation".into(),"maps_geocode".into(),args,uuid(),1,cancel).await.is_err());
     for name in ["web_search","get_weather","maps_geocode"] {assert!(tools::is_read(name));}
 }
 
@@ -5364,6 +5364,31 @@ async fn session_read_routes_enforce_auth_csrf_ownership_and_monotonicity() {
     assert_eq!(ability_request(&app,Method::PUT,"/api/v3/sessions/missing/read",Some(json!({"through_seq":0})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::NOT_FOUND);
     let (_, snapshot) = ability_request(&app,Method::GET,&format!("/api/v3/sessions/{sid}"),None,Some(&cookie),None).await;
     assert_eq!(snapshot["session"],result["session"]);
+}
+
+#[tokio::test]
+async fn session_search_routes_are_private_authenticated_and_access_filtered() {
+    use axum::http::Method;
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let cookie = ability_auth(&app).await;
+    let mut doc = app.store.get(&key("session",&sid)).await.unwrap().unwrap();
+    doc["title"] = json!("Private Needle"); doc["checkpoint_input"] = json!([{"content":"hidden-only"}]);
+    app.store.put(&key("session",&sid),&doc).await.unwrap();
+    app.store.atomic_docs_event(vec![],&sid,"message",&json!({"role":"user","run_id":"search-r","content":"needle <img src=x onerror=alert(1)>"})).await.unwrap();
+    app.store.put("session:denied-search",&json!({"id":"denied-search","title":"needle denied","agent_id":"missing-agent"})).await.unwrap();
+    sqlx::query("INSERT INTO user_accounts(user_id,username,value) VALUES('searchforeign','searchforeign',?)").bind(app.store.seal(&json!({"user_id":"searchforeign","username":"searchforeign"})).unwrap()).execute(&app.store.app_pool).await.unwrap();
+    let other=app.store.for_user("searchforeign").await.unwrap();
+    other.put("session:foreign-search",&json!({"id":"foreign-search","title":"needle foreign"})).await.unwrap();
+    let uri="/api/v3/sessions/search?q=needle";
+    assert_eq!(ability_request(&app,Method::GET,uri,None,None,None).await.0,StatusCode::UNAUTHORIZED);
+    let (status,page)=ability_request(&app,Method::GET,uri,None,Some(&cookie),None).await;
+    assert_eq!(status,StatusCode::OK); assert_eq!(page["results"].as_array().unwrap().len(),2);
+    assert!(page["results"].as_array().unwrap().iter().all(|h|h["session_id"]==sid));
+    assert!(page["results"][1]["snippet"].as_str().unwrap().contains("<img"));
+    let (_,hidden)=ability_request(&app,Method::GET,"/api/v3/sessions/search?q=hidden-only",None,Some(&cookie),None).await; assert!(hidden["results"].as_array().unwrap().is_empty());
+    assert_eq!(ability_request(&app,Method::GET,"/api/v3/sessions/search?q=needle&continuation=ffff",None,Some(&cookie),None).await.0,StatusCode::BAD_REQUEST);
+    assert_eq!(ability_request(&app,Method::GET,"/api/v3/sessions/search?q=needle&limit=51",None,Some(&cookie),None).await.0,StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

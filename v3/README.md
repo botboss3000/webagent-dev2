@@ -9,6 +9,17 @@ groups retain their individual readiness decisions. The policy migration
 preserves existing grants beneath prior ceilings and does not automatically
 grant newly installed plugins.
 
+The current Base source adds model-callable tools for revisioned session mode,
+private cross-session literal search, manual compaction and bounded recall,
+agent-administrator prompt and selectable skill edits, durable task checkpoints,
+and declarative presentation components. The 2026-10-03 pinned Rust suite passed
+341 tests (2 ignored), and both V3 development containers are healthy.
+Authenticated API acceptance confirmed Base tool checkpoints, one persisted
+assistant reply per run, and caller-owned cross-session search through the
+model tool. Other new tools have focused Rust coverage but were not each
+exercised in a live model run. A read-only to write mode request requires
+approval and a fresh revision.
+
 
 Independent Rust agent runtime, subscription provider adapter, and isolated Python tool worker.
 Source lives here within the primary development checkout; v2 remains independently available.
@@ -183,8 +194,36 @@ Recycled sessions reject new messages and nonterminal run writes/claims with 409
 storage checks the lifecycle in the write transaction, fencing independent-store
 admission races. Existing accepted-message receipts remain retryable.
 
-Pagination/search and dropdown wiring remain later
-phases.
+Private session search (phase 5, source-tested; not deployed): browser-only
+`GET /api/v3/sessions/search?q=<text>&status=active&limit=20` searches only the
+signed-in user's encrypted session titles and chat-visible user/assistant string
+content. It never searches reasoning, checkpoints, tool records or another user's
+store. Live agent access filters results; no machine-messaging search route is
+exposed. Matching is case-insensitive and literal, not regex, fuzzy or stemming.
+`status` is active (default) or recycled; `limit` is 1–50 (default 20). Queries
+are trimmed and normalized, capped at 128 characters and 256 normalized bytes.
+
+Results identify title/message hits, session/agent IDs, title, a plain-text snippet
+of at most 240 characters and, for messages, sequence and role. **Render titles and
+snippets with textContent, never innerHTML or Markdown**; snippets intentionally
+remain plain strings even when source text contains markup. Search does not mark
+messages read or update activity.
+
+Each request scans at most 128 candidate records and 8 MiB of ciphertext, with a
+2 MiB per-record ceiling (including session documents containing checkpoints).
+Oversized records are skipped explicitly: `skipped_oversized`, cumulative
+`skipped_oversized_total`, and `incomplete_due_to_size` disclose missing coverage.
+`scan_complete` means traversal exhausted, not that oversized content was searched.
+An empty results page can still have a continuation after scan/access filtering.
+Follow `continuation` with the same query/status until absent. The encrypted,
+authenticated token is user/query/status-bound, expires after 15 minutes, survives
+restart and rejects tampering. Invalid bounds/tokens return 400.
+
+Traversal is titles by session ID, then messages by sequence, not relevance order.
+Initial title-key/message-sequence upper bounds exclude later appends above those
+bounds, but each page reads current content/status: this is not an immutable
+cross-request snapshot. Restart a search after edits for a fresh view. No plaintext
+search index or result receipts are persisted. Dropdown integration remains phase 6.
 The Rust changes require a rebuild and authorized development deployment before
 live databases receive the migration; no deployment is performed by the tests.
 
@@ -393,6 +432,20 @@ session read-only mode still filter schemas and deny calls at dispatch.
 Changes increment a revision and revoke approvals waiting under old
 settings. Agent visibility and session activation are encrypted in their
 respective databases.
+
+At each model call Rust now builds a bounded # [ABILITIES] menu from the live,
+caller-authorized catalog. A discoverable, unloaded ability appears by ID,
+name, and short summary; its tool schemas and skill body remain withheld until
+load_ability succeeds. The generated # [TOOLS] list names discovery tools and
+tools callable in that call. An individually discoverable tool under a visible
+ability appears under Load on demand with its owning ability ID. Off, suppressed,
+pending, and denied entries are absent. The menu is rebuilt after policy and
+session changes and does not become durable chat history. V2's bootstrap_tools
+slot is authored and template-seeded; its live ability/tool indexes are generated.
+V3 uses its pinned base instructions plus this generated index, not a copied V2
+bootstrap slot that could advertise unavailable tools.
+V2 also has an optional embedding-based relevance hint and auto-reveal path;
+V3 keeps explicit loading and does not import that router.
 
 ## Recovery and controls
 

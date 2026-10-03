@@ -2,6 +2,28 @@
 use super::*;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct SessionSearchArgs {
+    q: String, status: Option<String>, limit: Option<usize>, continuation: Option<String>,
+}
+pub(crate) async fn session_search_api(State(app): State<App>, Query(args): Query<SessionSearchArgs>) -> Api {
+    let mut page = app.store.search_private_sessions(&args.q, args.status.as_deref().unwrap_or("active"), args.limit.unwrap_or(20), args.continuation.as_deref()).await
+        .map_err(|error| if error.downcast_ref::<crate::store::search::InvalidSearch>().is_some() { bad("Invalid or expired search parameters/continuation") } else { ApiError::from(error) })?;
+    let mut results = Vec::new();
+    let mut admitted = std::collections::HashMap::new();
+    for hit in page["results"].as_array().unwrap() {
+        let agent = hit["agent_id"].as_str().unwrap_or("shared_default");
+        let allowed = if let Some(allowed) = admitted.get(agent) { *allowed } else {
+            let allowed = app.store.live_access(app.store.current_user_id(), agent).await.map(|a| a.admitted()).unwrap_or(false);
+            admitted.insert(agent.to_owned(), allowed); allowed
+        };
+        if allowed { results.push(hit.clone()); }
+    }
+    page["results"] = json!(results);
+    page["server_time"] = json!(now());
+    Ok(Json(page))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SessionListArgs { pub status: Option<String> }
 pub(crate) async fn sessions(State(app): State<App>, Query(args): Query<SessionListArgs>) -> Api {
     let recycled = match args.status.as_deref().unwrap_or("active") {
@@ -78,9 +100,10 @@ pub(crate) async fn snapshot(State(app): State<App>, Path(id): Path<String>) -> 
         .iter()
         .map(public_run)
         .collect::<Vec<_>>();
+    let components = app.store.base_chat_components(&id).await?;
     Ok(Json(
         json!({"session":app.store.session_read_summary(&id).await?,
-        "messages":messages,"runs":runs,"last_seq":last_seq}),
+        "messages":messages,"runs":runs,"components":components,"last_seq":last_seq}),
     ))
 }
 #[derive(Deserialize)]
@@ -492,7 +515,16 @@ pub(crate) async fn session_mode_set(
     Path(id): Path<String>,
     Json(body): Json<SessionModeBody>,
 ) -> Api {
-    if !matches!(body.mode.as_str(), "write" | "read_only") {
+    change_session_mode(&app,&id,&body.mode,None,None).await
+}
+#[derive(Clone, Copy)]
+pub(crate) struct ModeCall<'a> { pub run_id: &'a str, pub generation: &'a str, pub pending_id: &'a str }
+
+
+pub(crate) async fn change_session_mode(
+    app: &App, id: &str, mode: &str, expected_revision: Option<u64>, tool: Option<ModeCall<'_>>,
+) -> Api {
+    if !matches!(mode, "write" | "read_only") {
         return Err(bad("Invalid session capability mode"));
     }
     let _guard = app.gate.lock().await;
@@ -500,12 +532,64 @@ pub(crate) async fn session_mode_set(
         return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
     }
     let current = session_mode(&app, &id).await?;
-    if current["mode"] == body.mode {
-        if body.mode=="read_only" {phase3_api::quiesce_session_resources(&app,&id).await?;}
+    let receipt = tool.map(|call| {
+        let key = format!("receipt:session_mode:{id}:{}",call.pending_id);
+        let hash = digest(&json!([id,mode,expected_revision,call.run_id,call.generation,call.pending_id]));
+        (key,hash)
+    });
+    if let Some((receipt_key,hash)) = &receipt {
+        if let Some(saved) = app.store.get(receipt_key).await? {
+            if saved["request_hash"]!=*hash { return Err(conflict("Mode call receipt mismatch")); }
+            if mode=="read_only" {phase3_api::quiesce_session_resources(app,id).await?;}
+            return Ok(Json(saved["result"].clone()));
+        }
+    }
+    if let Some(call) = tool {
+        if expected_revision.is_none()
+            || uuid::Uuid::parse_str(call.run_id).is_err()
+            || uuid::Uuid::parse_str(call.pending_id).is_err()
+            || call.generation.is_empty() {
+            return Err(bad("Invalid mode call identity or revision"));
+        }
+        let agent = session_agent_id(app,id).await?;
+        let run = app.run(call.run_id).await?;
+        let (policy,mode_revision,visibility,state)=ability_controls(app,id).await?;
+        let access=app.store.live_access(app.store.current_user_id(),&agent).await?;
+        if run["session_id"]!=id || run["agent_id"]!=agent
+            || run["generation"]!=call.generation
+            || run["status"]!="running" || run["phase"]!="tools"
+            || run["pending"]["id"]!=call.pending_id
+            || run["pending"]["name"]!="set_execution_mode"
+            || run["pending"]["state"]!="executing"
+            || run["pending"]["policy_version"]!=policy["version"]
+            || run["pending"]["mode_revision"]!=json!(mode_revision)
+            || run["pending"]["visibility_revision"]!=visibility["revision"]
+            || run["pending"]["ability_state_revision"]!=state["revision"]
+            || run["pending"]["access_revision"]!=json!(access.revision.clone())
+            || !access.admitted()
+            || live_tool_decision(app,&access,"set_execution_mode",&policy,&visibility,
+                &state,&run["loaded_abilities"],current["mode"]=="read_only")
+                .permission==access::Permission::Deny {
+            return Err(conflict("Mode call authorization changed"));
+        }
+        if current["mode"]=="read_only" && mode=="write"
+            && run["pending"]["human_approved"]!=true {
+            return Err(ApiError(StatusCode::FORBIDDEN,"Write mode requires approval".into()));
+        }
+    }
+    if expected_revision.is_some_and(|revision| current["revision"].as_u64()!=Some(revision)) {
+        return Err(conflict("Session mode revision changed"));
+    }
+    if current["mode"] == mode {
+        if mode=="read_only" {phase3_api::quiesce_session_resources(&app,&id).await?;}
         return Ok(Json(current));
     }
-    let next = json!({"mode":body.mode,"revision":current["revision"].as_u64().unwrap()+1});
+    let next = json!({"mode":mode,"revision":current["revision"].as_u64().unwrap()+1});
     let mut docs = vec![(key("session_mode", &id), next.clone())];
+    if let Some((receipt_key,hash)) = receipt {
+        docs.push((receipt_key,json!({"request_hash":hash,"result":next})));
+    }
+
     for view in app.store.active_runs().await? {
         if view["session_id"] != id || view["status"] != "waiting_approval" {
             continue;

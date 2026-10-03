@@ -150,7 +150,8 @@ impl LiveAccess {
     pub fn tool_decision_for_abilities(&self,name:&str,ability_ids:&[String],
         installation:Permission,available:bool,visible:bool,
         read_only:bool,is_read:bool) -> ToolDecision {
-        if name=="prompt_slot_write" && !self.agent_administrator {
+        if matches!(name,"prompt_slot_write"|"edit_own_prompt"|"save_own_skill"
+            |"remove_own_skill") && !self.agent_administrator {
             return ToolDecision {permission:Permission::Deny,reason:access::Reason::CallerDenied};
         }
         let ability=if ability_ids.is_empty() {

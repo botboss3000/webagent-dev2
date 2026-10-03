@@ -67,6 +67,9 @@ macro_rules! path_json {
 async fn sessions(Extension(app): Extension<App>, Query(args): Query<crate::SessionListArgs>) -> Response {
     crate::sessions(State(app),Query(args)).await.into_response()
 }
+async fn session_search(Extension(app): Extension<App>, Query(args): Query<crate::SessionSearchArgs>) -> Response {
+    crate::session_search_api(State(app), Query(args)).await.into_response()
+}
 json_arg!(create_session => create_session);
 path_arg!(snapshot => snapshot, String);
 path_json!(session_read => session_read_api, String, crate::SessionReadBody);
@@ -149,6 +152,7 @@ pub(crate) fn router() -> Router<App> {
     Router::new()
         .route("/user/status", get(user_status))
         .route("/sessions", get(sessions).post(create_session))
+        .route("/sessions/search", get(session_search))
         .route("/sessions/{sid}/runs/{rid}/diagnostics", get(diagnostics))
         .route("/sessions/{sid}/runs/{rid}/progress", get(progress))
         .route("/sessions/{id}", get(snapshot).patch(session_patch).delete(session_recycle))

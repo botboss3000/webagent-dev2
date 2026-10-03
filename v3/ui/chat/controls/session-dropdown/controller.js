@@ -14,7 +14,7 @@ export function mountSessionDropdown(root, {refresh, select, guard, resetSearch 
   function _syncStatusRow() {
     if (!menu) return;
     const syncing = menu.dataset.syncing === 'true';
-    const existing = menu.querySelector(':scope > .session-dropdown-sync');
+    const existing = menu.querySelector(':scope > .session-dropdown-sync[data-controller-sync]');
     if (!syncing) {
       if (existing) existing.remove();
       return;
@@ -23,6 +23,7 @@ export function mountSessionDropdown(root, {refresh, select, guard, resetSearch 
     if (!sync) {
       sync = document.createElement('div');
       sync.className = 'session-dropdown-sync';
+      sync.dataset.controllerSync = 'true';
       sync.textContent = 'Syncing…';
     }
     const footer = menu.querySelector(':scope > .session-manage-row');
@@ -423,10 +424,10 @@ export function mountSessionDropdown(root, {refresh, select, guard, resetSearch 
 
 
  function toggle(){if(!menu.hidden && menu.dataset.state!=='closing')closeMenu();else if(menu.dataset.state!=='closing')openMenu();}
- root.addEventListener('click',e=>{if(e.target.closest('button'))return;e.stopPropagation();toggle();},{signal:abort.signal});
- root.addEventListener('keydown',e=>{if(e.target.closest('button'))return;if(['Enter',' '].includes(e.key)){e.preventDefault();toggle();}},{signal:abort.signal});
- menu.addEventListener('click',e=>{e.stopPropagation();if(e.target.closest('button,input'))return;const row=e.target.closest('.session-row');if(row){closeMenu();guard(()=>select(row.dataset.id))();}},{signal:abort.signal});
- menu.addEventListener('keydown',e=>{const row=e.target.closest('.session-row');if(row&&!e.target.closest('button')&&['Enter',' '].includes(e.key)){e.preventDefault();closeMenu();guard(()=>select(row.dataset.id))();}},{signal:abort.signal});
+ root.addEventListener('click',e=>{if(e.target.closest('button,input'))return;e.stopPropagation();toggle();},{signal:abort.signal});
+ root.addEventListener('keydown',e=>{if(e.target.closest('button,input'))return;if(['Enter',' '].includes(e.key)){e.preventDefault();toggle();}},{signal:abort.signal});
+ menu.addEventListener('click',e=>{e.stopPropagation();if(e.target.closest('button,input'))return;const row=e.target.closest('.session-row');if(row&&!row.classList.contains('recycled')){closeMenu();guard(()=>select(row.dataset.id))();}},{signal:abort.signal});
+ menu.addEventListener('keydown',e=>{const row=e.target.closest('.session-row');if(row&&!row.classList.contains('recycled')&&!e.target.closest('button,input')&&['Enter',' '].includes(e.key)){e.preventDefault();closeMenu();guard(()=>select(row.dataset.id))();}},{signal:abort.signal});
  const outside=e=>{if(!root.contains(e.target)&&!menu.contains(e.target)&&!popup?.contains(e.target))closeMenu();};
  document.addEventListener('click',outside,{signal:abort.signal});document.addEventListener('focusin',outside,{signal:abort.signal});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!menu.hidden){closeMenu();root.querySelector('.session-dropdown-trigger').focus();}},{signal:abort.signal});

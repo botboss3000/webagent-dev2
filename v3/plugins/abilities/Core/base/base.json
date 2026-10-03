@@ -1,7 +1,7 @@
 {
   "display_name": "Base",
   "kind": "virtual_core",
-  "description": "Core conversational and self-improvement contracts. Compiled UTC/fixed-offset time/date and bounded finite arithmetic are implemented; current-session reads, current-agent prompt reads and bounded bundled skill reads are implemented. Other session, progress and configuration operations still require independent v3 implementations.",
+  "description": "Core conversation tools for bounded utilities, caller-owned session search, context compaction and recall, prompt and skill edits, task checkpoints, and declarative presentation. Remaining declarations need separate V3 contracts.",
   "tools": [
     "load_tool",
     "load_ability",
@@ -40,5 +40,5 @@
   "order": 0,
   "readiness": "partial",
   "config": {},
-  "migration_note": "Partial V3 port: get_time, get_date, calculate, read_attachment, search_this_session, list_skills, load_skill and read_own_prompt use compiled Rust adapters. Bundled skill loading never activates abilities or grants execution. Other declared Base tools remain unavailable. Each new ability still requires explicit installation, account-tier and membership grants; manifest metadata alone never registers a tool."
+  "migration_note": "Partial V3 port: compiled Base tools include utilities, own-session and cross-session search, execution mode, manual compaction and recall, prompt and selectable own-skill edits, task checkpoints, and declarative presentations. Cross-session similarity is bounded literal matching, not semantic embedding. Self-edits require agent administration, a revision and approval. Other declared Base tools remain unavailable; manifest metadata alone never registers execution."
 }

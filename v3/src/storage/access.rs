@@ -504,7 +504,7 @@ mod tests {
             .await.unwrap();
         let created = store.create_user_account("second","long-hash-placeholder").await.unwrap();
         let id = created["user_id"].as_str().unwrap();
-        let tier = store.save_entitlement_tier(Tier{id:"team".into(),revision:0,ability_permissions:Default::default(),
+        let tier = store.save_entitlement_tier(Tier{id:"team".into(),revision:0,model_policy:None,ability_permissions:Default::default(),
             allowed_models:vec!["gpt-6-luna".into()],tools:Default::default(),
             max_sessions:4,max_active_runs:1},0).await.unwrap();
         assert_eq!(tier.revision,1);

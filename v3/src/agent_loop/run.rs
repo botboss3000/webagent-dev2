@@ -26,9 +26,7 @@ pub(crate) async fn execute_run(
         }
         let agent_id=run["agent_id"].as_str().unwrap_or("shared_default").to_owned();
         let access=app.store.live_access(app.store.current_user_id(),&agent_id).await;
-        let model=run["provider_selection"]["model"].as_str().unwrap_or("");
-        if access.as_ref().map_or(true, |access| !access.admitted()
-            || (!model.is_empty() && !access.model_allowed(model))) {
+        if access.as_ref().map_or(true, |access| !access.admitted()) || !app.run_model_authorized(&run).await {
             run["status"]=json!("stopped");
             run["error"]=json!("Access changed; run stopped");
             app.save(&mut run).await?;
@@ -147,8 +145,11 @@ pub(crate) async fn execute_run(
             let (assembled_asset_key, base_schemas, guidance) = context_assets.as_ref().unwrap();
             let assembled_asset_key=assembled_asset_key.clone();
             let mut gate_schemas = base_schemas.clone();
-            let mode_content = format!("Current session capability mode: {} (revision {}). Recheck authorization before every tool call.",
+            let mut mode_content = format!("Current session capability mode: {} (revision {}). Recheck authorization before every tool call.",
                 mode["mode"].as_str().unwrap(), mode["revision"].as_u64().unwrap());
+            if let Some(label)=mode["definition"]["label"].as_str() {
+                mode_content.push_str(&format!("\nExecution mode: {label}\n{}",mode["definition"]["prompt"].as_str().unwrap_or("")));
+            }
             let call_number = run["attempt"].as_u64().unwrap_or(0) + 1;
             let mut contributions = vec![context_input::Contribution {
                 id: "session_mode".into(), source: "native_session_mode".into(),
@@ -160,8 +161,13 @@ pub(crate) async fn execute_run(
             // their replies return to Rust for validation and durable storage.
             let before_model = gate_registry::selected(&workflow_policy,
                 workflow::Checkpoint::ModelDispatch)?;
-            if before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
-                let config=gate_registry::visibility_config()?;
+            let agent_visibility = gate_controls::agent_visibility(&app.store, &agent_id).await?;
+            if agent_visibility.enabled && before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
+                let mut config=gate_registry::visibility_config()?;
+                if !agent_visibility.guidance.is_empty() {
+                    config.guidance.push_str("\nAdditional agent guidance:\n");
+                    config.guidance.push_str(&agent_visibility.guidance);
+                }
                 gate_schemas.push(gate_controls::working_schema(&config));
                 contributions.push(context_input::Contribution {
                     id:"gate_message_visibility".into(),source:"native_gate_config".into(),
@@ -294,8 +300,7 @@ pub(crate) async fn execute_run(
                     let _ = drain.await;
                     return Ok(());
                 }
-                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                if !app.run_model_authorized(&system_dispatch_run(&current)?).await {
                     current["status"]=json!("stopped");
                     current["error"]=json!("Access changed before model dispatch");
                     app.save(&mut current).await?;
@@ -350,8 +355,7 @@ pub(crate) async fn execute_run(
                 if run["generation"] != generation || status(&run) != "running" {
                     return Ok(());
                 }
-                if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                    .is_ok_and(|access|access.model_allowed(&selection.model)) {
+                if !app.run_model_authorized(&system_dispatch_run(&run)?).await {
                     run["status"]=json!("stopped");
                     run["error"]=json!("Access changed during context summary");
                     app.save(&mut run).await?;
@@ -468,8 +472,7 @@ pub(crate) async fn execute_run(
                 let _ = collector.await;
                 return Ok(());
             }
-            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                .is_ok_and(|access|access.model_allowed(&selection.model)) {
+            if !app.run_model_authorized(&current).await {
                 current["status"]=json!("stopped");
                 current["error"]=json!("Access changed before model dispatch");
                 app.save(&mut current).await?;
@@ -539,8 +542,7 @@ pub(crate) async fn execute_run(
             if run["generation"] != generation || status(&run) != "running" {
                 return Ok(());
             }
-            if !app.store.live_access(app.store.current_user_id(),&agent_id).await
-                .is_ok_and(|access|access.model_allowed(&selection.model)) {
+            if !app.run_model_authorized(&run).await {
                 run["status"]=json!("stopped");
                 run["error"]=json!("Access changed during model call");
                 app.save(&mut run).await?;
@@ -764,7 +766,8 @@ pub(crate) async fn execute_run(
                     gate_registry::MESSAGE_VISIBILITY
                 } else {gate_registry::CLOSING_STATUS};
                 let enabled=gate_registry::selected(&workflow_policy,checkpoint)?
-                    .iter().any(|item|item.id==module_id);
+                    .iter().any(|item|item.id==module_id)
+                    && (name != "publish_main_message" || gate_controls::agent_visibility(&app.store, &agent_id).await?.enabled);
                 workflow::record(&mut run,&workflow_policy,
                     &workflow::Input::PreTool(workflow::PreToolInput {
                         name:name.clone(),arguments_digest:digest(&args),
@@ -837,7 +840,11 @@ pub(crate) async fn execute_run(
             // A model may narrow its own session without approval. Restoring
             // write authority from read_only always crosses a human checkpoint,
             // even when an administrator otherwise grants automatic use.
-            if name=="set_execution_mode" && read_only && args["mode"]=="write"
+            if name=="set_execution_mode" && read_only && {
+                let target=args["mode"].as_str().unwrap_or("");
+                target=="write" || crate::execution_modes::resolve(&crate::execution_modes::config(&app.store,&agent_id).await?,target)
+                    .is_ok_and(|m|m["permission_policy"]=="write")
+            }
                 && effective.permission!=access::Permission::Deny {
                 effective.permission=access::Permission::Ask;
             }
@@ -972,11 +979,10 @@ pub(crate) async fn execute_run(
             run["pending"]["state"] = json!("executing");
             run["pending"]["human_approved"] = json!(run["pending"]["decision"] == "approve");
             run["pending"]["decision"] = json!("consumed");
-            let model=run["provider_selection"]["model"].as_str().unwrap_or("");
-            let valid=app.store.live_access(app.store.current_user_id(),&agent_id).await
+                let valid=app.store.live_access(app.store.current_user_id(),&agent_id).await
                 .is_ok_and(|current|current.admitted()
-                    && (model.is_empty() || current.model_allowed(model))
-                    && json!(current.revision)==run["pending"]["access_revision"]);
+                    && json!(current.revision)==run["pending"]["access_revision"])
+                && app.run_model_authorized(&run).await;
             if !valid {
                 run["pending"]["state"]=json!("requested");
                 run["pending"]["decision"]=Value::Null;

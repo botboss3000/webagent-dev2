@@ -1,0 +1,67 @@
+/* Private activity uses the same palette and compact disclosure in both themes. */
+.v2-activity-group {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 8px 0 14px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.v2-activity-group > summary {
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  overflow-wrap: anywhere;
+}
+.v2-activity-group > summary:hover { background: var(--bg-tint); color: var(--fg-1); }
+.v2-activity-group summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* V1 mini transcript presentation, scoped to the private v2 body only. */
+.v2-activity-body {
+  margin: 4px 8px;
+  padding: 0;
+  max-height: 250px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  overflow-anchor: none;
+}
+.v2-activity-body .v2-mini-row { margin: 4px 0; min-width: 0; border-radius: 8px; }
+.v2-activity-body .v2-mini-message {
+  padding: 8px 14px;
+  border: var(--border-width) solid var(--border);
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+}
+.v2-activity-body .v2-mini-content { font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.v2-activity-body .v2-mini-content > :first-child { margin-top: 0; }
+.v2-activity-body .v2-mini-content > :last-child { margin-bottom: 0; }
+.v2-activity-body .v2-mini-content[hidden],
+.v2-activity-body section[hidden], .v2-activity-body .v2-mini-nav[hidden] { display: none; }
+.v2-activity-body .turn-gutter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
+.v2-activity-body .turn-gutter-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--fg-3); cursor: pointer;
+}
+.v2-activity-body .turn-gutter-btn:hover { color: var(--accent); background: var(--bg-tint); }
+.v2-activity-body button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.v2-activity-body .v2-mini-time { font-size: 10px; color: var(--fg-3); margin-right: auto; }
+.v2-activity-body summary { cursor: pointer; padding: 6px 0; overflow-wrap: anywhere; }
+.v2-activity-body .v2-mini-tool { padding: 4px 14px; background: var(--bg-tint); }
+.v2-activity-body .v2-mini-tool-disclosure > summary { font-family: var(--font-mono); }
+.v2-activity-body .v2-mini-tool[data-status="error"] > details > summary { color: var(--danger); }
+.v2-activity-body .v2-mini-section-head { display: flex; align-items: center; justify-content: space-between; color: var(--fg-3); }
+.v2-activity-body pre {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono);
+  font-size: 11px; margin: 6px 0 12px; max-width: 100%;
+}
+.v2-activity-body .v2-mini-diagnostics { color: var(--fg-3); font-size: 10px; }
+.v2-activity-body .v2-mini-nav {
+  position: sticky; top: 6px; z-index: 3; display: flex; justify-content: flex-end;
+  gap: 2px; height: 0; padding-right: 6px; pointer-events: none;
+}
+.v2-activity-body .v2-mini-nav button {
+  pointer-events: auto; border-radius: 50%;
+  border: var(--border-width) solid var(--border); background: var(--bg-elev);
+}
+.v2-activity-body .v2-mini-nav .is-following { color: var(--accent); background: var(--accent-soft); }

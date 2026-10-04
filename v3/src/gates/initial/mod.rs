@@ -6,6 +6,30 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct VisibilityConfig { pub tool_name: String, pub guidance: String }
 
+/// Per-agent preferences never replace the server-owned gate protocol.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVisibility { pub enabled: bool, pub guidance: String }
+impl Default for AgentVisibility {
+    fn default() -> Self { Self { enabled: true, guidance: String::new() } }
+}
+impl AgentVisibility {
+    pub fn validate(&self) -> Result<()> {
+        if self.guidance.len() > 4096 { bail!("Additional guidance must be at most 4096 bytes"); }
+        Ok(())
+    }
+}
+pub async fn agent_visibility(store: &crate::store::Store, agent: &str) -> Result<AgentVisibility> {
+    let view = store.for_agent(agent).await?;
+    let blob: Vec<u8> = sqlx::query_scalar("SELECT metadata FROM agents WHERE id=?")
+        .bind(agent).fetch_one(&view.agent_pool).await?;
+    let metadata = view.unseal(&blob)?;
+    let settings = if metadata["message_visibility"].is_null() { AgentVisibility::default() }
+        else { serde_json::from_value(metadata["message_visibility"].clone())? };
+    settings.validate()?;
+    Ok(settings)
+}
+
 pub fn working_schema(config: &VisibilityConfig) -> Value {
     json!({"type":"function","name":config.tool_name,
         "description":"Publish a short user-visible working update while this run continues.",
@@ -26,6 +50,14 @@ pub fn working_text(args: &Value) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn agent_visibility_is_additive_strict_and_byte_bounded() {
+        let defaults=AgentVisibility::default();assert!(defaults.enabled);assert!(defaults.guidance.is_empty());
+        assert!(AgentVisibility{enabled:false,guidance:"x".repeat(4096)}.validate().is_ok());
+        assert!(AgentVisibility{enabled:true,guidance:"é".repeat(2049)}.validate().is_err());
+        assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":true,"guidance":"ok","fixed_protocol":"override"})).is_err());
+        assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":"yes","guidance":"ok"})).is_err());
+    }
     #[test]
     fn working_update_is_bounded_and_exact() {
         assert_eq!(working_text(&json!({"text":"Progress"})).unwrap(),"Progress");

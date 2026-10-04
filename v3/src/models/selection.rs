@@ -12,6 +12,8 @@ pub const MAX_CANDIDATES: usize = 8;
 #[serde(deny_unknown_fields)]
 pub struct Catalog {
     pub revision: u64,
+    #[serde(default)]
+    pub platform_sources: BTreeMap<String, crate::account_catalog::PlatformPin>,
     pub connections: BTreeMap<String, Connection>,
     pub entries: BTreeMap<String, ModelEntry>,
     pub groups: BTreeMap<String, BackupGroup>,
@@ -26,6 +28,9 @@ impl Catalog {
             || self.groups.len() > 256 || self.assignments.len() > 1024 || self.agent_models.len() > 1024 {
             bail!("Model catalog exceeds record limits");
         }
+        for (id,pin) in &self.platform_sources {
+            if !self.entries.contains_key(id) || !id.starts_with("platform:") || !crate::access::valid_id(&pin.roster_id) {bail!("Invalid platform provenance");}
+        }
         for (id, c) in &self.connections {
             if id != &c.id || !valid_id(id) || !valid_id(&c.owner_id)
                 || !valid_id(&c.credential_ref) || c.revision == 0
@@ -35,8 +40,7 @@ impl Catalog {
         }
         for (id, e) in &self.entries {
             if id != &e.id || !valid_id(id) || !valid_id(&e.owner_id)
-                || e.upstream_model.is_empty() || e.upstream_model.len()>128
-                || !e.upstream_model.chars().all(|c|c.is_ascii_alphanumeric() || "-._".contains(c))
+                || !crate::platform_catalog::valid_model(&e.upstream_model)
                 || e.display_name.trim().is_empty()
                 || e.display_name.len() > 200 || e.revision == 0
                 || e.allowed_agents.iter().any(|id| !valid_id(id))
@@ -112,7 +116,7 @@ impl Catalog {
     // Stored migration separates legacy sharing authority from tenant ownership.
     // First preserve grants under the old assignment owner, then appoint the directory
     // owner to newly projected rosters only. Explicit role records never transfer here.
-    async fn migrate_stored(&mut self, connection: &mut sqlx::SqliteConnection) -> Result<()> {
+    pub(crate) async fn migrate_stored(&mut self, connection: &mut sqlx::SqliteConnection) -> Result<()> {
         let mut owners = BTreeMap::new();
         for id in self.assignments.keys().filter(|id| !self.agent_models.contains_key(*id)) {
             let owner: Option<String> = sqlx::query_scalar("SELECT owner_id FROM agent_directory WHERE id=?")
@@ -161,7 +165,7 @@ impl Catalog {
                 || !entry.allowed_agents.contains(&roster.agent_id) || !connection.allowed_agents.contains(&roster.agent_id) {
                 bail!("Role model is incompatible or not authorized");
             }
-            candidates.push(Candidate { entry_id: id.clone(), entry_revision: entry.revision,
+            candidates.push(Candidate { platform:self.platform_sources.get(id).cloned(), entry_id: id.clone(), entry_revision: entry.revision,
                 connection_id: connection.id.clone(), connection_revision: connection.revision,
                 credential_ref: connection.credential_ref.clone(), transport: connection.transport.clone(), upstream_model: entry.upstream_model.clone() });
         }
@@ -286,12 +290,25 @@ impl crate::store::Store {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Transport { OpenaiSubscription, Deepseek }
+pub enum Transport { OpenaiSubscription, Deepseek, OpenaiApi, Openrouter, Abacus, Gemini, Groq, Together, Mistral, Fireworks, Xai, Perplexity, Deepinfra }
 
 impl Transport {
+    pub fn uses_api_key(&self) -> bool { self.provider_id().chat_endpoint().is_some() }
     pub fn provider_id(&self) -> crate::provider::ProviderId {
         match self { Self::OpenaiSubscription => crate::provider::ProviderId::OpenaiSubscription,
-            Self::Deepseek => crate::provider::ProviderId::Deepseek }
+            Self::Deepseek => crate::provider::ProviderId::Deepseek,
+            Self::OpenaiApi => crate::provider::ProviderId::OpenaiApi,
+            Self::Openrouter => crate::provider::ProviderId::Openrouter,
+            Self::Abacus => crate::provider::ProviderId::Abacus,
+            Self::Gemini => crate::provider::ProviderId::Gemini,
+            Self::Groq => crate::provider::ProviderId::Groq,
+            Self::Together => crate::provider::ProviderId::Together,
+            Self::Mistral => crate::provider::ProviderId::Mistral,
+            Self::Fireworks => crate::provider::ProviderId::Fireworks,
+            Self::Xai => crate::provider::ProviderId::Xai,
+            Self::Perplexity => crate::provider::ProviderId::Perplexity,
+            Self::Deepinfra => crate::provider::ProviderId::Deepinfra,
+        }
     }
 }
 
@@ -386,6 +403,8 @@ impl RoleAssignment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    #[serde(default)]
+    pub platform: Option<crate::account_catalog::PlatformPin>,
     pub entry_id: String,
     pub entry_revision: u64,
     pub connection_id: String,
@@ -457,7 +476,7 @@ impl SelectionPlan {
                 .ok_or_else(|| anyhow::anyhow!("Model connection not found"))?;
             if entry.id != id || connection.id != entry.connection_id || entry.revision == 0
                 || connection.revision == 0 || !valid_id(&connection.id)
-                || !valid_id(&connection.credential_ref) || !valid_id(&entry.upstream_model)
+                || !valid_id(&connection.credential_ref) || !crate::platform_catalog::valid_model(&entry.upstream_model)
                 || entry.display_name.len() > 200 || !entry.capabilities.contains("text") {
                 bail!("Invalid model or connection record");
             }
@@ -466,6 +485,7 @@ impl SelectionPlan {
                 bail!("Model candidate is not authorized");
             }
             candidates.push(Candidate {
+                platform:None,
                 entry_id: entry.id.clone(), entry_revision: entry.revision,
                 connection_id: connection.id.clone(), connection_revision: connection.revision,
                 credential_ref: connection.credential_ref.clone(), transport: connection.transport.clone(),
@@ -558,7 +578,7 @@ mod tests {
     fn catalog_fixture() -> Catalog {
         let (assignment, entries, connections, mut groups) = fixture();
         for group in groups.values_mut() { group.revision = 1; }
-        Catalog { revision: 0, entries, connections, groups,
+        Catalog { revision: 0, platform_sources: BTreeMap::new(), entries, connections, groups,
             assignments: BTreeMap::from([(assignment.agent_id.clone(), assignment)]), agent_models: BTreeMap::new() }
     }
     #[test]
@@ -810,5 +830,17 @@ mod tests {
         assert_eq!(p,serde_json::from_str::<SelectionPlan>(&serde_json::to_string(&p).unwrap()).unwrap());
         let mut s = FailoverState::default(); s.failed(&p,FailureKind::ModelUnavailable);
         assert_eq!(s,serde_json::from_str::<FailoverState>(&serde_json::to_string(&s).unwrap()).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod upstream_id_tests {
+    #[test]
+    fn upstream_ids_are_not_record_ids() {
+        assert!(crate::platform_catalog::valid_model("organization/model-name"));
+        assert!(!super::valid_id("organization/model-name"));
+        for invalid in ["", "model\n", "model name", "model?token=x"] {
+            assert!(!crate::platform_catalog::valid_model(invalid));
+        }
     }
 }

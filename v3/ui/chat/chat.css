@@ -14,3 +14,11 @@
 .v3-message .message-content{white-space:pre-wrap;overflow-wrap:anywhere;max-width:95%;border-radius:18px;padding:12px 15px;background:var(--agent-bubble-bg,var(--bg-elev));border:var(--border-width) solid var(--border-soft)}
 .v3-message.user .message-content{background:var(--user-bubble-bg,var(--bg-elev))}
 .message-role{color:var(--fg-3);font-size:12px;padding:4px 10px}
+
+/* Main-view profile only; header/footer geometry remains independent. */
+#chat-messages-inner{padding-top:calc(var(--v3-chat-header-clearance,100px) + var(--v3-transcript-top,25px))!important;padding-bottom:calc(var(--v3-chat-footer-clearance,180px) + var(--v3-tail-gap,0px) + var(--v3-transcript-bottom,50px))!important}
+.v3-config-bubble{background:var(--message-bg-dark)}
+body.light .v3-config-bubble,[data-theme=light] .v3-config-bubble{background:var(--message-bg-light)}
+#chat-messages-inner .bubble-body{white-space:pre-wrap;overflow-wrap:anywhere}
+#chat-messages-inner .turn-gutter{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+#chat-messages-inner .turn-gutter-btn:disabled{opacity:.4;cursor:not-allowed}

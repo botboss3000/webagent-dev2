@@ -2,7 +2,8 @@
 export function createSessionList(root, {guard, refresh, select, client, recycled = () => {}}) {
   let items = [], selected = '', config = {}, query = '', status = 'active';
   let hits = [], continuation = null, searchInfo = '', searching = false, epoch = 0, timer = 0, destroyed = false;
-  let editing = null;
+  let editing = null, checkboxMode = false, batchBusy = false;
+  const checked = new Set();
   const menu = root.querySelector('.session-dropdown-menu');
   const abort = new AbortController(), timers = new Set(), receipts = new Map();
   const icon = name => `<i data-lucide="${name}" style="width:14px;height:14px"></i>`;
@@ -45,7 +46,7 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
     statusEl.replaceChildren(); if (item) statusEl.append(statusNode(item));
     root.querySelector('#session-dropdown-delete').disabled = !item || item.status === 'recycled';
   }
-  async function mutate(item, action, changes = {}) {
+  async function mutate(item, action, changes = {}, deferred = false) {
     const body = {expected_revision:item.metadata_revision, ...changes};
     const receiptKey = JSON.stringify([item.id, action, body]);
     if (!receipts.has(receiptKey)) receipts.set(receiptKey, crypto.randomUUID());
@@ -53,26 +54,70 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
     try {
       const result = await client[action](item.id, body);
       receipts.delete(receiptKey);
+      if (destroyed) return;
       if (action === 'recycle' && selected === item.id) recycled(item.id);
       if (result.session) items = items.map(s => s.id === item.id ? result.session : s);
-      root._sessionDropdownController.setPopup(null);
-      await refresh(); await loadScope();
+      if (!deferred && !destroyed) {
+        root._sessionDropdownController.setPopup(null);
+        await refresh(); await loadScope();
+      }
     } catch (error) {
       // Keep the exact receipt/body available for an uncertain-response retry.
-      searchInfo = error.message || 'Session update failed'; render(); throw error;
+      if (!deferred && !destroyed) { searchInfo = error.message || 'Session update failed'; render(); }
+      throw error;
     }
   }
+  // V2 checkbox management, backed by individually revision-fenced Rust writes.
+  // A batch is not atomic: keep failed selections and their retry receipts.
+  async function recycleChecked() {
+    if (batchBusy || destroyed) return;
+    const targets = items.filter(item => checked.has(item.id));
+    if (!targets.length) return;
+    batchBusy = true; render();
+    const failures = []; let completed = 0;
+    try {
+      for (const item of targets) {
+        if (destroyed) break;
+        try { await mutate(item, 'recycle', {}, true); checked.delete(item.id); completed++; }
+        catch (error) { failures.push({title:item.title || 'New Session', message:error.message || 'Recycle failed'}); }
+      }
+      if (!destroyed) {
+        try { await refresh(); await loadScope(); }
+        catch (error) { failures.push({title:'Refresh',message:error.message || 'List refresh failed'}); }
+        searchInfo = `Recycled ${completed} of ${targets.length} selected sessions.` +
+          (failures.length ? ' Not completed: ' + failures.map(f => `${f.title}: ${f.message}`).join('; ') : '');
+      }
+    } finally { batchBusy = false; if (!destroyed) render(); }
+  }
+  function toggleChecked(id) {
+    if (batchBusy) return;
+    if (checked.has(id)) checked.delete(id); else checked.add(id);
+    render();
+  }
+  // Capture row activation before the controller's normal session-opening path.
+  for (const type of ['click','keydown']) menu.addEventListener(type, e => {
+    if (!checkboxMode || status !== 'active' || e.target.closest('button,input')) return;
+    const row = e.target.closest('.session-row');
+    if (!row || (type === 'keydown' && !['Enter',' '].includes(e.key))) return;
+    e.preventDefault(); e.stopImmediatePropagation(); toggleChecked(row.dataset.id);
+    menu.querySelector(`[data-id="${CSS.escape(row.dataset.id)}"]`)?.focus();
+  }, {capture:true,signal:abort.signal});
   function confirmButton(b, text, fn) {
-    let armed = false, busy = false;
-    const old = b.innerHTML;
+    let armed = false, busy = false, timeout = 0;
+    const old = b.innerHTML, label = b.getAttribute('aria-label');
+    const reset = () => {
+      armed = false; b.innerHTML = old;
+      if (label == null) b.removeAttribute('aria-label'); else b.setAttribute('aria-label', label);
+    };
     b.onclick = e => {
-      e.stopPropagation(); if (busy) return;
+      e.stopPropagation(); if (busy || destroyed) return;
       if (!armed) {
         armed = true; b.textContent = text; b.setAttribute('aria-label', text);
-        delay(() => { armed = false; b.innerHTML = old; }, 3000); return;
+        timeout = delay(reset, 3000); return;
       }
+      clearTimeout(timeout); timers.delete(timeout);
       busy = true; b.disabled = true;
-      guard(async () => { try { await fn(); } finally { busy = false; b.disabled = false; armed = false; b.innerHTML = old; } })(e);
+      guard(async () => { try { await fn(); } finally { busy = false; b.disabled = false; reset(); } })(e);
     };
   }
   function rename(item, element) {
@@ -145,6 +190,11 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
     for (const {item,hit} of rows) {
       const row = document.createElement('div'); row.className = 'session-row' + (item.id === selected ? ' selected' : '') + (item.pinned ? ' pinned' : '') + (status === 'recycled' ? ' recycled' : '');
       row.dataset.id = item.id; row.dataset.agent = item.agent_id; row.tabIndex = 0;
+      if (checkboxMode && status === 'active') {
+        const b = button('Select ' + (item.title || 'New Session'),checked.has(item.id) ? 'check-square' : 'square',() => toggleChecked(item.id),'session-row-checkbox');
+        b.dataset.checked = checked.has(item.id) ? '1' : '0'; b.setAttribute('aria-pressed',String(checked.has(item.id))); b.disabled = batchBusy;
+        row.append(b);
+      }
       const title = document.createElement('span'); title.className = 'session-row-title';
       if (config.menu?.agent_icons !== false) { const avatar = document.createElement('span'); avatar.className = 'session-row-agent-icon' + (item.pinned ? ' session-row-agent-warning' : ''); avatar.innerHTML = icon('bot'); title.append(avatar); }
       const text = document.createElement('span'); text.className = 'session-row-title-label'; text.textContent = item.title || 'New Session'; title.append(text); row.append(title);
@@ -153,7 +203,7 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
       if (status === 'recycled') {
         const b = button('Restore session','archive-restore',null,'session-row-bin'); b.textContent = 'bin';
         confirmButton(b,'Restore?',() => mutate(item,'restore')); row.append(b);
-      } else if (config.menu?.row_actions !== false) row.append(button('More…','more-vertical',() => actions(item,row.querySelector('.session-row-kebab')),'session-row-kebab'));
+      } else if (!checkboxMode && config.menu?.row_actions !== false) row.append(button('More…','more-vertical',() => actions(item,row.querySelector('.session-row-kebab')),'session-row-kebab'));
       menu.append(row);
     }
     if (!rows.length) { const empty = document.createElement('div'); empty.className = 'session-dropdown-empty'; empty.textContent = searching ? 'Searching…' : searchInfo.startsWith('Search failed:') ? 'Search unavailable; no results verified' : query ? 'No matches in this page' : status === 'recycled' ? 'Recycle bin is empty' : 'No sessions yet'; menu.append(empty); }
@@ -163,11 +213,21 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
     if (config.menu?.search !== false) {
       const wrap = document.createElement('span'); wrap.className = 'session-manage-search'; wrap.innerHTML = icon('search');
       const input = document.createElement('input'); input.className = 'session-manage-search-input'; input.placeholder = 'Search private titles and content…'; input.setAttribute('aria-label','Search private session titles and content'); input.value = query;
+      input.disabled = batchBusy;
       input.oninput = () => { query = input.value; ++epoch; searching = false; hits = []; continuation = null; clearTimeout(timer); if (query.trim()) timer = delay(() => guard(() => search())(),250); else render(); };
       wrap.append(input); bar.append(wrap);
     }
-    if (config.menu?.recycle_bin !== false) { const b = button(status === 'active' ? 'Recycle bin' : 'Back to active sessions','recycle',async () => { status = status === 'active' ? 'recycled' : 'active'; hits = []; continuation = null; await loadScope(); }); b.setAttribute('aria-pressed',String(status === 'recycled')); bar.append(b); }
-    for (const [key,glyph,name] of [['hidden_sessions','eye-off','Hidden sessions'],['batch_delete','square','Batch recycle']]) { if (config.menu?.[key] === false) continue; const b = button(name,glyph,null); b.disabled = true; b.title = name + ' — unavailable in v3'; bar.append(b); }
+    if (config.menu?.recycle_bin !== false) { const b = button(status === 'active' ? 'Recycle bin' : 'Back to active sessions','recycle',async () => { status = status === 'active' ? 'recycled' : 'active'; hits = []; continuation = null; await loadScope(); }); b.setAttribute('aria-pressed',String(status === 'recycled')); b.disabled = batchBusy; bar.append(b); }
+    if (config.menu?.hidden_sessions !== false) { const b = button('Hidden sessions','eye-off',null); b.disabled = true; b.title = 'Hidden sessions — unavailable in v3'; bar.append(b); }
+    if (config.menu?.batch_delete !== false && status === 'active') {
+      const b = button(checkboxMode ? 'Disable checkbox mode' : 'Enable checkbox mode','square',() => { checkboxMode = !checkboxMode; checked.clear(); render(); },'session-manage-checkbox-toggle');
+      b.dataset.state = checkboxMode ? 'on' : 'off'; b.setAttribute('aria-pressed',String(checkboxMode)); b.disabled = batchBusy; bar.append(b);
+      if (checkboxMode && checked.size) {
+        const recycle = button(`Recycle selected (${checked.size})`,'trash-2',null,'session-manage-delete-selected');
+        recycle.dataset.state = 'trash'; recycle.disabled = batchBusy;
+        confirmButton(recycle,`Recycle ${checked.size} selected?`,recycleChecked); bar.append(recycle);
+      }
+    }
     menu.append(bar); menu.style.setProperty('--session-menu-open-height',Math.min(menu._availableHeight || 480,menu.scrollHeight) + 'px');
     window.lucide?.createIcons();
     if (focus) { const input = menu.querySelector('input'); input?.focus(); if (position != null) input?.setSelectionRange(position,position); }
@@ -176,9 +236,9 @@ export function createSessionList(root, {guard, refresh, select, client, recycle
   confirmButton(root.querySelector('#session-dropdown-delete'),'Recycle?',() => { const item = items.find(s => s.id === selected); return item ? mutate(item,'recycle') : undefined; });
   const tick = setInterval(() => { for (const node of [...menu.querySelectorAll('[data-ts]'),...root.querySelectorAll('[data-ts]')]) node.textContent = elapsed(Number(node.dataset.ts)); },1000);
   return {
-    update(rows,id) { items = rows; selected = id; label(); render(); },
-    configure(cfg) { config = cfg || {}; menu.style.maxHeight = config.menu?.max_height || ''; label(); render(); },
-    reset() { ++epoch; clearTimeout(timer); query = ''; hits = []; continuation = null; searching = false; searchInfo = ''; status = 'active'; },
+    update(rows,id) { items = rows; selected = id; for (const id of checked) if (!items.some(item => item.id === id)) checked.delete(id); label(); render(); },
+    configure(cfg) { config = cfg || {}; if (config.menu?.batch_delete === false) { checkboxMode = false; checked.clear(); } menu.style.maxHeight = config.menu?.max_height || ''; label(); render(); },
+    reset() { if (!batchBusy) { checkboxMode = false; checked.clear(); } ++epoch; clearTimeout(timer); query = ''; hits = []; continuation = null; searching = false; searchInfo = ''; status = 'active'; },
     destroy() { destroyed = true; ++epoch; clearTimeout(timer); clearInterval(tick); for (const t of timers) clearTimeout(t); abort.abort(); editing?.remove(); root.querySelector('#session-dropdown-kebab').onclick = null; root.querySelector('#session-dropdown-delete').onclick = null; }
   };
 }

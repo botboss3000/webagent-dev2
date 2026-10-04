@@ -14,9 +14,28 @@ def test_discovery_and_schemas():
     feature = abilities.ability_feature_with_skill("v3_build")
     assert feature and feature["display_name"] == "V3 Build"
     assert set(m.build_tools()) == set(m.TOOL_SCHEMAS)
-    assert m.DESTRUCTIVE == {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "login_as_current_user_v3"}
+    assert m.DESTRUCTIVE == {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "v3_build_worker_restart", "login_as_current_user_v3"}
     descriptor = json.loads(PATH.with_suffix(".json").read_text())
     assert set(descriptor["tools"]) == set(m.TOOL_SCHEMAS)
+
+def test_worker_restart_uses_stable_id_and_waits_for_fresh_pid(monkeypatch):
+    calls = []
+    async def request(method, path, body=None):
+        calls.append((method, path, body))
+        return {"status": "restarting", "previous_pid": 10} if method == "POST" else {"pid": 11}
+    async def immediate(_): pass
+    monkeypatch.setattr(m, "_worker_request", request)
+    monkeypatch.setattr(m.asyncio, "sleep", immediate)
+    import app.auth.identity as identity
+    async def admin(_): return True
+    monkeypatch.setattr(identity, "_is_admin", admin)
+    result = json.loads(asyncio.run(m.build_tools(user_id="admin")["v3_build_worker_restart"]("stable-restart")))
+    assert result["status"] == "ok" and result["active"]
+    assert calls == [("POST", "/v1/restart", {"request_id": "stable-restart"}), ("GET", "/v1/status", None)]
+    assert json.loads(asyncio.run(m.build_tools(user_id="admin")["v3_build_worker_restart"]("../bad")))["status"] == "error"
+    assert json.loads(asyncio.run(m.build_tools()["v3_build_worker_restart"]("another-id")))["status"] == "error"
+    assert len(calls) == 2
+
 
 def test_reject_arbitrary_task_and_timeout():
     tools = m.build_tools()

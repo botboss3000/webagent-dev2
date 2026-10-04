@@ -109,3 +109,30 @@ was absent, so no Node CLI syntax/test command ran. Provider authorization/key
 rotation, physical drag gestures, mobile layout and both-theme regression checks
 are not established by this journey and remain follow-up verification. No Rust,
 schema, service restart or image deployment was performed by this UI port.
+
+## Session dropdown batch recycle — 2026-10-03
+
+Route: `/app?session_id=<disposable-v3-session-id>` on the independent development
+origin. Open the conversation selector, enable checkbox mode, and select empty
+fixtures using a row click, row Enter/Space, or the checkbox button. Selection
+must leave the active conversation and read cursors unchanged. The first
+Recycle selected click arms confirmation for three seconds; the second starts
+the batch. Busy controls prevent duplicate submission. Each selected conversation
+uses the existing cookie/CSRF, ownership and revision-fenced Rust DELETE contract.
+A batch is not atomic: successful rows leave the selection; failed rows stay
+selected with explicit feedback and their unchanged request receipts for retry.
+Closing the dropdown clears checkbox mode when no batch is running. Teardown
+must stop starting further writes and suppress late panel callbacks; it cannot
+undo a write already accepted by Rust.
+
+Live server-browser acceptance selected two newly created empty fixtures with
+row click and Enter, preserved the active conversation, verified the first
+confirmation click made no lifecycle change, and then observed both fixtures
+recycled with read cursors zero and the notice “Recycled 2 of 2 selected
+sessions.” Isolated real-adapter/mock-client checks verified partial-failure
+selection retention, no duplicate retry of successful rows, and reuse of the
+failed request receipt. These isolated checks are not live authorization tests.
+Full dropdown port acceptance remains open for hidden-session and custom-order
+contracts, family grouping, both-theme/narrow-layout regression, and active
+container configuration provenance. Reference functions remain pending in
+`v3/v2_ref` because their containing UI port is incomplete.

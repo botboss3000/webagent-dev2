@@ -22,8 +22,8 @@ export async function mountSelectionTable(host,{request,agentId,onAssignment}) {
   function badge(el){if(!el||el.querySelector(':scope > .v3-contract-pending'))return;const b=document.createElement('span');b.className='v3-contract-pending';b.textContent=MISSING;el.append(b);}
   function pending(){
     if(stopped)return;
-    for(const el of group.querySelectorAll('.ac-saved-usage-th,.ac-saved-usage,.ac-model-meta-defaultline,.ac-model-meta-aliases,.ac-directives-section-title,.ac-directive-hint,.ac-saved-credentials .ac-ability-name'))badge(el);
-    for(const el of group.querySelectorAll('.ac-model-meta-defaultline input,.ac-model-alias-add'))el.disabled=true;
+    for(const el of group.querySelectorAll('.ac-saved-usage-th,.ac-saved-usage,.ac-model-meta-aliases,.ac-directives-section-title,.ac-directive-hint,.ac-saved-credentials .ac-ability-name'))badge(el);
+    for(const el of group.querySelectorAll('.ac-model-alias-add'))el.disabled=true;
     for(const el of group.querySelectorAll('.ac-model-meta-editable')){
       if(el.closest('.ac-model-meta-nameline'))continue;
       const line=el.closest('.ac-model-meta-line');badge(line);el.setAttribute('aria-disabled','true');el.tabIndex=-1;el.style.pointerEvents='none';

@@ -42,6 +42,68 @@ def test_restart_recovery(worker):
     assert recovered.active is None
     recovered.lockfile.close()
 
+def test_restart_refuses_active_job_and_preserves_receipt(worker):
+    with patch.object(m.threading.Thread, "start"):
+        worker.submit({"operation": "build", "request_id": "build-active"})
+    with pytest.raises(BlockingIOError):
+        worker.restart("restart-while-busy")
+    assert not list(worker.restart_dir.glob("*.json"))
+    worker.active = None
+    previous, scheduled = worker.restart("restart-once")
+    assert previous == m.os.getpid() and scheduled
+    assert worker.restart("restart-once") == (previous, False)
+    with pytest.raises(BlockingIOError):
+        worker.submit({"operation": "build", "request_id": "blocked-while-draining"})
+    worker.lockfile.close()
+    recovered = m.Worker(ROOT, worker.state, worker.token)
+    assert recovered.restart("restart-once") == (previous, False)
+    recovered.lockfile.close()
+
+
+def test_authenticated_http_restart_does_not_exit_in_test(worker):
+    server = m.ThreadingHTTPServer(("127.0.0.1", 0), m.Handler); server.worker = worker
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    url = "http://127.0.0.1:%s/v1/restart" % server.server_port
+    body = json.dumps({"request_id": "http-restart"}).encode()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST"))
+        assert error.value.code == 401
+        with patch.object(m.threading.Timer, "start") as start:
+            request = urllib.request.Request(url, data=body, headers={"Authorization": "Bearer " + worker.token}, method="POST")
+            with urllib.request.urlopen(request) as response:
+                assert response.status == 202
+                assert json.load(response)["previous_pid"] == m.os.getpid()
+            with urllib.request.urlopen(request) as response:
+                assert response.status == 202
+            start.assert_called_once()
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def test_v3_broker_control_socket_can_request_restart(worker, tmp_path, monkeypatch):
+    host_path = ROOT / "v3/plugins/abilities/Administrator/v3_build/host.py"
+    spec = importlib.util.spec_from_file_location("host_build_test", host_path)
+    host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
+    path = tmp_path / "control.sock"
+    server = m.ThreadingUnixServer(str(path), m.Handler)
+    server.worker = worker
+    server.local_control = True
+    path.chmod(0o600)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    monkeypatch.setattr(host, "WORKER_CONTROL", path)
+    monkeypatch.setattr(worker, "command", lambda *args, **kwargs: {"output_tail": "fixture"})
+    try:
+        with patch.object(m.threading.Timer, "start") as start:
+            result = host.worker_control("POST", "/v1/restart", {"request_id": "v3-control"})
+            assert result["status"] == "restarting"
+            status = host.worker_control("GET", "/v1/status")
+            assert status["pid"] == result["previous_pid"]
+            start.assert_called_once()
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
 def old_container():
     return {"Name": "/webagent-dev-v3", "State": {"Running": True},
             "Config": {"Image": "old", "Env": ["V3_MESSAGE_API_TOKEN=secret"], "Healthcheck": {"Test": ["CMD", "curl"]}},
@@ -58,8 +120,9 @@ def test_deploy_preserves_config(worker, monkeypatch):
     old = old_container()
     def engine(method, path, body=None):
         calls.append((method, path, body))
+        if path.startswith("/images/"): return {"Id": "sha256:new"}
         if method == "GET":
-            return old if len(calls) == 1 else {"State": {"Running": True, "Health": {"Status": "healthy"}}}
+            return old if path.startswith("/containers/webagent-dev-v3/json") and len(calls) == 2 else {"State": {"Running": True, "Health": {"Status": "healthy"}}}
         return {}
     monkeypatch.setattr(m, "engine", engine)
     job = deployment(worker); worker.deploy(job)
@@ -74,7 +137,8 @@ def test_failed_readiness_rolls_back(worker, monkeypatch):
     calls = []
     def engine(method, path, body=None):
         calls.append((method, path, body))
-        if method == "GET": return old_container() if len(calls) == 1 else {"State": {"Running": False}}
+        if path.startswith("/images/"): return {"Id": "sha256:new"}
+        if method == "GET": return old_container() if len(calls) == 2 else {"State": {"Running": False}}
         return {}
     monkeypatch.setattr(m, "engine", engine)
     job = deployment(worker)
@@ -87,6 +151,7 @@ def test_failed_create_restores_without_deleting_target(worker, monkeypatch):
     calls = []
     def engine(method, path, body=None):
         calls.append((method, path, body))
+        if path.startswith("/images/"): return {"Id": "sha256:new"}
         if method == "GET": return old_container()
         if path.startswith("/containers/create"): raise RuntimeError("create failed")
         return {}
@@ -184,3 +249,14 @@ def test_failed_build_preserves_snapshot_and_exit_metadata(worker, monkeypatch):
     assert saved["exit_code"] == 137 and not saved["timed_out"]
     assert saved["output_truncated"] and len(saved["context_sha256"]) == 64
     assert worker.token not in saved["output_tail"]
+
+
+def test_missing_image_preflight_does_not_stop_app(worker, monkeypatch):
+    calls = []
+    def engine(method, path, body=None):
+        calls.append((method, path))
+        raise RuntimeError("Docker operation failed (HTTP 404)")
+    monkeypatch.setattr(m, "engine", engine)
+    with pytest.raises(RuntimeError, match="preflight image check"):
+        worker.deploy(deployment(worker))
+    assert calls == [("GET", "/images/sha256:new/json")]

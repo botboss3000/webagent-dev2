@@ -9,9 +9,9 @@ use tokio_util::sync::CancellationToken;
 pub fn owns(name: &str) -> bool { name == "set_execution_mode" }
 pub fn schemas() -> Vec<Value> {
     vec![json!({"type":"function","name":"set_execution_mode",
-        "description":"Change this session between read_only and write at a revision checkpoint. Moving to write requires human approval.",
+        "description":"Change this session to an agent execution mode ID (ask, plan, auto, or custom); legacy read_only/write are supported at a revision checkpoint. Moving to write requires human approval.",
         "parameters":{"type":"object","properties":{
-            "mode":{"type":"string","enum":["read_only","write"]},
+            "mode":{"type":"string","maxLength":32},
             "expected_revision":{"type":"integer","minimum":0},
             "reason":{"type":"string","maxLength":500}},
             "required":["mode","expected_revision"],"additionalProperties":false}})]
@@ -24,7 +24,7 @@ pub async fn execute(app:&App,sid:&str,run_id:&str,generation:&str,pending_id:&s
     if !owns(name) || cancel.is_cancelled() {bail!("Mode change unavailable");}
     let result:Result<Value>=async {
         let query:Args=serde_json::from_value(args.clone())?;
-        if !matches!(query.mode.as_str(),"read_only"|"write")
+        if query.mode.is_empty() || query.mode.len()>32
             || query.reason.as_ref().is_some_and(|r|r.len()>500) {
             bail!("Invalid mode change");
         }

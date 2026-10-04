@@ -42,6 +42,7 @@ fn scoped(catalog: &Catalog, caller: &str, agent: &str) -> Catalog {
     for e in view.entries.values_mut().filter(|e|e.owner_id != caller) {
         e.allowed_agents.retain(|id|id == agent);
     }
+    view.platform_sources.retain(|id,_|view.entries.contains_key(id));
     view.groups.clear();
     view.assignments.clear();
     view.agent_models.retain(|id,_|id == agent);
@@ -53,11 +54,18 @@ async fn response(app: &App, identity: &Value, agent: &str, catalog: &Catalog) -
     let caller=principal(app,identity).await?;
     let mut view=scoped(catalog,&caller.user_id,agent);
     let access=app.store.live_access(&caller.user_id,agent).await.ok();
-    let available:Vec<_>=view.entries.values().filter(|e|e.allowed_agents.contains(agent)
-        && view.connections.get(&e.connection_id).is_some_and(|c|!c.revoked && c.allowed_agents.contains(agent))
-        && access.as_ref().is_some_and(|a|a.model_allowed(&e.upstream_model))
-        && (rights["can_manage"] == true || catalog.agent_models.get(agent).is_some_and(|m|m.entry_ids.contains(&e.id))))
-        .map(|e|e.id.clone()).collect();
+    let mut available=Vec::new();
+    for entry in view.entries.values() {
+        if !entry.allowed_agents.contains(agent)
+            || !view.connections.get(&entry.connection_id).is_some_and(|c|!c.revoked && c.allowed_agents.contains(agent))
+            || (rights["can_manage"]!=true && !catalog.agent_models.get(agent).is_some_and(|m|m.entry_ids.contains(&entry.id))) {continue;}
+        let allowed=if let Some(pin)=catalog.platform_sources.get(&entry.id) {
+            app.store.resolve_account_model_source(&caller.user_id,&crate::account_catalog::Source{
+                origin:crate::account_catalog::Origin::Platform,
+                entry_id:crate::account_catalog::platform_id(&pin.roster_id,&pin.entry.id)}).await.is_ok()
+        } else {access.as_ref().is_some_and(|a|a.model_allowed(&entry.upstream_model))};
+        if allowed {available.push(entry.id.clone());}
+    }
     if rights["can_manage"] != true {
         view.entries.retain(|id,_|available.contains(id));
         view.connections.retain(|id,_|view.entries.values().any(|e|e.connection_id == *id));
@@ -68,9 +76,10 @@ async fn response(app: &App, identity: &Value, agent: &str, catalog: &Catalog) -
             for r in a.roles.values_mut() {r.backup_entry_ids.retain(|id|available.contains(id));}
         }
     }
-    Ok(Json(json!({"catalog":view,"caller_id":caller.user_id,"can_manage":rights["can_manage"],
+    let adoptions=app.store.agent_model_adoptions(&caller.user_id,agent).await?;
+    Ok(Json(json!({"adoptions":adoptions,"catalog":view,"caller_id":caller.user_id,"can_manage":rights["can_manage"],
         "can_create_agent":caller.role != crate::access::Role::Guest,"agent_owner_id":rights["owner_id"],
-        "available_entries":available,"supported_transports":["openai_subscription","deepseek"]})))
+        "available_entries":available,"supported_transports":["openai_subscription","deepseek","openai_api","openrouter","abacus","gemini","groq","together","mistral","fireworks","xai","perplexity","deepinfra"]})))
 }
 // MODEL-READ: the catalog projection excludes other tenants and private credentials.
 async fn read(State(app): State<App>, Extension(identity): Extension<Value>,
@@ -89,6 +98,8 @@ async fn save(State(app): State<App>, Extension(identity): Extension<Value>,
     let old=app.store.model_catalog().await?;
     if old.revision != input.revision {return Err(crate::conflict("Model catalog revision changed; reload before saving"));}
     let view=scoped(&old,&caller.user_id,agent);
+    if input.platform_sources!=view.platform_sources {return Err(crate::bad("Platform provenance is server controlled"));}
+    if input.entries.keys().chain(input.connections.keys()).any(|id|id.starts_with("platform:") && !view.entries.contains_key(id) && !view.connections.contains_key(id)) {return Err(denied());}
     let mut next=old.clone();
     // Shared records are read-only to recipients, even to installation administrators.
     macro_rules! merge {
@@ -129,10 +140,45 @@ async fn save(State(app): State<App>, Extension(identity): Extension<Value>,
             if !entry.allowed_agents.is_subset(&connection.allowed_agents) {return Err(crate::bad("Entry grants exceed connection grants"));}
         }
     }
+    // BYO-POLICY: the existing editor is not an alternate quota/permission lane.
+    let tier=app.store.entitlement_tier(&caller.tier_id).await?
+        .ok_or_else(||denied())?;
+    let previous_count=old.entries.values().filter(|e|e.owner_id==caller.user_id).count();
+    let next_count=next.entries.values().filter(|e|e.owner_id==caller.user_id).count();
+    if !tier.allows_byo_growth(previous_count,next_count) {return Err(denied());}
+    for (id,entry) in &next.entries {
+        if entry.owner_id!=caller.user_id {continue;}
+        let increased_use=old.entries.get(id).is_none_or(|previous|
+            entry.upstream_model!=previous.upstream_model
+            || entry.connection_id!=previous.connection_id
+            || !entry.allowed_agents.is_subset(&previous.allowed_agents));
+        if increased_use && !tier.allows_byo_model(&entry.upstream_model) {return Err(denied());}
+    }
     if !input.assignments.is_empty() || !input.groups.is_empty()
         || input.agent_models.keys().any(|id|id != agent) {return Err(denied());}
     if let Some(models)=input.agent_models.get(agent) {
         if models.owner_id != rights["owner_id"].as_str().unwrap_or("") || models.agent_id != agent {return Err(denied());}
+        let previous=old.agent_models.get(agent);
+        let mut new_uses=std::collections::BTreeSet::new();
+        for id in &models.entry_ids {
+            if previous.is_none_or(|r|!r.entry_ids.contains(id)) {new_uses.insert(id);}
+        }
+        for (role,appointment) in &models.roles {
+            if previous.and_then(|r|r.roles.get(role))!=Some(appointment) {
+                new_uses.insert(&appointment.entry_id);
+                new_uses.extend(&appointment.backup_entry_ids);
+            }
+        }
+        for id in new_uses {
+            if let Some(pin)=old.platform_sources.get(id) {
+                app.store.resolve_account_model_source(&caller.user_id,&crate::account_catalog::Source{
+                    origin:crate::account_catalog::Origin::Platform,
+                    entry_id:crate::account_catalog::platform_id(&pin.roster_id,&pin.entry.id)}).await.map_err(|_|denied())?;
+            } else {
+                let entry=next.entries.get(id).ok_or_else(||crate::bad("Role entry missing"))?;
+                if !tier.allows_byo_model(&entry.upstream_model) {return Err(denied());}
+            }
+        }
         next.agent_models.insert(agent.to_owned(),models.clone());
     } else if view.agent_models.contains_key(agent) {return Err(crate::bad("Clear roles explicitly"));}
     let saved=app.store.save_model_catalog(&next,input.revision).await
@@ -154,6 +200,52 @@ async fn agents(State(app): State<App>, Extension(identity): Extension<Value>) -
     }
     // Even a caller with no memberships can create their first owned agent.
     Ok(Json(json!({"agents":values,"caller_id":caller.user_id,"can_create_agent":caller.role != crate::access::Role::Guest})))
+}
+
+// IDENTITY-WRITE: identity and named execution modes; tenant authority and revision fence edits.
+async fn identity_get(State(app): State<App>, Extension(identity): Extension<Value>, Path(id): Path<String>) -> Api {
+    use sqlx::Row;
+    let rights = authority(&app, &identity, &id, false).await?;
+    let store = app.store.for_agent(&id).await?;
+    let row = sqlx::query("SELECT name,description,revision FROM agents WHERE id=?")
+        .bind(&id).fetch_one(&store.agent_pool).await.map_err(anyhow::Error::from)?;
+    let config=crate::execution_modes::config(&store,&id).await?;
+    let settings=crate::gate_controls::agent_visibility(&store,&id).await?;
+    let fixed=crate::gate_registry::visibility_config()?.guidance;
+    Ok(Json(json!({"message_visibility":{"enabled":settings.enabled,"guidance":settings.guidance,"fixed_protocol":fixed},"execution_modes":config["execution_modes"],"default_execution_mode":config["default_execution_mode"],"id":id,"name":row.get::<String,_>("name"),
+        "description":row.get::<String,_>("description"),"revision":row.get::<i64,_>("revision"),
+        "can_manage":rights["can_manage"]})))
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdentityUpdate { revision: i64, name: Option<String>, description: Option<String>, execution_modes: Option<Value>, default_execution_mode: Option<String>, message_visibility: Option<crate::gate_controls::AgentVisibility> }
+async fn identity_put(State(app): State<App>, Extension(identity): Extension<Value>, Path(id): Path<String>, Json(body): Json<IdentityUpdate>) -> Api {
+    if body.revision < 0 || (body.name.is_none() && body.description.is_none() && body.execution_modes.is_none() && body.default_execution_mode.is_none() && body.message_visibility.is_none())
+        || body.name.as_ref().is_some_and(|s| s.trim().is_empty() || s.len()>200)
+        || body.description.as_ref().is_some_and(|s| s.len()>2000) {
+        return Err(ApiError(StatusCode::BAD_REQUEST,"Name must contain 1–200 bytes; description at most 2000 bytes".into()));
+    }
+    let _guard = app.gate.lock().await;
+    authority(&app, &identity, &id, true).await?;
+    let store = app.store.for_agent(&id).await?;
+    let blob:Vec<u8>=sqlx::query_scalar("SELECT metadata FROM agents WHERE id=?").bind(&id).fetch_one(&store.agent_pool).await.map_err(anyhow::Error::from)?;
+    let mut metadata=store.unseal(&blob)?;
+    let modes=crate::execution_modes::normalize(body.execution_modes.as_ref().unwrap_or(&metadata["execution_modes"]))
+        .map_err(|e|crate::bad(&e.to_string()))?;
+    let requested=body.default_execution_mode.as_deref().unwrap_or(metadata["default_execution_mode"].as_str().unwrap_or("ask"));
+    let default=if modes.as_array().unwrap().iter().any(|m|m["id"]==requested) {requested.to_owned()}
+        else if body.default_execution_mode.is_some() {return Err(crate::bad("Unknown default mode"));} else {"ask".to_owned()};
+    metadata["execution_modes"]=modes; metadata["default_execution_mode"]=json!(default);
+    if let Some(settings)=body.message_visibility {
+        settings.validate().map_err(|e|crate::bad(&e.to_string()))?;
+        metadata["message_visibility"]=serde_json::to_value(settings).map_err(anyhow::Error::from)?;
+    }
+    let changed = sqlx::query("UPDATE agents SET name=COALESCE(?,name),description=COALESCE(?,description),metadata=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
+        .bind(body.name.as_deref().map(str::trim)).bind(body.description.as_deref()).bind(store.seal(&metadata)?)
+        .bind(crate::now() as i64).bind(&id).bind(body.revision)
+        .execute(&store.agent_pool).await.map_err(anyhow::Error::from)?;
+    if changed.rows_affected()!=1 {return Err(ApiError(StatusCode::CONFLICT,"Identity changed; reload before saving".into()));}
+    identity_get(State(app.clone()),Extension(identity),Path(id)).await
 }
 
 #[derive(serde::Deserialize)]
@@ -201,7 +293,8 @@ async fn create_agent(State(app): State<App>, Extension(identity): Extension<Val
         Some(value) if value["relationship"]=="owner" => {}
         Some(_) => return Err(crate::conflict("Agent ownership changed")),
     }
-    let result=json!({"id":id,"name":body.name.trim(),"assignment_required":true});
+    let seeded=app.store.seed_new_agent_default(owner,&id).await?;
+    let result=json!({"id":id,"name":body.name.trim(),"assignment_required":!seeded});
     app.store.put(&receipt,&json!({"digest":crate::digest(&request),"result":result})).await?;
     Ok(Json(result))
 }
@@ -230,6 +323,11 @@ async fn connection_status(State(app): State<App>, Extension(identity): Extensio
     Ok(Json(json!({"id":id,"revoked":connection.revoked,
         "connected":!connection.revoked && app.store.get(&connection.credential_ref).await?.is_some(),"authorization":authorization})))
 }
+async fn byo_credential_permission(app:&App, caller:&Principal) -> Result<(),ApiError> {
+    let tier=app.store.entitlement_tier(&caller.tier_id).await?.ok_or_else(||denied())?;
+    if tier.model_policy.as_ref().is_some_and(|p|!p.allow_byo) {return Err(denied());}
+    Ok(())
+}
 // CREDENTIAL-AUTHORIZATION: only the connection owner starts a private device flow.
 async fn connection_authorize(State(app): State<App>, Extension(identity): Extension<Value>, Path(id): Path<String>) -> Api {
     let caller=principal(&app,&identity).await?;
@@ -237,6 +335,7 @@ async fn connection_authorize(State(app): State<App>, Extension(identity): Exten
     let mut catalog=app.store.model_catalog().await?;
     let connection=catalog.connections.get_mut(&id).ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Connection not found".into()))?;
     if connection.owner_id != caller.user_id {return Err(denied());}
+    byo_credential_permission(&app,&caller).await?;
     if connection.revoked { return Err(crate::conflict("Connection is revoked")); }
     if connection.transport != crate::model_selection::Transport::OpenaiSubscription { return Err(crate::bad("This provider uses an API key, not device authorization")); }
     if app.login.read().await.as_ref().is_some_and(|v|v["status"]=="pending") {
@@ -262,8 +361,9 @@ async fn connection_key(State(app): State<App>, Extension(identity): Extension<V
     let mut catalog = app.store.model_catalog().await?;
     let connection = catalog.connections.get_mut(&id).ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Connection not found".into()))?;
     if connection.owner_id != caller.user_id {return Err(denied());}
+    byo_credential_permission(&app,&caller).await?;
     if connection.revoked { return Err(crate::conflict("Connection is revoked")); }
-    if connection.transport != crate::model_selection::Transport::Deepseek { return Err(crate::bad("This connection does not use a DeepSeek API key")); }
+    if !connection.transport.uses_api_key() { return Err(crate::bad("This connection does not use an API key")); }
     let reference = format!("provider_credential:{}", crate::uuid());
     // Store the secret only in the encrypted credential plane. No key in catalog/events.
     app.store.put(&reference, &json!({"api_key":body.api_key})).await?;
@@ -331,10 +431,34 @@ async fn member_set(State(app): State<App>, Extension(identity): Extension<Value
     Ok(Json(json!({"membership":result})))
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Discovery { provider:Option<crate::provider::ProviderId>, api_key:Option<String>, connection_id:Option<String> }
+async fn discover(State(app):State<App>,Extension(identity):Extension<Value>,Json(input):Json<Discovery>)->Api {
+    let caller=principal(&app,&identity).await?;
+    if !caller.administrator(){byo_credential_permission(&app,&caller).await?;}
+    let (provider,tokens)=if let Some(id)=input.connection_id {
+        if input.provider.is_some()||input.api_key.is_some(){return Err(crate::bad("Use one discovery credential source"));}
+        let catalog=app.store.model_catalog().await?;
+        let connection=catalog.connections.get(&id).filter(|c|c.owner_id==caller.user_id&&!c.revoked&&c.transport.uses_api_key())
+            .ok_or_else(denied)?;
+        (connection.transport.provider_id(),app.store.get(&connection.credential_ref).await?.ok_or_else(denied)?)
+    } else {
+        let provider=input.provider.ok_or_else(||crate::bad("Provider required"))?;
+        let key=input.api_key.ok_or_else(||crate::bad("API key required"))?;
+        if !key.bytes().all(|b|b.is_ascii_graphic())||!(8..=512).contains(&key.len())||provider.chat_endpoint().is_none(){return Err(crate::bad("Invalid discovery credential or provider"));}
+        (provider,json!({"api_key":key}))
+    };
+    Ok(Json(app.provider.discover_models(provider,&tokens,tokio_util::sync::CancellationToken::new()).await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"Provider discovery unavailable; check provider and credential".into()))?))
+}
+
 /// Nest only under the authenticated browser API (including its CSRF middleware).
 pub fn router() -> Router<App> {
     Router::new().route("/catalog", get(read).put(save))
+        .route("/discovery", axum::routing::post(discover))
         .route("/agents", get(agents).post(create_agent))
+        .route("/agents/{id}/identity", get(identity_get).put(identity_put))
         .route("/agents/{id}/members", get(members).put(member_set))
         .route("/connections/{id}", get(connection_status))
         .route("/connections/{id}/api-key", axum::routing::put(connection_key))
@@ -345,6 +469,88 @@ pub fn router() -> Router<App> {
 mod tests {
     use super::*;
     use crate::runtime_tests::{fixture, selection_fixture};
+    #[tokio::test]
+    async fn visibility_preferences_preserve_fixed_protocol_and_revision_fence() {
+        let (_root,app)=fixture().await;let identity=json!({"_user_id":"admin"});
+        let Json(before)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
+        assert_eq!(before["message_visibility"]["enabled"],true);
+        let patch=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,execution_modes:None,default_execution_mode:None,message_visibility:Some(crate::gate_controls::AgentVisibility{enabled:false,guidance:guidance.into()})};
+        let revision=before["revision"].as_i64().unwrap();
+        let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"Keep progress concise"))).await.unwrap();
+        assert_eq!(saved["message_visibility"]["fixed_protocol"],before["message_visibility"]["fixed_protocol"]);
+        assert_eq!(saved["message_visibility"]["enabled"],false);
+        let settings=crate::gate_controls::agent_visibility(&app.store,"shared_default").await.unwrap();assert!(!settings.enabled);assert_eq!(settings.guidance,"Keep progress concise");
+        let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();assert_eq!(reloaded,saved);
+        assert_eq!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"stale"))).await.unwrap_err().0,StatusCode::CONFLICT);
+        let outsider=tenant_user(&app,"visibility-outsider").await;
+        assert!(identity_put(State(app.clone()),Extension(json!({"_user_id":outsider})),Path("shared_default".into()),Json(patch(revision+1,"forbidden"))).await.is_err());
+        assert!(identity_put(State(app.clone()),Extension(identity),Path("shared_default".into()),Json(patch(revision+1,&"x".repeat(4097)))).await.is_err());
+    }
+    #[tokio::test]
+    async fn identity_modes_persist_default_and_enforce_live_boundary() {
+        let (_root,app)=fixture().await;
+        let identity=json!({"_user_id":"admin"});
+        let Json(before)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
+        let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{
+            revision:before["revision"].as_i64().unwrap(),name:None,description:None,
+            execution_modes:Some(json!([{"id":"review","label":"Review","permission_policy":"read_only","prompt":"Inspect only"}])),
+            default_execution_mode:Some("review".into()),message_visibility:None})).await.unwrap();
+        let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
+        assert_eq!(saved,reloaded);
+        let Json(session)=crate::api::create_session(State(app.clone()),Json(json!({"client_request_id":crate::uuid()}))).await.unwrap();
+        let sid=session["id"].as_str().unwrap();
+        let mode=crate::session_mode(&app,sid).await.unwrap();
+        assert_eq!(mode["execution_mode"],"review"); assert_eq!(mode["mode"],"read_only");
+        assert_eq!(mode["definition"]["prompt"],"Inspect only");
+        let mut modes=saved["execution_modes"].clone();
+        modes.as_array_mut().unwrap().last_mut().unwrap()["permission_policy"]=json!("write");
+        identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{
+            revision:saved["revision"].as_i64().unwrap(),name:None,description:None,execution_modes:Some(modes),default_execution_mode:None,message_visibility:None})).await.unwrap();
+        assert_eq!(crate::session_mode(&app,sid).await.unwrap()["mode"],"read_only");
+        let Json(next)=crate::api::change_session_mode(&app,sid,"review",Some(0),None).await.unwrap();
+        assert_eq!(next["mode"],"write");
+        assert!(crate::api::change_session_mode(&app,sid,"unknown",None,None).await.is_err());
+    }
+    #[tokio::test]
+    async fn byo_disabled_blocks_credential_writes_without_mutating_catalog() {
+        let (_root,app)=fixture().await;
+        let catalog=selection_fixture(&app).await;
+        let mut tier=app.store.entitlement_tier("basic").await.unwrap().unwrap();
+        let revision=tier.revision;
+        tier.model_policy=Some(crate::access::ModelPolicy{roster_id:None,
+            allowed_entry_ids:Default::default(),allow_byo:false,max_byo_entries:0});
+        app.store.save_entitlement_tier(tier,revision).await.unwrap();
+        let user=tenant_user(&app,"byo-disabled").await;
+        let account=app.store.account_by_id(&user).await.unwrap().unwrap();
+        app.store.update_account_access(&user,account["access_revision"].as_u64().unwrap(),
+            crate::access::AccountStatus::Active,crate::access::Role::User,"basic").await.unwrap();
+        // Ownership is immutable; use a fresh ordinary-account connection instead.
+        let mut connection=catalog.connections["one"].clone();
+        connection.id="ordinary-byo".into();connection.owner_id=user.clone();connection.revision=1;
+        let mut next=catalog.clone();next.connections.insert(connection.id.clone(),connection);
+        let catalog=app.store.save_model_catalog(&next,next.revision).await.unwrap();
+        let identity=json!({"_user_id":user});
+        let caller=principal(&app,&identity).await.unwrap();
+        assert!(byo_credential_permission(&app,&caller).await.is_err());
+        assert!(connection_authorize(State(app.clone()),Extension(identity.clone()),
+            Path("ordinary-byo".into())).await.is_err());
+        assert!(connection_key(State(app.clone()),Extension(identity),
+            Path("ordinary-byo".into()),Json(ApiKey{api_key:"fixture-no-network-key".into()})).await.is_err());
+        assert_eq!(app.store.model_catalog().await.unwrap(),catalog);
+    }
+    #[tokio::test]
+    async fn identity_is_scoped_validated_and_revision_fenced() {
+        let (_root, app) = fixture().await;
+        let identity = json!({"_user_id":"admin"});
+        let Json(before) = identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
+        let revision = before["revision"].as_i64().unwrap();
+        let Json(saved) = identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("  Renamed  ".into()),description:Some("Description".into()),execution_modes:None,default_execution_mode:None,message_visibility:None})).await.unwrap();
+        assert_eq!(saved["name"],"Renamed"); assert_eq!(saved["description"],"Description");
+        assert!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("Stale".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
+        assert!(identity_put(State(app.clone()),Extension(identity),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some(" ".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
+        let outsider = tenant_user(&app,"identity-outsider").await;
+        assert!(identity_put(State(app.clone()),Extension(json!({"_user_id":outsider})),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some("Forbidden".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
+    }
     #[tokio::test]
     async fn deepseek_keys_are_validated_encrypted_scoped_and_not_returned() {
         let (_root, app) = fixture().await;
@@ -370,6 +576,40 @@ mod tests {
     }
 
     // TENANT-API-FIXTURE: use real encrypted stores; no network or live account data.
+    #[tokio::test]
+    async fn discovery_rejects_forged_credentials_and_endpoint_overrides_without_network() {
+        let (_root,app)=fixture().await;
+        assert!(serde_json::from_value::<Discovery>(json!({"provider":"openrouter","api_key":"secret-key","base_url":"http://127.0.0.1"})).is_err());
+        let identity=json!({"_user_id":"admin"});
+        assert!(discover(State(app.clone()),Extension(identity.clone()),Json(Discovery{
+            provider:None,api_key:None,connection_id:Some("not-owned".into())})).await.is_err());
+        assert!(discover(State(app),Extension(identity),Json(Discovery{
+            provider:Some(crate::provider::ProviderId::Openrouter),api_key:Some("secret-key".into()),connection_id:Some("ambiguous".into())})).await.is_err());
+    }
+    #[tokio::test]
+    async fn new_agent_uses_account_default_without_reseeding_existing_rosters() {
+        let (_root,app)=fixture().await;
+        let catalog=app.store.model_catalog().await.unwrap();
+        let entry=catalog.entries.values().find(|e|e.owner_id=="admin").unwrap();
+        let id=entry.id.clone();
+        let mut preferences=app.store.account_model_preferences("admin").await.unwrap();
+        preferences.default_entry_id=Some(crate::account_catalog::byo_id(&id));
+        app.store.save_account_model_preferences("admin",&preferences).await.unwrap();
+        let identity=json!({"_user_id":"admin"});
+        let input=||NewAgent{client_request_id:"seeded-creation".into(),name:"Seeded".into(),description:None};
+        let Json(created)=create_agent(State(app.clone()),Extension(identity.clone()),Json(input())).await.unwrap();
+        assert_eq!(created["assignment_required"],false);
+        let agent=created["id"].as_str().unwrap();
+        let mut catalog=app.store.model_catalog().await.unwrap();
+        assert_eq!(catalog.agent_models[agent].roles[&crate::model_selection::ModelRole::Standard].entry_id,id);
+        let Json(retry)=create_agent(State(app.clone()),Extension(identity),Json(input())).await.unwrap();
+        assert_eq!(retry,created);
+        assert_eq!(app.store.model_catalog().await.unwrap(),catalog);
+        catalog.agent_models.get_mut(agent).unwrap().roles.clear();
+        let cleared=app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+        assert!(!app.store.seed_new_agent_default("admin",agent).await.unwrap());
+        assert_eq!(app.store.model_catalog().await.unwrap(),cleared);
+    }
     async fn tenant_user(app: &App, name: &str) -> String {
         let account=app.store.create_user_account(name,"long-hash-placeholder").await.unwrap();
         let id=account["user_id"].as_str().unwrap();

@@ -20,6 +20,39 @@ pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. U
 pub enum ProviderId {
     OpenaiSubscription,
     Deepseek,
+    OpenaiApi,
+    Openrouter,
+    Abacus,
+    Gemini,
+    Groq,
+    Together,
+    Mistral,
+    Fireworks,
+    Xai,
+    Perplexity,
+    Deepinfra,
+}
+
+
+impl ProviderId {
+    /// Installation-owned endpoints only. Client catalog payloads cannot override these.
+    pub fn chat_endpoint(self) -> Option<&'static str> {
+        match self {
+            Self::OpenaiSubscription => None,
+            Self::Deepseek => Some("https://api.deepseek.com/chat/completions"),
+            Self::OpenaiApi => Some("https://api.openai.com/v1/chat/completions"),
+            Self::Openrouter => Some("https://openrouter.ai/api/v1/chat/completions"),
+            Self::Abacus => Some("https://routellm.abacus.ai/v1/chat/completions"),
+            Self::Gemini => Some("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+            Self::Groq => Some("https://api.groq.com/openai/v1/chat/completions"),
+            Self::Together => Some("https://api.together.xyz/v1/chat/completions"),
+            Self::Mistral => Some("https://api.mistral.ai/v1/chat/completions"),
+            Self::Fireworks => Some("https://api.fireworks.ai/inference/v1/chat/completions"),
+            Self::Xai => Some("https://api.x.ai/v1/chat/completions"),
+            Self::Perplexity => Some("https://api.perplexity.ai/chat/completions"),
+            Self::Deepinfra => Some("https://api.deepinfra.com/v1/openai/chat/completions"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -44,12 +77,7 @@ impl ProviderSelection {
             None => default_model,
             Some(value) => value.as_str().ok_or_else(|| anyhow!("Invalid model"))?,
         };
-        if model.is_empty()
-            || model.len() > 128
-            || !model
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-._".contains(c))
-        {
+        if !crate::platform_catalog::valid_model(model) {
             bail!("Invalid model");
         }
         Ok(Self {
@@ -335,6 +363,7 @@ impl Provider {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(20))
                 .user_agent("webagent-v3/0.1")
                 .build()
@@ -476,7 +505,6 @@ impl Provider {
         cancel: CancellationToken,
     ) -> Result<Value> {
         match selection.provider {
-            ProviderId::Deepseek => self.complete_deepseek(tokens, &selection.model, input, tools, instructions, delta, cancel).await,
             ProviderId::OpenaiSubscription => {
                 self.complete_with_instructions(
                     tokens,
@@ -489,7 +517,8 @@ impl Provider {
                     cancel,
                 )
                 .await
-            }
+            },
+            provider => self.complete_compatible(provider, tokens, &selection.model, input, tools, instructions, delta, cancel).await,
         }
     }
 
@@ -842,6 +871,19 @@ mod tests {
                 "default"
             )
             .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod upstream_id_tests {
+    #[test]
+    fn selection_accepts_namespaced_models_without_accepting_controls() {
+        use super::ProviderSelection;
+        use serde_json::json;
+        assert!(ProviderSelection::parse(&json!({"provider":"deepseek","model":"organization/model-name"}), "default").is_ok());
+        for model in ["model\n", "model name", "model?token=x"] {
+            assert!(ProviderSelection::parse(&json!({"provider":"deepseek","model":model}), "default").is_err());
         }
     }
 }

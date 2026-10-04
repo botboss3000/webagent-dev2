@@ -174,7 +174,7 @@ pub async fn execute(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,pending
             Ok(json!({"status":receipt["status"],"uncertain":receipt["result"]["uncertain"]==true,"output":receipt}))
         },
         "v3_workspace_action"=>receipt_action(app,sid,run_id,args,pending_id,policy_version,cancel).await,
-        "v3_build_status"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"=>host(app,sid,run_id,name,args,cancel).await,
+        "v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"=>host(app,sid,run_id,name,args,cancel).await,
         "git_tool"|"resolve_conflict"|"commit_and_push"=>{
             let trusted=crate::api::repository::transport(app,sid).await?;
             worker(app,sid,name,args,Some(trusted),cancel).await

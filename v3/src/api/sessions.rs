@@ -76,6 +76,11 @@ pub(crate) async fn create_session(State(app): State<App>, Json(body): Json<Valu
         .atomic_docs_event(
             vec![
                 (key("session", &id), value),
+                (key("session_mode", &id), {
+                    let config=crate::execution_modes::config(&app.store,agent_id).await?;
+                    let entry=crate::execution_modes::resolve(&config,config["default_execution_mode"].as_str().unwrap()).map_err(ApiError::from)?;
+                    json!({"mode":entry["permission_policy"],"execution_mode":entry["id"],"revision":0})
+                }),
                 (receipt_key, json!({"digest":digest(&body),"result":result})),
             ],
             &id,
@@ -524,14 +529,18 @@ pub(crate) struct ModeCall<'a> { pub run_id: &'a str, pub generation: &'a str, p
 pub(crate) async fn change_session_mode(
     app: &App, id: &str, mode: &str, expected_revision: Option<u64>, tool: Option<ModeCall<'_>>,
 ) -> Api {
-    if !matches!(mode, "write" | "read_only") {
-        return Err(bad("Invalid session capability mode"));
-    }
+
     let _guard = app.gate.lock().await;
     if app.store.get(&key("session", &id)).await?.is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
     }
     let current = session_mode(&app, &id).await?;
+    let agent=session_agent_id(app,id).await?;
+    let config=crate::execution_modes::config(&app.store,&agent).await?;
+    let named=if matches!(mode,"write"|"read_only") {None} else {
+        Some(crate::execution_modes::resolve(&config,mode).map_err(|_|bad("Unknown execution mode"))?)
+    };
+    let target_policy=named.as_ref().map(|m|m["permission_policy"].as_str().unwrap()).unwrap_or(mode);
     let receipt = tool.map(|call| {
         let key = format!("receipt:session_mode:{id}:{}",call.pending_id);
         let hash = digest(&json!([id,mode,expected_revision,call.run_id,call.generation,call.pending_id]));
@@ -572,7 +581,7 @@ pub(crate) async fn change_session_mode(
                 .permission==access::Permission::Deny {
             return Err(conflict("Mode call authorization changed"));
         }
-        if current["mode"]=="read_only" && mode=="write"
+        if current["mode"]=="read_only" && target_policy=="write"
             && run["pending"]["human_approved"]!=true {
             return Err(ApiError(StatusCode::FORBIDDEN,"Write mode requires approval".into()));
         }
@@ -580,11 +589,12 @@ pub(crate) async fn change_session_mode(
     if expected_revision.is_some_and(|revision| current["revision"].as_u64()!=Some(revision)) {
         return Err(conflict("Session mode revision changed"));
     }
-    if current["mode"] == mode {
+    if current["mode"] == mode && named.is_none() && current["execution_mode"].is_null() {
         if mode=="read_only" {phase3_api::quiesce_session_resources(&app,&id).await?;}
         return Ok(Json(current));
     }
-    let next = json!({"mode":mode,"revision":current["revision"].as_u64().unwrap()+1});
+    let mut next = json!({"mode":target_policy,"revision":current["revision"].as_u64().unwrap()+1});
+    if let Some(entry)=named {next["execution_mode"]=entry["id"].clone();}
     let mut docs = vec![(key("session_mode", &id), next.clone())];
     if let Some((receipt_key,hash)) = receipt {
         docs.push((receipt_key,json!({"request_hash":hash,"result":next})));

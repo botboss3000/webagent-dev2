@@ -19,6 +19,9 @@ TASKS = {"check": ["check"], "test": ["test"], "release": ["build", "--release"]
 CONTEXT = (
     "v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock", "v3/.gitignore", "v3/src", "v3/ui",
     "v3/plugins/abilities", "v3/worker.py", "v3/launch.py", "v3/promote.py", "v3/ui-baseline.json",
+    "v3/config", "v3/docs", "v3/plugins/gates", "v3/sandbox.py",
+    "v3/data/config/gates/message_visibility_v1.json",
+    "v3/data/config/gates/closing_status_v1.json",
     "v3/tests", "v3/README.md", "v3/deploy.sh", "ui/shared/css/app1.css", "ui/shared/css/app2.css",
     "ui/shared/css/app3.css", "ui/shared/css/design-system.css", "ui/shared/css/index.css",
     "ui/main-panel/agents/agents.html", "ui/main-panel/agents/agents.css", "ui/vendor/fonts",
@@ -26,6 +29,9 @@ CONTEXT = (
 )
 TOOL_SCHEMAS = {
     "v3_build_status": {"type": "object", "properties": {}, "additionalProperties": False},
+    "v3_build_worker_restart": {"type": "object", "properties": {
+        "request_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,80}$"}},
+        "required": ["request_id"], "additionalProperties": False},
     "v3_cargo_task": {"type": "object", "properties": {
         "task": {"type": "string", "enum": list(TASKS)},
         "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800, "default": 600}},
@@ -104,7 +110,7 @@ async def _request_v3_cookie(origin: str, token: str, caller: str) -> dict:
 
 
 TOOL_SCHEMAS["login_as_current_user_v3"] = _V3_LOGIN_PARAMETERS
-DESTRUCTIVE = {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "login_as_current_user_v3"}
+DESTRUCTIVE = {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "v3_build_worker_restart", "login_as_current_user_v3"}
 _BUSY = False
 
 
@@ -203,6 +209,8 @@ async def _worker_request(method, path, body=None):
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
             response = await client.request(method, url + path, headers={"Authorization": "Bearer " + token}, json=body)
+            if response.status_code == 409:
+                return {"status": "busy", "http_status": 409, "error": "Worker has an active job or is restarting"}
             if response.status_code >= 300:
                 return {"status": "error", "http_status": response.status_code, "error": "Worker request rejected; check worker authentication/status"}
             return response.json()
@@ -277,6 +285,27 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
         """Check Rust, Cargo, C compiler, Docker daemon and disk prerequisites for v3."""
         return json.dumps(await _worker_request("GET", "/v1/status") if os.environ.get("V3_BUILD_WORKER_URL") else await _probe())
 
+    async def v3_build_worker_restart(request_id):
+        """Restart only the dedicated host build worker when no job is active."""
+        import re
+        if not isinstance(request_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", request_id):
+            return json.dumps({"status": "error", "error": "Stable restart request_id required"})
+        from app.auth.identity import _is_admin
+        if not user_id or not await _is_admin(user_id):
+            return json.dumps({"status": "error", "error": "Platform administrator required"})
+        result = await _worker_request("POST", "/v1/restart", {"request_id": request_id})
+        if result.get("status") != "restarting":
+            return json.dumps(result)
+        previous = result.get("previous_pid")
+        for _ in range(40):
+            await asyncio.sleep(0.5)
+            current = await _worker_request("GET", "/v1/status")
+            if current.get("pid") and current["pid"] != previous:
+                return json.dumps({"status": "ok", "service": "v3-build-worker.service",
+                                   "active": True, "interrupted_job": None})
+        return json.dumps({"status": "uncertain", "service": "v3-build-worker.service",
+                           "error": "Restart requested but fresh worker readiness was not confirmed"})
+
     async def v3_cargo_task(task, timeout_seconds=600):
         """Run a fixed locked v3 Cargo check, test, or release build; does not deploy."""
         global _BUSY
@@ -343,4 +372,4 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
             return json.dumps({"status": "error", "error": "Invalid job ID"})
         return json.dumps(await _worker_request("GET", "/v1/jobs/" + job_id))
 
-    return {"login_as_current_user_v3": login_as_current_user_v3, "v3_worker_submit": v3_worker_submit, "v3_worker_job": v3_worker_job, "v3_build_status": v3_build_status, "v3_cargo_task": v3_cargo_task, "v3_build_image": v3_build_image}
+    return {"login_as_current_user_v3": login_as_current_user_v3, "v3_worker_submit": v3_worker_submit, "v3_worker_job": v3_worker_job, "v3_build_status": v3_build_status, "v3_build_worker_restart": v3_build_worker_restart, "v3_cargo_task": v3_cargo_task, "v3_build_image": v3_build_image}

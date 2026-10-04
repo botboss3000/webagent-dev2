@@ -5,6 +5,7 @@ pub(crate) mod session;
 pub(crate) mod search;
 pub(crate) mod own_skills;
 pub(crate) mod base_task;
+mod activity;
 
 use crate::access;
 use crate::cache::{Cache, ContextCache};
@@ -205,6 +206,8 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
             CREATE INDEX IF NOT EXISTS runs_session ON run_index(session_id,updated_at);
             CREATE TABLE IF NOT EXISTS interactions(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,run_id TEXT NOT NULL,step TEXT NOT NULL,item BLOB NOT NULL,created_at INTEGER NOT NULL,UNIQUE(run_id,step));
             CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,seq);
+            CREATE TABLE IF NOT EXISTS activity_boundaries(interaction_seq INTEGER PRIMARY KEY,boundary_item_id TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS activity_boundary_item ON activity_boundaries(boundary_item_id);
             CREATE TABLE IF NOT EXISTS chat(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,session_id TEXT NOT NULL,run_id TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN (\'user\',\'assistant\')),content BLOB NOT NULL,created_at INTEGER NOT NULL,terminal_run_id TEXT UNIQUE);
             CREATE INDEX IF NOT EXISTS chat_session ON chat(session_id,seq);
             CREATE TABLE IF NOT EXISTS loop_commands(seq INTEGER PRIMARY KEY AUTOINCREMENT,command_id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL,schema_version INTEGER NOT NULL CHECK(schema_version=1),kind TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL,acknowledged_at INTEGER);
@@ -1168,9 +1171,14 @@ impl Store {
         step: &str,
         item: &Value,
     ) -> Result<()> {
-        sqlx::query("INSERT OR IGNORE INTO interactions(session_id,run_id,step,item,created_at) VALUES(?,?,?,?,strftime('%s','now'))")
+        let inserted = sqlx::query("INSERT OR IGNORE INTO interactions(session_id,run_id,step,item,created_at) VALUES(?,?,?,?,strftime('%s','now'))")
             .bind(sid).bind(run_id).bind(step).bind(self.seal(item)?)
-            .execute(&mut **tx).await?;
+            .execute(&mut **tx).await?.rows_affected();
+        if inserted == 0 { return Ok(()); }
+        // ACTIVITY-BOUNDARY: immutable public anchor, atomic with the private item.
+        // Never infer same-second promotion ordering from timestamps.
+        sqlx::query("INSERT OR IGNORE INTO activity_boundaries(interaction_seq,boundary_item_id) SELECT i.seq,c.id FROM interactions i JOIN chat c ON c.seq=(SELECT MAX(seq) FROM chat WHERE session_id=?) WHERE i.run_id=? AND i.step=?")
+            .bind(sid).bind(run_id).bind(step).execute(&mut **tx).await?;
         Ok(())
     }
     async fn insert_chat(

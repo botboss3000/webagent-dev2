@@ -8,6 +8,8 @@ mod chat;
 mod ability_admin;
 mod service_admin;
 mod administrator;
+mod model_catalog;
+mod account_models;
 pub(crate) mod repository;
 pub(crate) use auth::*;
 pub(crate) use admin::*;
@@ -22,6 +24,7 @@ pub(super) fn router(app: App) -> Router {
         .route("/settings", put(settings))
         .nest("/admin/access", phase3_api::router())
         .nest("/admin/services", service_admin::router())
+        .nest("/admin/models/rosters", model_catalog::router())
         .route("/admin/access/registration", get(registration::access_mode).put(registration::set_mode))
         .route("/workflow/policy", get(workflow_policy_get).put(workflow_policy_set))
         .route("/agents/{id}/model", get(agent_model).put(agent_model_set))
@@ -36,6 +39,9 @@ pub(super) fn router(app: App) -> Router {
         .route("/sessions/{sid}/administrator/artifacts/{id}",get(administrator::artifact))
         .route("/sessions/{sid}/administrator/notices",get(administrator::notices))
         .nest("/models", model_selection_api::router())
+        .route("/models/me/catalog",get(account_models::read).put(account_models::save))
+        .route("/models/me/catalog/default",put(account_models::set_default))
+        .route("/models/agents/{id}/adoptions",post(account_models::adopt))
         .route("/agents/{id}/context-composition",get(ability_admin::composition))
         .route("/agents/{id}/slots",get(ability_admin::slots))
         .route("/agents/{id}/slots/{name}",get(ability_admin::slot).put(ability_admin::slot_put).delete(ability_admin::slot_delete))

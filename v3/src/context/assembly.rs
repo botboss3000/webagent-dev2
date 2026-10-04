@@ -107,7 +107,7 @@ pub fn prepare_incremental<'a>(request: Request<'a>, state: &mut crate::context_
         model: request.selection.model.clone(),
         transport: match request.selection.provider {
             provider::ProviderId::OpenaiSubscription => "responses",
-            provider::ProviderId::Deepseek => "chat_completions",
+            _ => "chat_completions",
         },
         turn: request.identity.turn, call: request.identity.call,
         max_bytes: request.max_bytes, history_budget_bytes: history_budget,

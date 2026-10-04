@@ -222,6 +222,8 @@ export function applyChatConfig() {
   const panel = byId('chat-panel');
   const contentProfile = mergeProfile(documentConfig.chat_common, documentConfig[window.innerWidth <= 768 ? 'chat_mobile' : 'chat_desktop']);
   panel.style.setProperty('--v3-content-max-width', contentProfile.content_max_width || '100%');
+  panel.style.setProperty('--v3-transcript-top',(profile.transcript_padding?.top_px ?? 25)+'px');
+  panel.style.setProperty('--v3-transcript-bottom',(profile.transcript_padding?.bottom_px ?? 50)+'px');
   panel.style.setProperty('--v3-tail-gap', (profile.transcript_tail_clearance?.gap_px ?? 16) + 'px');
   applyHeader(profile);
   applyFooter(profile, mode);

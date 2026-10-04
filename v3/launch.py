@@ -28,7 +28,10 @@ def directory(path, uid, mode):
     os.chmod(path, mode)
 
 
-directory("/state", 1100, 0o700)
+# Preserve the operator ACLs that let build identities traverse to the two
+# gate configs. The ACL mask permits traversal only; sibling state denies
+# those identities, and the state directory remains unlistable to them.
+directory("/state", 1100, 0o710)
 directory("/workspaces", 1101, 0o770)
 directory("/run/v3", 0, 0o700)
 directory("/run/v3/control", 0, 0o700)

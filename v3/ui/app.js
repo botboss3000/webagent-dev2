@@ -14,9 +14,12 @@ import { initChatConfig } from './chat/controls/chat-config.js';
 import { mountChatPanel } from './chat/core/panel.js';
 
 // v2 dom-utils imports v1 auth and uploads; v3 uses text nodes and its own transport.
+import { renderIdentity } from './main-panel/agents/pages/identity/page.js';
 import { renderAbilities } from './main-panel/agents/pages/abilities/page.js';
 import { loadAgentPages, renderAgentDirectory } from './main-panel/agents/pages/catalog.js';
 import { mountSelectionTable } from './main-panel/agents/pages/model-table.js';
+import { mountAvailableModels } from './main-panel/account/available-models.js';
+let availableModelsDispose;
 let selectionTable;
 let agentPages=[];
 const $=id=>document.getElementById(id);
@@ -50,7 +53,7 @@ async function mountAgents(){
       <div class="ac-ability-row ac-model-cfg-row ac-row-static"><span class="ac-ability-label"><span class="ac-ability-name">Connection</span></span><span class="ac-model-cfg-control"><span id="connection" class="ac-hint"></span><button id="connect" type="button" class="ac-btn ac-btn-primary ac-btn-sm">Click to Issue verification code</button><button id="disconnect" type="button" class="ac-btn ac-btn-sm">Disconnect</button><span id="device" class="ac-subscription-auth"></span></span></div>
       <form id="model-form" class="ac-ability-row ac-model-cfg-row"><label for="model" class="ac-ability-label"><span class="ac-ability-name">Model</span><span class="ac-ability-desc">Model ID used for new chat turns.</span></label><span class="ac-model-cfg-control"><input id="model" class="ac-input ac-input-sm" placeholder="gpt-6-luna" required pattern="[A-Za-z0-9._-]+"><button class="ac-btn ac-btn-primary ac-btn-sm">Save model</button></span></form>
     </div><details id="settings"><summary>Tool policies</summary><form id="policy-form"><div id="rules"></div><button type="submit">Save policies</button></form></details>
-    </div><div id="abilities-page" hidden></div><div id="config-page" class="agent-detail-body" hidden></div></div></div>`;
+    </div><div id="identity-page" class="agent-detail-body" hidden></div><div id="abilities-page" hidden></div><div id="config-page" class="agent-detail-body" hidden></div></div></div>`;
   agentPages=await loadAgentPages();
   const tabs=detail.querySelector('.agent-card-tabs');
   for(const page of [{id:'config',title:'Config',panelId:'config-page'},...agentPages]){
@@ -145,13 +148,13 @@ const keyId=key=>{if(!ids.has(key))ids.set(key,crypto.randomUUID());return ids.g
 const note=text=>{$('notice').textContent=text;};
 async function api(path,method='GET',body){const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':csrf})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401)out();const error=Error(data.error||data.message||'Request failed ('+response.status+')');error.status=response.status;throw error;}return data;}
 const guard=fn=>async event=>{event?.preventDefault();try{await fn(event);note('');}catch(error){note(error.message);}};
-const chat = await mountChatPanel({request:api, guard, note, keyId, forgetKey:key=>ids.delete(key), refresh, getState:()=>state, getAgentId:()=>agentId});
+const chat = await mountChatPanel({request:api, guard, note, keyId, forgetKey:key=>ids.delete(key), refresh, getState:()=>state, getAgentId:()=>agentId, getIdentity:()=>accountMe});
 await loadMainPages();
 
 // Agent pages resolve tenant authority independently; members see effective read-only abilities.
 async function showAgentView(view){
   const pages=[{id:'config',panelId:'config-page'},...agentPages];
-  const selected=accountMe&&!accountMe.is_admin&&!['model','abilities'].includes(view)?'model':pages.some(page=>page.id===view)?view:'config';
+  const selected=accountMe&&!accountMe.is_admin&&!['model','abilities','identity'].includes(view)?'model':pages.some(page=>page.id===view)?view:'config';
   for(const page of pages){
     $(page.panelId).hidden=page.id!==selected;
     const tab=$('agent-tab-'+page.id);
@@ -164,6 +167,7 @@ async function showAgentView(view){
   const route=new URL(location.href);
   route.searchParams.set('agentView',selected);
   history.replaceState({},'',route);
+  if(selected==='identity')await renderIdentity($('identity-page'),api,{agentId,onSaved:agent=>{document.querySelector('.agent-card-name').textContent=agent.name;}});
   if(selected==='abilities')await renderAbilities($('abilities-page'),api,{agentId});
 }
 for(const page of [{id:'config'},...agentPages]){
@@ -194,7 +198,7 @@ syncAgentTabs();
 wirePageTabDrag(document.querySelector('#agents-grid .agent-card-tabs'), { getOrder: () => agentTabOrder, save: saveAgentTabs, prefix: 'agent-tab-' });
 async function loadGuestPolicy(){try{const policy=await api('/auth/access-mode');$('guest-login').hidden=!policy.guest_access;document.querySelector('.private-access-approval').hidden=!!policy.guest_access;}catch{$('guest-login').hidden=true;}}
 $('guest-login').onclick=async()=>{const btn=$('guest-login');btn.disabled=true;try{const result=await api('/auth/guest-login','POST',{});csrf=result.csrf_token;await boot();}catch(error){$('registration-status').textContent=error.message;}finally{btn.disabled=false;}};
-function out(){window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';chat.disconnect();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
+function out(){availableModelsDispose?.();availableModelsDispose=null;window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';chat.disconnect();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
 async function refresh(){if(accountMe&&!accountMe.is_admin){state=await api('/user/status');$('shutoff').hidden=true;chat.runs(state.runs||[]);return;}state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}chat.runs(state.runs||[]);}
 // Explicit role administration replaces the legacy default-model form for every agent.
 async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);window.dispatchEvent(new Event('v3-identity-changed'));privateVisible(false);$('app').hidden=false;await refresh();selectionTable?.destroy();$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;try{selectionTable=await mountSelectionTable($('selection-model-table'),{request:api,agentId,onAgent:async id=>{agentId=id;const route=new URL(location.href);route.searchParams.set('agent',id);history.replaceState({},'',route);await showAgentView(route.searchParams.get('agentView')||'model');},onAssignment:async(id,assignment)=>{explicitAssignment=!!assignment?.roles?.standard;$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;}});}catch(error){if(error.status===401)throw error;selectionTable=null;const warning=document.createElement('p');warning.className='ac-hint';warning.setAttribute('role','status');warning.textContent=error.status===404?'Model role management requires a backend update.':'Model assignment management unavailable: '+error.message;$('selection-model-table').replaceChildren(warning);if(agentId!=='shared_default')throw Error('This agent requires model-management support; update the backend before chatting.');}await showAgentView(new URL(location.href).searchParams.get('agentView')||(me.is_admin?'config':'model'));const items=await chat.sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await chat.open(route||items[0].id);if(initialTab==='account')showAccountPanel();window.__boot?.appReady();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
@@ -279,6 +283,8 @@ $('account-profile-form').onsubmit=async event=>{
   }catch(error){status.textContent=error.message;}
 };
 async function loadAccountControls(){
+  availableModelsDispose?.();
+  availableModelsDispose=mountAvailableModels($('account-available-models'),api);
   try{
     const [policy,listing]=await Promise.all([api('/auth/session-policy'),api('/auth/sessions')]);
     $('account-session-days').value=String(policy.days);
@@ -292,10 +298,11 @@ async function loadAccountControls(){
       const when=entry.created_at?new Date(entry.created_at*1000).toLocaleString():'Earlier sign-in';
       dates.textContent=when+' · expires '+new Date(entry.expires_at*1000).toLocaleString();
       details.append(name,dates);
-      const revoke=button(entry.current?'Sign out':'Revoke',async()=>{
+      const revoke=document.createElement('button');revoke.type='button';
+      revoke.textContent=entry.current?'Sign out':'Revoke';revoke.onclick=async()=>{
         await api('/auth/sessions/'+encodeURIComponent(entry.id),'DELETE');
         if(entry.current){out();note('Signed out.');}else await loadAccountControls();
-      });
+      };
       revoke.className='account-btn';row.append(details,revoke);list.append(row);
     }
     if(!listing.sessions.length)list.textContent='No active sign-ins.';

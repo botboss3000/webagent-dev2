@@ -21,7 +21,7 @@ impl Context {
  /// Conservative logical-byte proxy; never expands the existing safety ceiling.
  /// Output reserve is budgeting only, not a claim about upstream output controls.
  pub fn ceiling(&self,selection:&crate::provider::ProviderSelection)->Result<usize> {
-  let provider=match selection.provider {crate::provider::ProviderId::Deepseek=>"deepseek",crate::provider::ProviderId::OpenaiSubscription=>"openai_subscription"};
+  let provider=serde_json::to_value(selection.provider)?.as_str().unwrap_or("").to_owned();
   // Luna's requested 128,000 context ceiling is a hard upper bound. Without a
   // provider tokenizer, use one token per logical JSON byte and reserve 8,192
   // for output/protocol overhead. Operator profiles may tighten this ceiling.

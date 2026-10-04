@@ -387,12 +387,12 @@ impl Store {
                 bail!("Unsupported access migration marker");
             }
         }
-        let operator = Tier { id:"operator".into(), revision:1,
+        let operator = Tier { id:"operator".into(), revision:1, model_policy:None,
             ability_permissions:access::legacy_ability_grants(),
             allowed_models:vec!["*".into()],
             tools:[("*".into(), access::Permission::Auto)].into(),
             max_sessions:10_000, max_active_runs:200 };
-        let basic = Tier { id:"basic".into(), revision:1,
+        let basic = Tier { id:"basic".into(), revision:1, model_policy:None,
             ability_permissions:access::legacy_ability_grants(),
             allowed_models:Vec::new(), tools:Default::default(),
             max_sessions:10, max_active_runs:2 };

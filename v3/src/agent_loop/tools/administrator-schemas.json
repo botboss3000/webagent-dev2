@@ -625,6 +625,22 @@
   },
   {
     "type": "function",
+    "name": "v3_build_worker_restart",
+    "description": "Restart only the idle dedicated V3 development build worker; installation administrator only",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        }
+      },
+      "required": ["request_id"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
     "name": "v3_build_image",
     "description": "Submit an immutable development image build; never deploy implicitly",
     "parameters": {

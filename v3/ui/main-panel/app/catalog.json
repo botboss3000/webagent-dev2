@@ -30,6 +30,14 @@
       "panelId": "app-page-access-page",
       "order": 40,
       "admin": true
+    },
+    {
+      "id": "models",
+      "title": "Model Catalog",
+      "description": "Configure and publish app-provided models.",
+      "panelId": "app-models-page",
+      "order": 50,
+      "admin": true
     }
   ]
 }

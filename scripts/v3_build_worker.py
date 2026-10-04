@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import struct
 import tempfile
 import tarfile
 import threading
@@ -28,6 +29,15 @@ def load_build(repo):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+class ThreadingUnixServer(ThreadingHTTPServer):
+    address_family = socket.AF_UNIX
+
+CONTROL_SOCKET = Path("/var/lib/webagent-v3-build-worker/control.sock")
+
+def restart_process():
+    # The installed unit uses Restart=on-failure; exit after the reply.
+    os._exit(1)
 
 class UnixConnection(http.client.HTTPConnection):
     def connect(self):
@@ -58,6 +68,9 @@ class Worker:
         self.lock = threading.Lock()
         self.jobs = {}
         self.active = None
+        self.draining = False
+        self.restart_dir = self.state / "restarts"
+        self.restart_dir.mkdir(mode=0o700, exist_ok=True)
         for path in self.state.glob("*.json"):
             job = json.loads(path.read_text())
             if job["status"] in ("queued", "running"):
@@ -72,6 +85,27 @@ class Worker:
         tmp.chmod(0o600)
         tmp.replace(path)
 
+    def restart(self, request_id):
+        if not isinstance(request_id, str) or not ID.fullmatch(request_id):
+            raise ValueError("Stable restart request_id required")
+        with self.lock:
+            receipt = self.restart_dir / (request_id + ".json")
+            if receipt.exists():
+                return json.loads(receipt.read_text())["previous_pid"], False
+            if self.active is not None:
+                raise BlockingIOError("A build or deployment job is active")
+            if self.draining:
+                raise BlockingIOError("Worker is restarting")
+            if len(list(self.restart_dir.glob("*.json"))) >= 1000:
+                raise ValueError("Restart receipt limit reached")
+            previous_pid = os.getpid()
+            tmp = receipt.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"previous_pid": previous_pid, "request_id": request_id}))
+            tmp.chmod(0o600)
+            tmp.replace(receipt)
+            self.draining = True
+            return previous_pid, True
+
     def submit(self, request):
         if set(request) - {"operation", "request_id", "build_job_id"}:
             raise ValueError("Unknown request field")
@@ -81,6 +115,7 @@ class Worker:
         if operation == "build" and "build_job_id" in request:
             raise ValueError("build_job_id is only valid for deployment")
         with self.lock:
+            if self.draining: raise BlockingIOError("Worker is restarting")
             for job in self.jobs.values():
                 if job["request"] == request: return dict(job)
                 if job["request"]["request_id"] == key: raise ValueError("request_id already used with different input")
@@ -137,6 +172,13 @@ class Worker:
 
     def deploy(self, job):
         build = self.jobs[job["request"]["build_job_id"]]
+        # Check the pinned artifact before any container lifecycle mutation.
+        try:
+            image = engine("GET", "/images/" + build["image_id"] + "/json")
+            if image.get("Id") != build["image_id"]:
+                raise RuntimeError("Pinned image identity mismatch")
+        except Exception as exc:
+            raise RuntimeError("Deployment preflight image check failed: " + str(exc)) from exc
         old = engine("GET", "/containers/" + TARGET + "/json")
         if old.get("Name") != "/" + TARGET or not old["State"].get("Running"):
             raise RuntimeError("Expected running v3 development container; initial provisioning is host-only")
@@ -154,11 +196,16 @@ class Worker:
         backup = TARGET + "-rollback-" + job["id"]
         job["backup_container"] = backup; self.save(job)
         stopped = renamed = created = False
+        stage = "stop"
         try:
             engine("POST", "/containers/" + TARGET + "/stop?t=15"); stopped = True
+            stage = "rename"
             engine("POST", "/containers/" + TARGET + "/rename?name=" + backup); renamed = True
+            stage = "create"
             engine("POST", "/containers/create?name=" + TARGET, payload); created = True
+            stage = "start"
             engine("POST", "/containers/" + TARGET + "/start")
+            stage = "readiness"
             for _ in range(45):
                 inspect = engine("GET", "/containers/" + TARGET + "/json")
                 if inspect["State"].get("Health", {}).get("Status") == "healthy":
@@ -166,7 +213,8 @@ class Worker:
                 if not inspect["State"].get("Running"): break
                 time.sleep(2)
             raise RuntimeError("Replacement did not become healthy")
-        except Exception:
+        except Exception as exc:
+            job["failed_stage"] = stage
             try:
                 if created: engine("DELETE", "/containers/" + TARGET + "?force=true")
                 if renamed: engine("POST", "/containers/" + backup + "/rename?name=" + TARGET)
@@ -174,12 +222,12 @@ class Worker:
                 job["rollback"] = "restored" if stopped else "not_needed"
             except Exception:
                 job["rollback"] = "failed; host intervention required"
-            raise
+            raise RuntimeError("Deployment failed at " + stage + ": " + str(exc)) from exc
 
     def status(self):
         version = self.command(["docker", "--host", "unix:///var/run/docker.sock", "info", "--format", "{{.ServerVersion}}"], timeout=15)
         return {"scope": "v3_development_host", "host": socket.gethostname(), "active_job": self.active,
-                "docker_version": version.get("output_tail", "").strip(), "observed_at": time.time()}
+                "docker_version": version.get("output_tail", "").strip(), "observed_at": time.time(), "pid": os.getpid()}
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "V3BuildWorker/1"
@@ -191,10 +239,26 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch(self, post=False):
         self.connection.settimeout(10)
         worker = self.server.worker
-        supplied = self.headers.get("Authorization", "")
-        if not hmac.compare_digest(supplied.encode(), ("Bearer " + worker.token).encode()):
+        local = getattr(self.server, "local_control", False)
+        if local:
+            _, uid, _ = struct.unpack("3i", self.connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != os.getuid():
+                return self.respond(401, {"error": "Unauthorized"})
+        elif not hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + worker.token).encode()):
             return self.respond(401, {"error": "Unauthorized"})
         try:
+            if post and self.path == "/v1/restart":
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 256:
+                    raise ValueError("Invalid restart body")
+                body = json.loads(self.rfile.read(size))
+                if not isinstance(body, dict) or set(body) != {"request_id"}:
+                    raise ValueError("Stable restart request_id required")
+                previous_pid, scheduled = worker.restart(body["request_id"])
+                if scheduled:
+                    threading.Timer(0.5, restart_process).start()
+                self.respond(202, {"status": "restarting", "previous_pid": previous_pid})
+                return
             if post and self.path == "/v1/jobs":
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 2048: raise ValueError("Invalid body size")
@@ -226,6 +290,15 @@ def main():
         parser.error("Set a random 32-256 character V3_BUILD_WORKER_TOKEN")
     if args.bind in ("0.0.0.0", "::"): parser.error("Bind to loopback or a specific private interface")
     worker = Worker(args.repo, args.state, token)
+    control = args.state / "control.sock"
+    if control != CONTROL_SOCKET or control.is_symlink():
+        parser.error("Unexpected control socket path")
+    control.unlink(missing_ok=True)
+    local_server = ThreadingUnixServer(str(control), Handler)
+    local_server.worker = worker
+    local_server.local_control = True
+    control.chmod(0o600)
+    threading.Thread(target=local_server.serve_forever, daemon=True).start()
     server = ThreadingHTTPServer((args.bind, args.port), Handler); server.worker = worker
     server.serve_forever()
 

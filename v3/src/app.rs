@@ -359,14 +359,21 @@ fn invalidate_waiting_run(mut run: Value) -> Value {
     run
 }
 async fn session_mode(app: &App, sid: &str) -> Result<Value> {
-    let value = app
-        .store
-        .get(&key("session_mode", sid))
-        .await?
-        .unwrap_or_else(default_session_mode);
-    if !matches!(value["mode"].as_str(), Some("write" | "read_only"))
-        || value["revision"].as_u64().is_none()
-    {
+    let mut value = app.store.get(&key("session_mode", sid)).await?.unwrap_or_else(default_session_mode);
+    let agent=session_agent_id(app,sid).await?;
+    let config=execution_modes::config(&app.store,&agent).await?;
+    if let Some(id)=value["execution_mode"].as_str() {
+        // Removed custom modes fail closed to Ask; never inherit write authority.
+        let entry=execution_modes::resolve(&config,id).unwrap_or_else(|_|execution_modes::defaults()[0].clone());
+        // A configuration edit cannot elevate an already read-only conversation.
+        // Explicit mode selection must cross the existing approval boundary.
+        if value["mode"]!="read_only" || entry["permission_policy"]=="read_only" {
+            value["mode"]=entry["permission_policy"].clone();
+        }
+        value["execution_mode"]=entry["id"].clone();
+        value["definition"]=entry;
+    }
+    if !matches!(value["mode"].as_str(), Some("write" | "read_only")) || value["revision"].as_u64().is_none() {
         return Err(anyhow!("Invalid session capability mode"));
     }
     Ok(value)
@@ -435,6 +442,26 @@ impl App {
         let value = self.store.agent_model().await?;
         provider::ProviderSelection::parse(&value, DEFAULT_AGENT_MODEL)
     }
+    /// Rehydrate published platform metadata at admission, then freeze it for this run.
+    async fn pin_model_plan(&self, plan:&mut model_selection::SelectionPlan)->Result<()> {
+        for candidate in &mut plan.candidates {
+            if let Some(previous)=&candidate.platform {
+                let source=account_catalog::Source{origin:account_catalog::Origin::Platform,
+                    entry_id:account_catalog::platform_id(&previous.roster_id,&previous.entry.id)};
+                let pin=self.store.pin_platform_source(self.store.current_user_id(),&source).await?;
+                if pin.entry.transport!=candidate.transport {return Err(anyhow!("Adopted platform transport changed"));}
+                let capability=match plan.role {model_selection::ModelRole::ImageIn=>"image_in",model_selection::ModelRole::ImageOut=>"image_out",model_selection::ModelRole::Voice=>"voice",_=>"text"};
+                if !pin.entry.capabilities.contains(capability) {return Err(anyhow!("Published model lacks role capability"));}
+                candidate.upstream_model=pin.entry.upstream_model.clone();candidate.platform=Some(pin);
+            } else if !self.store.live_access(self.store.current_user_id(),&plan.agent_id).await?.model_allowed(&candidate.upstream_model) {
+                return Err(anyhow!("BYO model outside tier"));
+            }
+        }
+        Ok(())
+    }
+    async fn run_model_authorized(&self,run:&Value)->bool {
+        self.run_candidate(run).await.is_ok()
+    }
     async fn run_candidate(&self, run: &Value) -> Result<Option<model_selection::Candidate>> {
         // Recovery cannot invent a role for an old run that never pinned one.
         let Some(value) = run.get("selection_plan").filter(|v| !v.is_null()) else {
@@ -449,11 +476,17 @@ impl App {
         // Membership, account ceiling and roster revocation remain live even for recovered plans.
         let candidate = plan.candidates.get(state.candidate_index).ok_or_else(||anyhow!("Candidate missing"))?;
         let access=self.store.live_access(self.store.current_user_id(),&plan.agent_id).await?;
-        if !access.model_allowed(&candidate.upstream_model)
-            || catalog.agent_models.get(&plan.agent_id).is_some_and(|m|!m.entry_ids.contains(&candidate.entry_id)) {
+        if !access.admitted() || (candidate.platform.is_none() && !access.model_allowed(&candidate.upstream_model))
+            || catalog.agent_models.get(&plan.agent_id).is_none_or(|m|!m.entry_ids.contains(&candidate.entry_id)) {
             return Err(anyhow!("Pinned model is no longer available to this caller"));
         }
-        Ok(Some(plan.authorize_candidate(state.candidate_index, &catalog.entries, &catalog.connections)?.clone()))
+        let candidate=plan.authorize_candidate(state.candidate_index, &catalog.entries, &catalog.connections)?.clone();
+        if let Some(pin)=&candidate.platform {
+            let live=catalog.platform_sources.get(&candidate.entry_id).ok_or_else(||anyhow!("Platform provenance removed"))?;
+            if live.roster_id!=pin.roster_id || live.entry.id!=pin.entry.id {return Err(anyhow!("Platform provenance changed"));}
+            self.store.platform_dispatch_tokens(self.store.current_user_id(),&plan.agent_id,pin).await?;
+        } else if catalog.platform_sources.contains_key(&candidate.entry_id) {return Err(anyhow!("Platform provenance missing from plan"));}
+        Ok(Some(candidate))
     }
     async fn tokens_for(&self, selection: &provider::ProviderSelection, run: &Value) -> Result<Value> {
         let candidate = self.run_candidate(run).await?;
@@ -462,19 +495,21 @@ impl App {
                 return Err(anyhow!("Pinned model selection mismatch"));
             }
         }
+        if let Some(pin)=candidate.as_ref().and_then(|candidate|candidate.platform.as_ref()) {
+            return self.store.platform_dispatch_tokens(self.store.current_user_id(),run["agent_id"].as_str().unwrap_or(""),pin).await;
+        }
         let reference = candidate.as_ref().map(|c| c.credential_ref.as_str()).unwrap_or("provider_tokens");
-        match selection.provider {
-            provider::ProviderId::Deepseek => {
-                if candidate.is_none() { return Err(anyhow!("DeepSeek requires an explicit connection")); }
-                let tokens = self.store.get(reference).await?.ok_or_else(|| provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "Save a DeepSeek API key for this connection"))?;
-                if tokens["api_key"].as_str().is_none_or(|s| s.is_empty()) { return Err(provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "DeepSeek API key unavailable")); }
-                Ok(tokens)
-            }
-            provider::ProviderId::OpenaiSubscription => self.tokens_at(reference).await
-                .map_err(|_| provider::typed_failure(model_selection::FailureKind::InvalidCredentials,
-                    false, "Assigned provider authorization unavailable; reconnect this connection")),
+        if selection.provider == provider::ProviderId::OpenaiSubscription {
+            self.tokens_at(reference).await.map_err(|_| provider::typed_failure(model_selection::FailureKind::InvalidCredentials,
+                false, "Assigned provider authorization unavailable; reconnect this connection"))
+        } else {
+            if candidate.is_none() { return Err(anyhow!("API providers require an explicit connection")); }
+            let tokens = self.store.get(reference).await?.ok_or_else(|| provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "Save an API key for this connection"))?;
+            if tokens["api_key"].as_str().is_none_or(|s| s.is_empty()) { return Err(provider::typed_failure(model_selection::FailureKind::InvalidCredentials, false, "Provider API key unavailable")); }
+            Ok(tokens)
         }
     }
+
     async fn tokens_at(&self, reference: &str) -> Result<Value> {
         let _lock = self.refresh.lock().await;
         let mut tokens = self

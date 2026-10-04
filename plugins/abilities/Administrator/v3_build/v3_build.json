@@ -10,6 +10,7 @@
   "order": 9,
   "tools": [
     "v3_build_status",
+    "v3_build_worker_restart",
     "v3_cargo_task",
     "v3_build_image",
     "v3_worker_submit",
@@ -19,6 +20,9 @@
   "tool_metadata": {
     "v3_build_status": {
       "destructive": false
+    },
+    "v3_build_worker_restart": {
+      "destructive": true
     },
     "v3_cargo_task": {
       "destructive": true

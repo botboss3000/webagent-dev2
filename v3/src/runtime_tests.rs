@@ -1269,6 +1269,8 @@ async fn agent_loop_creates_reviewable_proposal_without_dispatching_broker() {
         panic!("source review missing after bounded shutdown acknowledgements");
     });
     let sid = conversation(&app).await;
+    session_mode_set(State(app.clone()), Path(sid.clone()),
+        Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -1374,6 +1376,7 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     });
     app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
     let sid = conversation(&app).await;
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -2961,6 +2964,7 @@ async fn prompt_slot_tool_waits_for_approval_then_writes_once() {
     });
     app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
     let sid = conversation(&app).await;
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -3588,7 +3592,9 @@ async fn session_mode_api_requires_auth_and_csrf_and_is_session_scoped() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(body, json!({"mode":"write","revision":0}));
+    assert_eq!(body["mode"], "read_only");
+    assert_eq!(body["execution_mode"], "ask");
+    assert_eq!(body["revision"], 0);
 
     for (mode, revision) in [("read_only", 1), ("read_only", 1), ("write", 2)] {
         let response = router(app.clone())
@@ -3614,7 +3620,8 @@ async fn session_mode_api_requires_auth_and_csrf_and_is_session_scoped() {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(other_body, json!({"mode":"write","revision":0}));
+        assert_eq!(other_body["mode"], "read_only");
+        assert_eq!(other_body["execution_mode"], "ask");
     }
     let response = router(app)
         .oneshot(get(
@@ -3964,7 +3971,7 @@ async fn current_mode_contribution_changes_per_call_without_entering_history() {
         CancellationToken::new()).await.unwrap();
     assert_eq!(app.run(&first).await.unwrap()["status"], "completed");
     assert_eq!(session_mode_set(State(app.clone()), Path(sid.clone()),
-        Json(SessionModeBody { mode:"read_only".into() })).await.unwrap().0["revision"], 1);
+        Json(SessionModeBody { mode:"plan".into() })).await.unwrap().0["revision"], 1);
 
     let second = queued(&app, &sid).await;
     running(&app, &second, "read-mode").await;
@@ -3974,9 +3981,11 @@ async fn current_mode_contribution_changes_per_call_without_entering_history() {
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
     assert!(requests[0]["instructions"].as_str().unwrap()
-        .contains("Current session capability mode: write (revision 0)"));
+        .contains("Current session capability mode: read_only (revision 0)"));
     assert!(requests[1]["instructions"].as_str().unwrap()
         .contains("Current session capability mode: read_only (revision 1)"));
+    assert!(requests[0]["instructions"].as_str().unwrap().contains("Execution mode: Ask"));
+    assert!(requests[1]["instructions"].as_str().unwrap().contains("Execution mode: Plan"));
     for id in [&first, &second] {
         let durable = app.run(id).await.unwrap();
         assert!(!durable["input"].to_string().contains("Current session capability mode:"));
@@ -4760,6 +4769,9 @@ async fn phase3_http_tier_tools_and_agent_disable_reject_stale_approval() {
     let host=access.tool_decision("v3_build_status",access::Permission::Auto,true,true,false,true);
     assert_eq!(host.permission,access::Permission::Deny);
     assert_eq!(host.reason,access::Reason::CallerDenied);
+    let restart=access.tool_decision("v3_build_worker_restart",access::Permission::Auto,true,true,false,false);
+    assert_eq!(restart.permission,access::Permission::Deny);
+    assert_eq!(restart.reason,access::Reason::CallerDenied);
     let user_generation=app.store.account_by_id(&user_id).await.unwrap().unwrap()["generation"].clone();
     app.store.put(&format!("auth:{}",digest(&json!(user_token))),
         &json!({"user_id":user_id,"generation":user_generation,
@@ -4952,6 +4964,7 @@ async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call
     config.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
     config.persist(&app.runtime_path).unwrap();
     let sid=conversation(&app).await;
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
     activate_codebase(&app,&sid).await;
     let id=queued(&app,&sid).await;
     let mut run=app.run(&id).await.unwrap();
@@ -5430,4 +5443,46 @@ async fn session_lifecycle_routes_enforce_auth_csrf_history_and_conflicts() {
     app.store.put("run:lifecycle-blocker",&json!({"id":"lifecycle-blocker","session_id":sid,"status":"waiting_approval"})).await.unwrap();
     assert_eq!(ability_request(&app,Method::DELETE,&uri,Some(json!({"client_request_id":"blocked-by-run","expected_revision":2})),Some(&cookie),Some("ability-fixture")).await.0,StatusCode::CONFLICT);
 
+}
+
+#[tokio::test]
+async fn platform_adoption_pins_independent_credentials_and_denies_rotation() {
+    use crate::account_catalog::{Source,Origin,Adoption,platform_id};
+    use crate::platform_catalog::{Entry,Mutation};
+    use std::collections::{BTreeMap,BTreeSet};
+    let (_root,app)=fixture().await;
+    let user=app.store.create_user_account("platform_runner","fixture-only-password-hash").await.unwrap();
+    let user=user["user_id"].as_str().unwrap();
+    app.store.update_account_access(user,1,access::AccountStatus::Active,access::Role::User,"basic").await.unwrap();
+    app.store.assign_agent_membership("admin",user,"shared_default",access::Relationship::Member,true,0).await.unwrap();
+    let entry=Entry{id:"model".into(),display_name:"Platform".into(),upstream_model:"fixture".into(),
+        transport:model_selection::Transport::Deepseek,capabilities:BTreeSet::from(["text".into()])};
+    app.store.mutate_platform_roster("team",0,Mutation::Draft{name:"Team".into(),entries:BTreeMap::from([("model".into(),entry)])},"admin").await.unwrap();
+    app.store.platform_credential_set("team","model",1,Some("platform-fixture-key"),"admin").await.unwrap();
+    app.store.mutate_platform_roster("team",2,Mutation::Publish{rollback:None},"admin").await.unwrap();
+    let mut tier=app.store.entitlement_tier("basic").await.unwrap().unwrap();let rev=tier.revision;
+    tier.model_policy=Some(access::ModelPolicy{roster_id:Some("team".into()),allowed_entry_ids:BTreeSet::from(["model".into()]),allow_byo:false,max_byo_entries:0});
+    app.store.save_entitlement_tier(tier,rev).await.unwrap();
+    let before=app.store.model_catalog().await.unwrap();
+    let adopted=app.store.adopt_byo_source(user,"shared_default",&Adoption{client_request_id:"platform_once".into(),
+        expected_roster_revision:before.agent_models["shared_default"].revision,
+        source:Source{origin:Origin::Platform,entry_id:platform_id("team","model")},alias:"My catalog alias".into()}).await.unwrap();
+    let mut catalog=app.store.model_catalog().await.unwrap();
+    assert_eq!(catalog.agent_models["shared_default"].roles,before.agent_models["shared_default"].roles);
+    assert!(app.store.account_model_preferences(user).await.unwrap().selected_platform_ids.contains(&platform_id("team","model")));
+    let id=adopted["entry_id"].as_str().unwrap();
+    assert_ne!(id,before.agent_models["shared_default"].roles[&model_selection::ModelRole::Standard].entry_id);
+    catalog.agent_models.get_mut("shared_default").unwrap().roles.insert(model_selection::ModelRole::Standard,
+        model_selection::RoleAssignment{entry_id:id.into(),backup_entry_ids:vec![]});
+    app.store.save_model_catalog(&catalog,catalog.revision).await.unwrap();
+    let mut caller=app.clone();caller.store=app.store.for_user(user).await.unwrap();
+    let mut plan=catalog.resolve_role("shared_default",model_selection::ModelRole::Standard).unwrap();
+    caller.pin_model_plan(&mut plan).await.unwrap();
+    let run=json!({"agent_id":"shared_default","selection_plan":plan,"failover_state":model_selection::FailoverState::default()});
+    let selection=provider::ProviderSelection{provider:provider::ProviderId::Deepseek,model:"fixture".into()};
+    assert_eq!(caller.tokens_for(&selection,&run).await.unwrap()["api_key"],"platform-fixture-key");
+    assert!(!serde_json::to_string(&run).unwrap().contains("platform-fixture-key"));
+    app.store.platform_credential_set("team","model",3,Some("rotated-fixture-key"),"admin").await.unwrap();
+    assert!(caller.tokens_for(&selection,&run).await.is_err());
+    assert!(!caller.run_model_authorized(&run).await);
 }

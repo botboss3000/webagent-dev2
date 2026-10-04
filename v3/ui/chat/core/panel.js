@@ -1,14 +1,21 @@
 // V2-style panel/client separation; markup and message protocol remain V3.
 import { createChatClient } from './client.js';
+import {createMessage} from './message-view.js';
+import {createActivityView} from './activity-view.js';
+import {closeChatElementFullView} from './full-view.js';
+import {currentChatProfile} from '../controls/chat-config.js';
 import { applyChatConfig } from '../controls/chat-config.js';
 import { mountSessionDropdown } from '../controls/session-dropdown/controller.js';
 import { createSessionList } from '../controls/session-dropdown/list.js';
 const mountedPanels = new WeakMap();
-export async function mountChatPanel({request, guard, note, keyId, forgetKey, refresh, getState, getAgentId}) {
+export async function mountChatPanel({request, guard, note, keyId, forgetKey, refresh, getState, getAgentId, getIdentity=()=>({})}) {
   const root = document.getElementById('chat-panel');
   mountedPanels.get(root)?.destroy();
   const $ = id => root.querySelector('#' + id);
   let session = '';
+  const activity=createActivityView({app:{get currentSessionId(){return session;}},isAdmin:()=>!!getIdentity().is_admin,chatUiFlag:(key,fallback)=>currentChatProfile()?.[key]??fallback});
+  let activityRuns=[];
+  const paintActivity=()=>activity.render({sessionId:session,runs:activityRuns.map(r=>({...r,state:({completed:'completed',failed:'failed',stopped:'cancelled',waiting_approval:'running',waiting_gate:'finalizing'})[r.status]||r.status}))},$('chat-messages-inner'));
   const client = createChatClient({request, note});
   function button(text,fn){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=guard(fn);return node;}
 async function mountChat(){
@@ -24,7 +31,7 @@ async function mountChat(){
 await mountChat();
 let sessionItems=[];
 const dropdown=mountSessionDropdown($('session-dropdown'),{refresh:()=>sessions(),select:open,guard,resetSearch:()=>sessionList.reset()});
-const sessionList=createSessionList($('session-dropdown'),{guard,refresh:()=>sessions(),select:open,client,recycled:()=>{resetReads();session='';client.disconnect();$('chat-messages-inner').replaceChildren();$('runs').replaceChildren();const url=new URL(location.href);url.searchParams.delete('session_id');history.replaceState({},'',url);}});
+const sessionList=createSessionList($('session-dropdown'),{guard,refresh:()=>sessions(),select:open,client,recycled:()=>{activity.disconnect();resetReads();session='';client.disconnect();$('chat-messages-inner').replaceChildren();$('runs').replaceChildren();const url=new URL(location.href);url.searchParams.delete('session_id');history.replaceState({},'',url);}});
 $('session-dropdown').configure=cfg=>sessionList.configure(cfg);
 const chatPanel=root;
 const updateChatClearance=()=>{
@@ -50,7 +57,7 @@ function queueRead(){
 const readObserver=new IntersectionObserver(entries=>{for(const entry of entries){if(entry.isIntersecting&&entry.intersectionRect.height>0)visibleRows.add(entry.target);else visibleRows.delete(entry.target);}queueRead();},{root:$('chat-messages'),threshold:0});
 document.addEventListener('visibilitychange',queueRead,{signal:readAbort.signal});
 function resetReads(){++readGeneration;clearTimeout(readTimer);readThrough=0;readPending=0;visibleRows.clear();readObserver.disconnect();}
-function message(role,content,seq){const row=document.createElement('article');row.className='v3-message '+role;const label=document.createElement('span');label.className='message-role';label.textContent=role==='user'?'You':role==='assistant'?'Agent':role;const body=document.createElement('div');body.className='message-content';body.textContent=typeof content==='string'?content:JSON.stringify(content);row.append(label,body);$('chat-messages-inner').append(row);if(Number.isSafeInteger(seq)&&seq>0){row.dataset.seq=String(seq);readObserver.observe(row);}return body;}
+function message(item){const target=$('chat-messages-inner');if([...target.children].some(row=>row.dataset.publicId===item.id))return;const row=createMessage(item);if(!row)return;target.append(row);readObserver.observe(row);paintActivity();}
 // Base presentation is display-only. Never turn model-supplied choice or
 // approval descriptions into an action or an authorization control.
 function components(items){
@@ -80,9 +87,9 @@ function components(items){
 }
 function tail(){const box=$('chat-messages');box.scrollTop=box.scrollHeight;}
 async function sessions(){const data=await client.sessions();$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=(item.title||'Conversation')+' — '+(item.agent_id||'shared_default');$('sessions').append(option);}$('sessions').value=session;sessionItems=data.sessions;sessionList.update(sessionItems,session);return data.sessions;}
-async function open(id){resetReads();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);await client.open(id,data=>{readThrough=data.session.read_through_seq||0;const sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;sessionList.update(sessionItems,id);document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item.role,item.content,item.seq);components(data.components||[]);tail();runs(data.runs||[]);},item=>{message(item.role,item.content,item.seq);tail();});}
+async function open(id){activity.disconnect();closeChatElementFullView();resetReads();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);history.replaceState({},'',url);await client.open(id,data=>{readThrough=data.session.read_through_seq||0;const sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;sessionList.update(sessionItems,id);document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item);components(data.components||[]);tail();runs(data.runs||[]);},item=>{message(item);tail();});}
 async function cancel(id){await client.cancel(id,{client_request_id:keyId('cancel:'+id)});await refresh();}
-function runs(items){$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!getState().shutoff;
+function runs(items){activityRuns=items.filter(run=>run.session_id===session||!run.session_id);if(session)paintActivity();$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!getState().shutoff;
 // CONTEXT-REPORT-UI: render only backend allowlisted counts as text, including
 // completed runs. Bytes are logical envelope measurements, not billed tokens.
 for(const run of relevant){if(run.context_summary){const summary=run.context_summary;const detail=document.createElement('details');detail.className='run-card';const heading=document.createElement('summary');heading.textContent='Context usage — measured bytes';const text=document.createElement('p');text.textContent='Envelope '+summary.envelope_bytes+' / '+summary.max_bytes+' bytes. History '+summary.history_json_bytes+'; instructions '+summary.instruction_json_bytes+'; tools '+summary.schemas_json_bytes+'. Not provider tokens. Turn '+summary.turn+', call '+summary.call+'.';detail.append(heading,text);$('runs').append(detail);}if(run.status==='completed')continue;const card=document.createElement('section');card.className='run-card';const title=document.createElement('strong');title.textContent=run.status+(run.error?' — '+run.error:'');card.append(title);
@@ -95,7 +102,7 @@ $('composer').onsubmit=guard(async()=>{const text=$('chat-input').value.trim();i
 $('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('chat-send').disabled)$('composer').requestSubmit();}};
 $('chat-stop-btn').onclick=guard(()=>cancel($('chat-stop-btn').dataset.run));
 
-  function disconnect(){resetReads();client.disconnect();}
+  function disconnect(){activity.disconnect();closeChatElementFullView();window.speechSynthesis?.cancel();resetReads();client.disconnect();}
   function destroy(){
     disconnect();sessionList.destroy();dropdown.destroy();readAbort.abort();chatClearanceObserver.disconnect();
     $('sessions').onchange=null;$('new').onclick=null;$('composer').onsubmit=null;

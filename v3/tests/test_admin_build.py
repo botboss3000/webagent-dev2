@@ -143,6 +143,24 @@ class BuildTests(unittest.TestCase):
         return self.call("v3_worker_submit", {"operation": "deploy", "job_id": source_job["job_id"],
                 "request_id": request_id, "expected_inputs_sha256": source_job["inputs_sha256"]})
 
+    def test_worker_restart_uses_fixed_local_control_and_refuses_busy_broker(self):
+        calls = []
+        def control(method, path, body=None):
+            calls.append((method, path, body))
+            return {"status": "restarting", "previous_pid": 10} if method == "POST" else {"pid": 11}
+        with patch.object(host, "worker_control", control), patch.object(host.time, "sleep"):
+            value = self.call("v3_build_worker_restart", {"request_id": "stable-restart"})
+        self.assertEqual(value["status"], "ok")
+        self.assertEqual(calls, [("POST", "/v1/restart", {"request_id": "stable-restart"}),
+                                 ("GET", "/v1/status", None)])
+        with self.assertRaises(ValueError):
+            self.call("v3_build_worker_restart", {"request_id": "../bad"})
+        self.broker.active = "another-job"
+        with self.assertRaisesRegex(ValueError, "busy"):
+            self.call("v3_build_worker_restart", {"request_id": "another-restart"})
+        self.broker.active = None
+        self.assertEqual(len(calls), 2)
+
     def test_frozen_build_idempotence_and_secret_scrub(self):
         value = self.wait(self.build())
         self.assertEqual("completed", value["status"])

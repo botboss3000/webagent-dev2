@@ -13,6 +13,7 @@
 #[path = "gates/mod.rs"] mod gate_registry;
 #[path = "gates/controls.rs"] mod gate_controls;
 #[path = "agent_loop/tools/batch.rs"] mod parallel_batch;
+mod execution_modes;
 mod abilities;
 mod services;
 mod administrator_services;
@@ -32,6 +33,8 @@ mod workflow;
 mod promotion;
 #[path = "models/provider/mod.rs"] mod provider;
 #[path = "models/selection.rs"] mod model_selection;
+#[path = "models/platform_catalog.rs"] mod platform_catalog;
+#[path = "models/account_catalog.rs"] mod account_catalog;
 #[path = "api/model_admin.rs"] mod model_selection_api;
 #[cfg(test)]
 mod runtime_tests;

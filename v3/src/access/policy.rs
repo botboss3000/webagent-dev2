@@ -92,7 +92,7 @@ impl LiveAccess {
     }
 
     pub fn model_allowed(&self, model: &str) -> bool {
-        self.admitted() && self.tier.allows_model(model)
+        self.admitted() && self.tier.allows_byo_model(model)
     }
 
     pub fn max_sessions(&self) -> u32 { self.tier.max_sessions }
@@ -176,7 +176,7 @@ impl LiveAccess {
 
     fn resolve_tool(&self,name:&str,installation:Permission,ability:Permission,
         available:bool,visible:bool,read_only:bool,is_read:bool) -> ToolDecision {
-        if matches!(name,"v3_build_status"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job")
+        if matches!(name,"v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job")
             && !self.principal.administrator() {
             return ToolDecision {permission:Permission::Deny,reason:access::Reason::CallerDenied};
         }

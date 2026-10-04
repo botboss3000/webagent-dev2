@@ -4,7 +4,14 @@ export const MISSING = 'NEED BACKEND CONTRACT';
 const reject = detail => { throw Error(MISSING + ': ' + detail); };
 const response = (data,status=200) => new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
 export function createModelAdapter(request, agentId, onAssignment) {
-  let data, catalog, destroyed=false;
+  let data, catalog, account, destroyed=false;
+  const providerPresets={openai_subscription:{name:'ChatGPT Subscription',base_url:'codex://chatgpt'},deepseek:{name:'DeepSeek',base_url:'https://api.deepseek.com'},openai_api:{name:'OpenAI API',base_url:'https://api.openai.com/v1'},openrouter:{name:'OpenRouter',base_url:'https://openrouter.ai/api/v1'},abacus:{name:'Abacus RouteLLM',base_url:'https://routellm.abacus.ai/v1'},gemini:{name:'Gemini',base_url:'https://generativelanguage.googleapis.com/v1beta/openai'},groq:{name:'Groq',base_url:'https://api.groq.com/openai/v1'},together:{name:'Together',base_url:'https://api.together.xyz/v1'},mistral:{name:'Mistral',base_url:'https://api.mistral.ai/v1'},fireworks:{name:'Fireworks',base_url:'https://api.fireworks.ai/inference/v1'},xai:{name:'xAI',base_url:'https://api.x.ai/v1'},perplexity:{name:'Perplexity',base_url:'https://api.perplexity.ai'},deepinfra:{name:'DeepInfra',base_url:'https://api.deepinfra.com/v1/openai'}};
+  async function accountChoices(){account=await request('/models/me/catalog');return account;}
+  async function adopt(source,alias){
+    const saved=await request('/models/agents/'+encodeURIComponent(agentId)+'/adoptions','POST',{
+      client_request_id:crypto.randomUUID(),expected_roster_revision:catalog.agent_models?.[agentId]?.revision||0,source,alias});
+    await read();return saved.entry_id;
+  }
   const statuses=new Map();
   let queue=Promise.resolve();
   const drafts=new Map();
@@ -15,34 +22,49 @@ export function createModelAdapter(request, agentId, onAssignment) {
   }
   const rows=()=> (catalog.agent_models?.[agentId]?.entry_ids||[]).map(id=>catalog.entries[id]).filter(Boolean).map(e=>{
     const c=catalog.connections[e.connection_id];
-    return {entry_id:e.id,provider:c.transport,model:e.upstream_model,display_name:e.display_name,
+    return {entry_id:e.id,provider:c.transport,model:e.upstream_model,display_name:data.adoptions?.[e.id]?.alias||e.display_name,
       base_url:c.transport==='deepseek'?'https://api.deepseek.com':'codex://chatgpt',api_key:'',
       text_capable:e.capabilities.includes('text'),image_capable:e.capabilities.includes('image_in'),
       image_out_capable:e.capabilities.includes('image_out'),voice_capable:e.capabilities.includes('voice'),
-      credential_configured:!!statuses.get(c.id)?.connected,catalog_origin:'byo'};
+      credential_configured:!!statuses.get(c.id)?.connected,catalog_origin:catalog.platform_sources?.[e.id]?'platform':'byo'};
   });
   async function save({providers,role_assignments={}}){
     if(destroyed)throw Error('Models page closed');
     if(!data.can_manage)throw Error('Agent model management is read-only');
+    for(const p of providers){
+      if(p.provider==='webagent_catalog'&&!catalog.entries[p.entry_id]){
+        const choices=await accountChoices();const choice=[...(choices.available_platform_models||[]),...(choices.entries||[])].find(c=>c.id===p.entry_id);
+        if(!choice)throw Error('Model choice is no longer available');
+        const alias=p.display_name||choices.aliases?.[choice.id]||choice.display_name;
+        p.entry_id=await adopt({origin:choice.origin,entry_id:choice.id},alias);
+        const entry=catalog.entries[p.entry_id];p.provider=catalog.connections[entry.connection_id].transport;p.model=entry.upstream_model;p.display_name=alias;
+        p.catalog_origin=choice.origin;p.api_key='';
+      } else if(data.adoptions?.[p.entry_id]&&p.display_name!==data.adoptions[p.entry_id].alias){
+        const previous=data.adoptions[p.entry_id];
+        await adopt({origin:previous.origin,entry_id:previous.source_id},p.display_name||p.model);
+      }
+    }
     const next=structuredClone(catalog);
     const rowIds=[];
     const cfg=next.agent_models[agentId]??={agent_id:agentId,owner_id:data.agent_owner_id,entry_ids:[],roles:{},revision:1};
     for(const p of providers){
       if(p.alias_group_id || p.reference_cost_input!=null || p.reference_cost_output!=null)reject('alias groups and reference pricing');
-      if(!['deepseek','openai_subscription'].includes(p.provider))reject('provider transport');
+      if(!Object.hasOwn(providerPresets,p.provider))reject('provider transport');
       let e=next.entries[p.entry_id];
       if(!e){
         const id=p.entry_id||'model-'+crypto.randomUUID(); const connectionId=drafts.get(id)||'connection-'+crypto.randomUUID();
         next.connections[connectionId]??={id:connectionId,owner_id:data.caller_id,transport:p.provider,credential_ref:'provider_credential:'+crypto.randomUUID(),allowed_agents:[agentId],revision:1,revoked:false};
         e=next.entries[id]={id,owner_id:data.caller_id,connection_id:connectionId,upstream_model:p.model,display_name:p.display_name||p.model,capabilities:['text'],allowed_agents:[agentId],revision:1};
         // Hydrate reference row identity only after the catalog write succeeds below.
+      }else if(data.adoptions?.[e.id]||next.platform_sources?.[e.id]){
+        if(p.api_key)throw Error('Adopted credentials cannot be replaced through the roster');
       }else if(e.owner_id===data.caller_id){
         e.display_name=p.display_name||e.upstream_model;
       }else if(p.display_name!==e.display_name)throw Error('Only the model owner can rename this connection');
       rowIds.push(e.id);
-      if(p.api_key && (p.provider!=='deepseek' || !/^[!-~]{8,512}$/.test(p.api_key)))throw Error('Invalid DeepSeek API key');
+      if(p.api_key && (p.provider==='openai_subscription' || !/^[!-~]{8,512}$/.test(p.api_key)))throw Error('Invalid API key');
       if(p.api_key && next.connections[e.connection_id].owner_id!==data.caller_id)throw Error('Connection credentials are owner-only');
-      if(!/^[A-Za-z0-9._-]{1,128}$/.test(p.model))throw Error('Invalid upstream model ID');
+      if(!/^[!-~]{1,200}$/.test(p.model))throw Error('Invalid upstream model ID');
     }
     // Keep records when a row is removed; roster removal must not revoke a shared credential.
     cfg.entry_ids=rowIds;
@@ -72,12 +94,25 @@ export function createModelAdapter(request, agentId, onAssignment) {
   const adapter={
     loadConfig:async()=>{await read();await Promise.all((catalog.agent_models?.[agentId]?.entry_ids||[]).map(async id=>{const c=catalog.connections[catalog.entries[id]?.connection_id];if(c)try{statuses.set(c.id,await request('/models/connections/'+encodeURIComponent(c.id)+'?agent_id='+encodeURIComponent(agentId)));}catch{statuses.delete(c.id);}}));return {provider:'webagent_catalog',roster:rows(),role_assignments:Object.fromEntries(Object.entries(catalog.agent_models?.[agentId]?.roles||{}).map(([r,a])=>[r,a.entry_id]))};},
     saveRoster:payload=>{const work=()=>save(payload);const result=queue.then(work,work);queue=result.catch(()=>{});return result;},
-    loadPresets:async()=>({webagent_catalog:{name:'WebAgent Catalog',base_url:''},openai_subscription:{name:'ChatGPT Subscription',base_url:'codex://chatgpt'},deepseek:{name:'DeepSeek',base_url:'https://api.deepseek.com'}}),
-    fetchModels:async()=>({models:[],error:MISSING+': model discovery / entitled catalog. Enter an upstream model ID manually for supported providers.'}),
+    loadPresets:async()=>({webagent_catalog:{name:'WebAgent Catalog / Available models',base_url:''},...providerPresets}),
+    fetchModels:async({provider,api_key})=>{
+      if(provider!=='webagent_catalog')return request('/models/discovery','POST',{provider,api_key});
+      const choices=await accountChoices();
+      return {models:[...(choices.available_platform_models||[]),...(choices.entries||[])].map(c=>({
+        id:c.id,display_name:choices.aliases?.[c.id]||c.display_name,name:choices.aliases?.[c.id]||c.display_name,catalog_name:c.display_name,
+        text_capable:c.capabilities.includes('text'),image_capable:c.capabilities.includes('image_in'),image_out_capable:c.capabilities.includes('image_out'),voice_capable:c.capabilities.includes('voice'),origin:c.origin}))};
+    },
     fetchModelInfo:async()=>({}),fetchModelUsage:async()=>null,
     loadDirectives:async()=>({standard:'',premium:'',system:'',image_in:'',image_out:'',voice:'',custom:{}}),
     saveDirectives:async()=>reject('role prompt injections'),
-    saveDefaultEntryId:async()=>reject('account default for new agents'),
+    saveDefaultEntryId:async(id)=>{
+      const choices=await accountChoices();let sourceId=id;
+      if(id&&catalog.entries[id])sourceId=data.adoptions?.[id]?.source_id||(catalog.platform_sources?.[id]?id:'byo:'+id);
+      if(sourceId?.startsWith('platform:')&&!choices.selected_platform_ids.includes(sourceId)){
+        account=await request('/models/me/catalog','PUT',{revision:choices.revision,selected_platform_ids:[...choices.selected_platform_ids,sourceId],aliases:choices.aliases,default_entry_id:choices.default_entry_id});
+      }
+      account=await request('/models/me/catalog/default','PUT',{expected_revision:account.revision,default_entry_id:sourceId||null});return account;
+    },
     listCredentials:async()=>reject('named credential library'),
     loadCredential:async()=>reject('named credential library'),
     saveCredential:async()=>reject('credential library validation/save'),

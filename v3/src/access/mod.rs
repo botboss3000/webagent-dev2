@@ -41,10 +41,20 @@ impl Permission {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ModelPolicy {
+    pub roster_id: Option<String>,
+    pub allowed_entry_ids: std::collections::BTreeSet<String>,
+    pub allow_byo: bool,
+    pub max_byo_entries: u32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tier {
     pub id: String,
     pub revision: u64,
     pub allowed_models: Vec<String>,
+    #[serde(default)]
+    pub model_policy: Option<ModelPolicy>,
     pub tools: BTreeMap<String, Permission>,
     // Missing legacy grants preserve only the two already executable adapters.
     // Newly registered ability IDs remain denied until explicitly appointed.
@@ -58,6 +68,13 @@ pub fn legacy_ability_grants() -> BTreeMap<String, Permission> {
 }
 impl Tier {
     pub fn validate(&self) -> Result<()> {
+        if let Some(policy)=&self.model_policy {
+            if policy.roster_id.as_ref().is_some_and(|id|!valid_id(id))
+                || policy.allowed_entry_ids.len()>256 || policy.allowed_entry_ids.iter().any(|id|!valid_id(id))
+                || policy.max_byo_entries>256 || (policy.roster_id.is_none() && !policy.allowed_entry_ids.is_empty()) {
+                bail!("Invalid model policy");
+            }
+        }
         if !valid_id(&self.id) || self.revision == 0
             || self.allowed_models.len() > 64 || self.tools.len() > 128 || self.ability_permissions.len() > 128
             || self.max_sessions > 10_000 || self.max_active_runs > 200 {
@@ -69,6 +86,17 @@ impl Tier {
             bail!("Invalid entitlement grant");
         }
         Ok(())
+    }
+    /// Legacy/BYO lane only. Platform access must use stable published identity.
+    pub fn allows_byo_model(&self, model: &str) -> bool {
+        self.model_policy.as_ref().is_none_or(|policy|policy.allow_byo)
+            && self.allows_model(model)
+    }
+    /// Downgrades must permit removals/revocations, never new over-quota entries.
+    pub fn allows_byo_growth(&self, previous:usize, next:usize) -> bool {
+        if next<=previous {return true;}
+        self.model_policy.as_ref().is_none_or(|policy|
+            policy.allow_byo && next<=policy.max_byo_entries as usize)
     }
     pub fn allows_model(&self, model: &str) -> bool {
         self.allowed_models.iter().any(|item| item == "*" || item == model)
@@ -227,8 +255,30 @@ mod tests {
             Permission::Auto);
     }
     #[test]
+    fn byo_downgrade_blocks_use_and_growth_but_allows_reduction() {
+        let mut tier=Tier{id:"basic".into(),revision:1,model_policy:None,
+            allowed_models:vec!["*".into()],tools:BTreeMap::new(),ability_permissions:legacy_ability_grants(),
+            max_sessions:10,max_active_runs:2};
+        assert!(tier.allows_byo_model("deepseek-chat"));
+        assert!(tier.allows_byo_growth(0,1));
+        tier.model_policy=Some(ModelPolicy{roster_id:None,allowed_entry_ids:Default::default(),
+            allow_byo:false,max_byo_entries:0});
+        assert!(!tier.allows_byo_model("deepseek-chat"));
+        assert!(!tier.allows_byo_growth(0,1));
+        assert!(tier.allows_byo_growth(3,3));
+        assert!(tier.allows_byo_growth(3,2));
+        let policy=tier.model_policy.as_mut().unwrap();
+        policy.allow_byo=true;policy.max_byo_entries=2;
+        assert!(tier.allows_byo_growth(1,2));
+        assert!(!tier.allows_byo_growth(2,3));
+        assert!(!tier.allows_byo_growth(3,4));
+        tier.allowed_models=vec!["deepseek-chat".into()];
+        assert!(!tier.allows_byo_model("other"));
+        assert!(tier.allows_byo_model("deepseek-chat"));
+    }
+    #[test]
     fn tier_is_explicit_and_bounded() {
-        let mut tier = Tier {id:"basic".into(),revision:1,
+        let mut tier = Tier {id:"basic".into(),revision:1,model_policy:None,
             allowed_models:vec!["gpt-6-luna".into()],tools:BTreeMap::new(),ability_permissions:legacy_ability_grants(),
             max_sessions:10,max_active_runs:2};
         tier.validate().unwrap();

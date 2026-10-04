@@ -76,9 +76,14 @@ Chat control configuration, pill layout, footer interaction, and sign-in adapter
 modules live in `v3/ui/chat/controls/`.
 The session selector now uses the active v2 trigger markup and adapted v2
 portal/positioning/open-close lifecycle under `chat/controls/session-dropdown/`.
-Its v3 data adapter supports title search, opening sessions, and refreshing;
-unsupported management actions are disabled, not sent to v2. This is a partial
-port: rich status/grouping, management persistence, and the remaining header
+Its v3 data adapter supports private title/content search with continuation,
+opening and refreshing sessions, persisted rename/pin, reversible recycle/restore,
+and visible-message read acknowledgments. Checkbox batch recycle uses the same
+revision-fenced Rust lifecycle writes: two-click confirmation, individually
+processed sessions, explicit partial failures, and retained failed selections
+with retry receipts. It is not an atomic batch. Unsupported management actions
+are disabled, not sent to v2. This remains a partial port: hidden sessions,
+custom pinned ordering, rich status/family grouping, and the remaining header
 controls are not yet equivalent to v2.
 V3 startup wiring selects its independent `v3/data/config/chat.json` through
 an authenticated `GET /api/v3/auth/ui-config` route. `deploy.sh start` seeds the

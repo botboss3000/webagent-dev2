@@ -73,21 +73,25 @@ pub(crate) async fn send(
     if body.get("model_role").is_some() && body["model_role"] != "standard" {
         return Err(bad("Chat supports only the Standard role"));
     }
-    let plan = Some(match body.get("model_entry_id") {
+    let mut plan = Some(match body.get("model_entry_id") {
         Some(Value::String(entry)) => catalog.resolve_custom(&agent_id,entry),
         Some(_) => return Err(bad("Invalid custom model entry")),
         None => catalog.resolve_role(&agent_id,model_selection::ModelRole::Standard),
     }.map_err(|_|conflict("Standard model required, or selected model is unavailable"))?);
     // Pin System separately now; compaction cannot borrow Standard or a later assignment.
-    let system_plan = if catalog.agent_models.get(&agent_id)
+    let mut system_plan = if catalog.agent_models.get(&agent_id)
         .is_some_and(|models|models.roles.contains_key(&model_selection::ModelRole::System)) {
         Some(catalog.resolve_role(&agent_id,model_selection::ModelRole::System)
             .map_err(|_|conflict("System model assignment is invalid or unauthorized"))?)
     } else {None};
-    for candidate in plan.iter().chain(system_plan.iter()).flat_map(|p|&p.candidates) {
-        if !access.model_allowed(&candidate.upstream_model) {
-            return Err(ApiError(StatusCode::FORBIDDEN,"Assigned role includes a model outside the account tier".into()));
+    // Preserve the public forbidden response for live BYO entitlement denial.
+    for candidate in plan.iter().chain(system_plan.iter()).flat_map(|p| &p.candidates) {
+        if candidate.platform.is_none() && !access.model_allowed(&candidate.upstream_model) {
+            return Err(ApiError(StatusCode::FORBIDDEN,"Model unavailable".into()));
         }
+    }
+    for plan in plan.iter_mut().chain(system_plan.iter_mut()) {
+        app.pin_model_plan(plan).await.map_err(|_|conflict("Assigned model is no longer entitled or configured"))?;
     }
     let selection = match &plan {
         Some(plan) => provider::ProviderSelection { provider: plan.candidates[0].transport.provider_id(),
@@ -98,11 +102,11 @@ pub(crate) async fn send(
             agent_app.selection().await?
         },
     };
-    if !access.model_allowed(&selection.model) {
+    if plan.as_ref().is_none_or(|p|p.candidates[0].platform.is_none()) && !access.model_allowed(&selection.model) {
         return Err(ApiError(StatusCode::FORBIDDEN,"Model unavailable".into()));
     }
     let credential_ref = plan.as_ref().map(|p| p.candidates[0].credential_ref.as_str()).unwrap_or("provider_tokens");
-    if app.store.get(credential_ref).await?.is_none() {
+    if plan.as_ref().is_none_or(|p|p.candidates[0].platform.is_none()) && app.store.get(credential_ref).await?.is_none() {
         return Err(conflict("Assigned provider connection is not authorized"));
     }
     let instructions = assembled_agent_instructions(&agent_store, &agent_id).await?;
@@ -519,8 +523,7 @@ pub(crate) async fn approval(State(app): State<App>, Path(id): Path<String>, Jso
     let agent_id=run["agent_id"].as_str().unwrap_or("shared_default");
     let access=app.store.live_access(app.store.current_user_id(),agent_id).await
         .map_err(|_|conflict("Access changed; approval is invalid"))?;
-    let model=run["provider_selection"]["model"].as_str().unwrap_or("");
-    if !access.admitted() || (!model.is_empty() && !access.model_allowed(model)) {
+    if !access.admitted() || !app.run_model_authorized(&run).await {
         run["status"]=json!("stopped");
         run["pending"]["decision"]=Value::Null;
         app.save(&mut run).await?;

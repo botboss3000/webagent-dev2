@@ -100,6 +100,22 @@ async fn state_inspect(Extension(app): Extension<App>, Path(id): Path<String>,
     };
     crate::state_inspect_api(State(app), Path(id), Query(args)).await.into_response()
 }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivityArgs { after: Option<i64> }
+async fn activity(Extension(app): Extension<App>, Extension(identity): Extension<Value>, Path(id): Path<String>, Query(args): Query<ActivityArgs>) -> Response {
+    let result: Result<_, crate::ApiError> = async {
+        crate::phase3_api::administrator(&app, &identity).await?;
+        let app=session_app(app,&id).await?;
+        let after=args.after.unwrap_or(0);
+        if after<0 {return Err(crate::bad("Invalid activity cursor"));}
+        let data=app.store.private_activity(&id,after).await?;
+        crate::phase3_api::administrator(&app,&identity).await?;
+        session_app(app,&id).await?;
+        Ok(([("cache-control","no-store")],Json(data)))
+    }.await;
+    result.into_response()
+}
 async fn events(Extension(app): Extension<App>, Path(id): Path<String>,
     headers: HeaderMap, Extension(auth_doc): Extension<Value>,
     Query(params): Query<HashMap<String, String>>) -> Response {
@@ -172,6 +188,7 @@ pub(crate) fn router() -> Router<App> {
         .route("/sessions/{id}/memories", get(memory_list).post(memory_save))
         .route("/sessions/{id}/memories/{mid}", axum::routing::delete(memory_delete))
         .route("/sessions/{id}/events", get(events))
+        .route("/sessions/{id}/activity", get(activity))
         .route("/runs/{id}/{action}", post(command))
         .route("/approvals/{id}/decision", post(approval))
 }

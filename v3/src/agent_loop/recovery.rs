@@ -59,11 +59,7 @@ pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
             parallel_batch::mark_uncertain_writes(&mut run);
             run["error"] = json!("Tool outcome is uncertain after interruption");
         } else {
-            let agent_id=run["agent_id"].as_str().unwrap_or("shared_default");
-            let model=run["provider_selection"]["model"].as_str().unwrap_or("");
-            let allowed=user_app.store.live_access(user_app.store.current_user_id(),agent_id).await
-                .is_ok_and(|access|access.admitted()
-                    && (model.is_empty() || access.model_allowed(model)));
+                let allowed=user_app.run_model_authorized(&run).await;
             run["status"] = json!(if !resume || app.shutoff().await? || !allowed {
                 "stopped"
             } else {

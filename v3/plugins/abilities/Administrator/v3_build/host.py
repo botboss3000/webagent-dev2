@@ -41,6 +41,7 @@ CONTEXT = (
     "ui/main-panel/agents/agents.html", "ui/main-panel/agents/agents.css",
     "ui/vendor/fonts", "ui/vendor/lucide", "ui/favicon.svg")
 TARGETS = ("webagent-dev-v3", "webagent-dev-v3-loop")
+WORKER_CONTROL = Path("/var/lib/webagent-v3-build-worker/control.sock")
 MAX_LOG = 1024 * 1024
 PUBLIC_LOG = 16 * 1024
 MAX_CONTEXT = 128 * 1024 * 1024
@@ -116,6 +117,29 @@ def replacement_config(current, old_defaults, new_defaults):
             labels[key] = value
     result["Labels"] = labels
     return result
+
+
+class WorkerControlHTTP(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(str(WORKER_CONTROL))
+
+
+def worker_control(method, path, body=None):
+    conn = WorkerControlHTTP("localhost", timeout=5)
+    payload = None if body is None else canonical(body)
+    try:
+        conn.request(method, path, payload, {"Content-Type": "application/json"})
+        response = conn.getresponse()
+        raw = response.read(4096)
+        if response.status == 409:
+            raise ValueError("Build worker has an active job or is restarting")
+        if response.status not in (200, 202):
+            raise RuntimeError("Build worker control unavailable")
+        return json.loads(raw)
+    finally:
+        conn.close()
 
 
 class DockerHTTP(http.client.HTTPConnection):
@@ -457,6 +481,26 @@ class Broker:
                     self._save(job)
                     updated += 1
                 return {"updated": updated}
+            if name == "v3_build_worker_restart":
+                if set(args) != {"request_id"} or not isinstance(args["request_id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", args["request_id"]):
+                    raise ValueError("stable restart request_id required")
+                self._incoming_lease(trusted)
+                if self.active is not None:
+                    raise ValueError("shared V3 build target busy")
+                response = worker_control("POST", "/v1/restart", {"request_id": args["request_id"]})
+                previous_pid = response.get("previous_pid")
+                if response.get("status") != "restarting" or not isinstance(previous_pid, int):
+                    raise RuntimeError("Build worker restart response invalid")
+                for _ in range(50):
+                    time.sleep(0.5)
+                    try:
+                        status = worker_control("GET", "/v1/status")
+                    except (OSError, ValueError, RuntimeError):
+                        continue
+                    if status.get("pid") and status["pid"] != previous_pid:
+                        return {"status": "ok", "service": "v3-build-worker.service",
+                                "active": True, "interrupted_job": None}
+                raise RuntimeError("Restart requested but fresh worker readiness was not confirmed; inspect host before retry")
             if name == "v3_build_status":
                 if args:
                     raise ValueError("status takes no arguments")

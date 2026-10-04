@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 pub fn owns(name: &str) -> bool { matches!(name, "read_attachment" | "search_this_session") }
 pub fn schemas() -> Vec<Value> {
     [
-        ("read_attachment", "Read a bounded Unicode-character page of a current-session text attachment", json!({"attachment_id":{"type":"string","format":"uuid"},"offset_chars":{"type":"integer","minimum":0,"maximum":16384},"limit_chars":{"type":"integer","minimum":1,"maximum":4096}}), vec!["attachment_id"]),
+        ("read_attachment", "Read a bounded Unicode-character page of a current-session text attachment", json!({"attachment_id":{"type":"string","format":"uuid"},"offset_chars":{"type":"integer","minimum":0},"limit_chars":{"type":"integer","minimum":1,"maximum":4096}}), vec!["attachment_id"]),
         ("search_this_session", "Search a bounded page of current-session public chat by case-sensitive literal text; continue with next_seq", json!({"query":{"type":"string","minLength":1,"maxLength":256},"after_seq":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":20}}), vec!["query"]),
     ].into_iter().map(|(name,description,properties,required)|json!({
         "type":"function","name":name,"description":description,
@@ -34,18 +34,21 @@ struct SearchArgs {
     #[serde(default="search_limit")] limit:usize,
 }
 fn attachment_page(record:Value,args:&AttachmentArgs)->Result<Value> {
-    if args.offset_chars>16384 || !(1..=4096).contains(&args.limit_chars) {
+    if !(1..=4096).contains(&args.limit_chars) {
         bail!("Invalid attachment page bounds");
     }
-    if record["media_type"]!="text/plain" {bail!("Only text/plain attachments are supported");}
-    let text=record["text"].as_str().context("Attachment text unavailable")?;
-    if text.len()>16*1024 {bail!("Attachment exceeds text limit");}
+    let media=record["media_type"].as_str().unwrap_or("");
+    let textual=media.starts_with("text/")||media.starts_with("application/")&&media!="application/pdf";
+    if !textual&&record["text"].as_str().is_some_and(|text|!text.is_empty())&&record["described_by"].as_str().is_none(){
+        bail!("Binary content lacks native extraction provenance");
+    }
+    let text=record["text"].as_str().filter(|s|!s.is_empty()).unwrap_or("File metadata only; content extraction is unavailable for this media type. Do not guess its contents.");
     let total=text.chars().count();
     if args.offset_chars>total {bail!("Attachment cursor exceeds text length");}
     let page:String=text.chars().skip(args.offset_chars).take(args.limit_chars).collect();
     let next=args.offset_chars+page.chars().count();
     Ok(json!({"id":record["id"],"run_id":record["run_id"],"name":record["name"],
-        "media_type":"text/plain","bytes":record["bytes"],"sha256":record["sha256"],
+        "media_type":record["media_type"],"bytes":record["bytes"],"sha256":record["sha256"],
         "text":page,"offset_chars":args.offset_chars,"next_offset_chars":next,
         "total_chars":total,"has_more":next<total,"source_kind":"untrusted_attachment"}))
 }
@@ -93,7 +96,7 @@ async fn work(app:&App,sid:&str,name:&str,args:&Value)->Result<Value> {
     match name {
         "read_attachment" => {
             let query:AttachmentArgs=serde_json::from_value(args.clone()).context("Invalid attachment arguments")?;
-            if query.offset_chars>16384 || !(1..=4096).contains(&query.limit_chars) {bail!("Invalid attachment page bounds");}
+            if !(1..=4096).contains(&query.limit_chars) {bail!("Invalid attachment page bounds");}
             // Reuse the API's encrypted lookup and exact session/provenance checks.
             let Json(record)=attachment_get(State(app.clone()),Path((sid.to_owned(),query.attachment_id.clone())))
                 .await.map_err(|_|anyhow::anyhow!("Attachment unavailable in current session"))?;
@@ -134,6 +137,15 @@ mod tests {
         assert!(attachment_page(record.clone(),&AttachmentArgs {offset_chars:5,..args}).is_err());
         let mut binary=record;binary["media_type"]=json!("image/png");
         assert!(attachment_page(binary,&AttachmentArgs {attachment_id:"id".into(),offset_chars:0,limit_chars:2}).is_err());
+    }
+    #[test]
+    fn attachment_reader_has_no_builtin_maximum_offset() {
+        let record=json!({"id":"id","run_id":"run","name":"n","media_type":"text/plain",
+            "bytes":26214402,"sha256":"digest","text":"x".repeat(26214401)+"Z"});
+        let page=attachment_page(record,&AttachmentArgs {attachment_id:"id".into(),
+            offset_chars:26214401,limit_chars:1}).unwrap();
+        assert_eq!(page["text"],"Z");
+        assert_eq!(page["has_more"],false);
     }
     #[test]
     fn search_is_literal_bounded_and_keeps_unreturned_matches_after_cursor() {

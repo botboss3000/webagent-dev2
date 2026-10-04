@@ -100,10 +100,38 @@ fn public_context_summary(run: &Value) -> Value {
     summary.insert("accounting".into(),json!("serialized_json_bytes_not_provider_tokens"));
     Value::Object(summary)
 }
+// Publish model identity at the pinned failover cursor, never credentials.
+fn public_run_model(run: &Value) -> Value {
+    if run["model"].is_object(){return json!({"entry_id":run["model"]["entry_id"],"model":run["model"]["model"]});}
+    let index=run["failover_state"]["candidate_index"].as_u64().unwrap_or(0) as usize;
+    let candidate=run["selection_plan"]["candidates"].as_array().and_then(|items|items.get(index));
+    match candidate {
+        Some(value)=>json!({"entry_id":value["entry_id"],"model":value["upstream_model"]}),
+        None=>json!({"entry_id":null,"model":run["provider_selection"]["model"]}),
+    }
+}
+async fn public_runs(app:&App,views:Vec<Value>)->Result<Vec<Value>>{
+    let mut result=Vec::with_capacity(views.len());
+    for view in views{
+        // Old encrypted views may lack a model projection; read the owning run
+        // through Store, then project only safe fields without rewriting its state.
+        if view["model"].is_null(){
+            let run=app.run(view["id"].as_str().ok_or_else(||anyhow!("Run id missing"))?).await?;
+            result.push(public_run(&run));
+        }else{result.push(public_run(&view));}
+    }
+    Ok(result)
+}
 fn public_run(run: &Value) -> Value {
     json!({"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
         "pending":run["pending"],"uncertain":run["uncertain"],"turns":run["turns"],
         "attachments":run["attachments"].as_array().cloned().unwrap_or_default(),
+        "model":public_run_model(run),
+        "usage":usage::public(&run["usage"]),
+        "compactions":run["compactions"].as_u64().unwrap_or(0),
+        "context_controls":{"trigger_tokens":run["context_controls"]["trigger_tokens"].as_u64(),"tail_tokens":run["context_controls"]["tail_tokens"].as_u64(),"characters_per_token":run["context_controls"]["characters_per_token"].as_u64()},
+        "mode":run["dispatch_mode"],
+        "chat_model_revision":run["chat_model_revision"].as_u64(),
         "context_summary":public_context_summary(run)})
 }
 fn run_diagnostics(run: &Value) -> Value {

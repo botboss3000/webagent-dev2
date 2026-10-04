@@ -1270,7 +1270,7 @@ async fn agent_loop_creates_reviewable_proposal_without_dispatching_broker() {
     });
     let sid = conversation(&app).await;
     session_mode_set(State(app.clone()), Path(sid.clone()),
-        Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
+        Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -1376,7 +1376,7 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     });
     app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
     let sid = conversation(&app).await;
-    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -1833,9 +1833,7 @@ async fn real_worker_coding_gates_are_end_to_end() {
             let _ = session_mode_set(
                 State(app.clone()),
                 Path(sid.clone()),
-                Json(SessionModeBody {
-                    mode: "read_only".into(),
-                }),
+                Json(SessionModeBody { mode: "read_only".into(), expected_revision: None, confirm_write: false }),
             )
             .await
             .unwrap();
@@ -2964,7 +2962,7 @@ async fn prompt_slot_tool_waits_for_approval_then_writes_once() {
     });
     app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
     let sid = conversation(&app).await;
-    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -3556,7 +3554,7 @@ async fn session_mode_api_requires_auth_and_csrf_and_is_session_scoped() {
             request = request.header("x-csrf-token", csrf);
         }
         request
-            .body(Body::from(json!({"mode":mode}).to_string()))
+            .body(Body::from(json!({"mode":mode,"expected_revision":if mode=="write"{Some(1)}else{None},"confirm_write":mode=="write"}).to_string()))
             .unwrap()
     };
     let response = router(app.clone()).oneshot(get(None, &uri)).await.unwrap();
@@ -3656,9 +3654,7 @@ async fn read_only_revokes_old_approval_and_denies_write_at_execution() {
     let mode = session_mode_set(
         State(app.clone()),
         Path(sid.clone()),
-        Json(SessionModeBody {
-            mode: "read_only".into(),
-        }),
+        Json(SessionModeBody { mode: "read_only".into(), expected_revision: None, confirm_write: false }),
     )
     .await
     .unwrap()
@@ -3971,7 +3967,7 @@ async fn current_mode_contribution_changes_per_call_without_entering_history() {
         CancellationToken::new()).await.unwrap();
     assert_eq!(app.run(&first).await.unwrap()["status"], "completed");
     assert_eq!(session_mode_set(State(app.clone()), Path(sid.clone()),
-        Json(SessionModeBody { mode:"plan".into() })).await.unwrap().0["revision"], 1);
+        Json(SessionModeBody { mode: "plan".into(), expected_revision: None, confirm_write: false })).await.unwrap().0["revision"], 1);
 
     let second = queued(&app, &sid).await;
     running(&app, &second, "read-mode").await;
@@ -4964,7 +4960,7 @@ async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call
     config.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
     config.persist(&app.runtime_path).unwrap();
     let sid=conversation(&app).await;
-    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into() })).await.unwrap();
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app,&sid).await;
     let id=queued(&app,&sid).await;
     let mut run=app.run(&id).await.unwrap();

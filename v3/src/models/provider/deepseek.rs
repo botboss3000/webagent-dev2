@@ -7,6 +7,15 @@ fn text(value: &Value) -> String {
     if let Some(s) = value.as_str() { return s.to_owned(); }
     value.as_array().map(|items| items.iter().filter_map(|v| v["text"].as_str()).collect::<Vec<_>>().join("")).unwrap_or_default()
 }
+fn message_content(value:&Value)->Result<Value>{
+    let Some(parts)=value.as_array() else{return Ok(json!(text(value)))};
+    if !parts.iter().any(|part|part["type"]=="input_image"){return Ok(json!(text(value)));}
+    parts.iter().map(|part|match part["type"].as_str(){
+        Some("input_text"|"text"|"output_text")=>Ok(json!({"type":"text","text":part["text"]})),
+        Some("input_image")=>Ok(json!({"type":"image_url","image_url":{"url":required(part,"image_url")?}})),
+        _=>bail!("Unsupported media part")
+    }).collect::<Result<Vec<_>>>().map(|parts|json!(parts))
+}
 fn request_body(model: &str, input: Vec<Value>, tools: Vec<Value>, instructions: &str) -> Result<Value> {
     let mut messages = vec![json!({"role":"system","content":instructions})];
     for item in input {
@@ -29,14 +38,14 @@ fn request_body(model: &str, input: Vec<Value>, tools: Vec<Value>, instructions:
             "message" => {
                 let role = item["role"].as_str().unwrap_or("user");
                 if !matches!(role,"user"|"assistant"|"system"|"developer") { bail!("Invalid Provider message role"); }
-                let mut message = json!({"role":if role=="developer" {"system"} else {role},"content":text(&item["content"])});
+                let mut message = json!({"role":if role=="developer" {"system"} else {role},"content":message_content(&item["content"])?});
                 if let Some(reasoning) = item.get("deepseek_reasoning") { message["reasoning_content"] = reasoning.clone(); }
                 messages.push(message);
             },
             _ => bail!("Unsupported Provider input item"),
         }
     }
-    let mut body = json!({"model":model,"messages":messages,"stream":true,"max_tokens":8192});
+    let mut body = json!({"model":model,"messages":messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":8192});
     if !tools.is_empty() {
         body["tools"] = json!(tools.into_iter().map(|t| json!({"type":"function","function":{
             "name":t["name"],"description":t["description"],"parameters":t["parameters"]}})).collect::<Vec<_>>());
@@ -46,9 +55,10 @@ fn request_body(model: &str, input: Vec<Value>, tools: Vec<Value>, instructions:
 }
 
 #[derive(Default)]
-struct Completion { content: String, reasoning: String, calls: BTreeMap<u64,Value> }
+struct Completion { content: String, reasoning: String, calls: BTreeMap<u64,Value>, usage:Value, finished:bool }
 impl Completion {
     fn push(&mut self, event: &Value) -> Result<(String, bool)> {
+        if event["usage"].is_object(){self.usage=event["usage"].clone();}
         if event.get("error").is_some() { bail!("Provider stream reported an error"); }
         let Some(choice) = event["choices"].as_array().and_then(|v| v.first()) else { return Ok((String::new(),false)); };
         let delta = &choice["delta"];
@@ -72,6 +82,7 @@ impl Completion {
             Some("length") => bail!("Provider response reached token limit"),
             Some(_) => bail!("Provider completion was not successful"),
         };
+        self.finished |= finished;
         Ok((content,finished))
     }
     fn result(self) -> Result<Value> {
@@ -88,7 +99,7 @@ impl Completion {
             call["deepseek_reasoning"] = json!(self.reasoning);
             output.push(call);
         }
-        Ok(json!({"status":"completed","output":output}))
+        Ok(json!({"status":"completed","output":output,"usage":self.usage}))
     }
 }
 impl Provider {
@@ -155,6 +166,11 @@ impl Provider {
                 _ = cancel.cancelled() => return Err(typed_failure(FailureKind::Cancelled,started,"Provider request cancelled")),
                 result = tokio::time::timeout(Duration::from_secs(120),stream.next()) => result.map_err(|_|typed_failure(FailureKind::Transient,started,"Provider stream stalled"))?
             };
+            // Usage is often a final empty-choice frame after finish_reason.
+            // Preserve providers which close a finished stream without [DONE].
+            if chunk.is_none() && completion.finished {
+                return completion.result().map_err(|e|typed_failure(FailureKind::Protocol,started,e.to_string()));
+            }
             let chunk = chunk.ok_or_else(||typed_failure(FailureKind::Transient,started,"Provider stream ended before completion"))?
                 .map_err(|_|typed_failure(FailureKind::Transient,started,"Provider stream interrupted"))?;
             for event in frames.push(&chunk).map_err(|_|typed_failure(FailureKind::Protocol,started,"Invalid Provider stream event"))? {
@@ -168,7 +184,10 @@ impl Provider {
                         sent = delta.send(content) => sent.map_err(|_|typed_failure(FailureKind::Protocol,started,"Stream consumer disconnected"))?
                     }
                 }
-                if finished { return completion.result().map_err(|e|typed_failure(FailureKind::Protocol,started,e.to_string())); }
+                let _=finished;
+            }
+            if frames.done && completion.finished {
+                return completion.result().map_err(|e|typed_failure(FailureKind::Protocol,started,e.to_string()));
             }
         }
     }
@@ -197,6 +216,27 @@ mod tests {
         assert_eq!(receiver.recv().await.unwrap(),"Hello");assert_eq!(receiver.recv().await.unwrap()," world");
         let captured=captured.lock().await;let (headers,body)=captured.as_ref().unwrap();
         assert_eq!(headers["authorization"],"Bearer test-key");assert!(!headers.contains_key("chatgpt-account-id"));assert_eq!(body["model"],"deepseek-chat");
+        server.abort();
+    }
+    #[tokio::test]
+    async fn usage_after_finish_reason_is_retained(){
+        use axum::{routing::post,Router};
+        let app=Router::new().route("/chat",post(||async{
+            ([("content-type","text/event-stream")],r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":10}}}
+
+data: [DONE]
+
+"#)
+        }));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let provider=Provider::for_test(format!("http://{addr}/chat"));
+        let (tx,_rx)=mpsc::channel(8);
+        let selection=ProviderSelection{provider:ProviderId::Deepseek,model:"fixture".into()};
+        let result=provider.complete_selected_with_instructions(&selection,&json!({"api_key":"fixture"}),vec![],vec![],"s","help",tx,CancellationToken::new()).await.unwrap();
+        assert_eq!(result["usage"]["prompt_tokens"],42);assert_eq!(result["usage"]["completion_tokens"],3);
         server.abort();
     }
     #[tokio::test]

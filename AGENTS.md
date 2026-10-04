@@ -67,3 +67,40 @@
   result stale and repeat the check after the inputs are stable. When finished,
   tell the other workers the checkout is released and report what command ran,
   which inputs were checked, and whether its result is current.
+
+## V3 reducing build and validation time
+
+- Work from narrow checks to expensive builds: run a quick, appropriately
+  scoped compiler check after Rust control-flow edits, then affected tests and
+  mounted-asset browser checks. Capture settled inputs before the full image
+  build, then perform live backend acceptance after an authorized deployment.
+  Keep the required build-script tests and final unchanged-input verification.
+- Avoid starting full image builds while known backend edits or integrations
+  are still pending. Coordinate the final source snapshot with other writers
+  first, including configuration-dependent backend changes. An early build is
+  provisional when its inputs may still change.
+- Validate bind-mounted UI assets against the current development runtime
+  before building where its APIs support the journey. Clearly distinguish UI
+  checks from backend behavior that requires the new runtime; do not claim
+  acceptance for undeployed endpoints.
+- Before repeating a full image build, identify exactly what changed and
+  whether it affects the runtime binary or packaged deployment artifacts.
+  A change only to a confirmed bind-mounted UI asset normally needs a refresh
+  and focused UI checks, not Rust recompilation. Still capture current inputs
+  and reconcile packaged assets with the intended deployment.
+- During UI review, trace visibility from configuration through all applicable
+  CSS; check that completed-run data survives polling and reloads; and test
+  focus/blur/click order in both empty and populated composers. Include keyboard
+  activation and conversation switching where relevant.
+- When compilation fails, inspect the first actionable diagnostic and the
+  surrounding scope before rerunning broader checks. Check renamed variables,
+  task handles, and cleanup paths after changing async control flow.
+- When a concurrency test fails intermittently, preserve the failure evidence
+  and distinguish a product defect, test isolation problem, or environment
+  contention. Use a bounded isolated reproduction before a justified full
+  rerun. A passing rerun does not erase the original failure; report it and
+  track recurring failures separately without weakening valid assertions.
+- Record start/end times for focused checks, full tests, release compilation,
+  image assembly, and browser acceptance when assessing delays. Separate
+  machine build time, troubleshooting, source coordination, and browser work;
+  report overlaps rather than adding concurrent intervals together.

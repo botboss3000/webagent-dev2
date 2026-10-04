@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 mod deepseek;
+mod media;
 
 const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -311,6 +312,7 @@ fn request_body<'a>(model: &'a str, input: &'a [Value], tools: &'a [Value], sess
 #[derive(Default)]
 struct Frames {
     buffer: Vec<u8>,
+    done: bool,
 }
 impl Frames {
     fn push(&mut self, chunk: &[u8]) -> Result<Vec<Value>> {
@@ -342,6 +344,7 @@ impl Frames {
                 .filter_map(|l| l.strip_prefix("data:").map(str::trim_start))
                 .collect::<Vec<_>>()
                 .join("\n");
+            if data == "[DONE]" {self.done=true;}
             if data.is_empty() || data == "[DONE]" {
                 continue;
             }

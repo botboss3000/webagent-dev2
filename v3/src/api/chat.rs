@@ -61,8 +61,9 @@ pub(crate) async fn send(
     let run_id = uuid();
     // Attachment text is saved with this message, but remains untrusted user data
     // when the loop later hydrates context for the model.
-    let prepared = attachments::prepare(body.get("attachments"), &id, &run_id)
+    let mut prepared = attachments::prepare(body.get("attachments"), &id, &run_id)
         .map_err(|_| bad("Invalid or unsupported attachments"))?;
+    uploads::prepare_uploads(&app,&id,&run_id,body.get("attachment_ids"),&mut prepared).await?;
     let mut message = json!({"role":"user","content":text,"run_id":run_id});
     if !prepared.metadata.is_empty() {
         message["context_content"] = json!(prepared.context_content(text)?);
@@ -73,7 +74,10 @@ pub(crate) async fn send(
     if body.get("model_role").is_some() && body["model_role"] != "standard" {
         return Err(bad("Chat supports only the Standard role"));
     }
-    let mut plan = Some(match body.get("model_entry_id") {
+    let saved_model = app.store.get(&format!("session_chat_controls:{id}")).await?;
+    let selected = body.get("model_entry_id").or_else(|| saved_model.as_ref()
+        .and_then(|saved| saved.get("entry_id")).filter(|entry| !entry.is_null()));
+    let mut plan = Some(match selected {
         Some(Value::String(entry)) => catalog.resolve_custom(&agent_id,entry),
         Some(_) => return Err(bad("Invalid custom model entry")),
         None => catalog.resolve_role(&agent_id,model_selection::ModelRole::Standard),
@@ -116,6 +120,7 @@ pub(crate) async fn send(
     run["system_selection_plan"] = json!(system_plan);
     run["system_failover_state"] = json!(model_selection::FailoverState::default());
     run["attachments"] = json!(prepared.metadata.clone());
+    run["chat_model_revision"] = json!(saved_model.as_ref().and_then(|v|v["revision"].as_u64()).unwrap_or(0));
     // Freeze memory at admission; later edits cannot rewrite queued context.
     run["memory_context"] = json!(memory::snapshot(app.store.list(&format!("memory:{id}:")).await?)?);
     workflow::record(&mut run, &workflow_policy,
@@ -124,6 +129,7 @@ pub(crate) async fn send(
         &workflow::Input::AttachmentPreparation { attachment_count:prepared.metadata.len() }, workflow::Decision::Pass)?;
     let result = json!({"run_id":run_id,"attachments":prepared.metadata});
     let mut docs = prepared.records;
+    docs.push((format!("message_attachments:{run_id}"),json!(prepared.metadata)));
     docs.push((key("run", &run_id), run));
     docs.push((receipt_key, json!({"digest":digest(&body),"result":result})));
     app.store
@@ -144,12 +150,11 @@ pub(crate) async fn attachment_get(State(app): State<App>, Path((sid, aid)): Pat
     }
     let record = app.store.get(&key("attachment", &aid)).await?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Attachment not found".into()))?;
-    if record["session_id"] != sid || record["schema_version"] != 1 {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Attachment not found".into()));
+    if record["session_id"] != sid || !matches!(record["schema_version"].as_u64(),Some(1|2)) || record["run_id"].is_null() {
+        return Err(ApiError(StatusCode::NOT_FOUND,"Attachment not found".into()));
     }
-    Ok(Json(json!({"id":record["id"],"run_id":record["run_id"],
-        "name":record["name"],"media_type":record["media_type"],
-        "bytes":record["bytes"],"sha256":record["sha256"],"text":record["text"]})))
+    Ok(Json(json!({"id":record["id"],"run_id":record["run_id"],"name":record["name"],
+        "media_type":record["media_type"],"bytes":record["bytes"],"sha256":record["sha256"],"text":record["text"],"described_by":record["described_by"]})))
 }
 // Memory writes require a completed run in this same session. The API owns
 // the decision; neither model text nor a Python tool can save memory directly.
@@ -276,7 +281,7 @@ pub(crate) async fn events(
                     ));
                 }
                 queue = match app.store.chat_events(&id, cursor).await {
-                    Ok(v) => v,
+                    Ok(mut v) => {if uploads::message_files(&app,&mut v).await.is_err(){return None;} v},
                     Err(_) => return None,
                 };
                 if queue.is_empty() {
@@ -354,7 +359,7 @@ pub(crate) async fn command(
         if r["digest"] != digest(&body) {
             return Err(conflict("Identifier reused"));
         }
-        if action=="cancel" {
+        if matches!(action.as_str(),"cancel"|"pause") {
             if let Some(sid)=r["result"]["session_id"].as_str() {phase3_api::quiesce_session_resources(&app,sid).await?;}
         }
         return Ok(Json(r["result"].clone()));
@@ -363,8 +368,11 @@ pub(crate) async fn command(
         .run(&id)
         .await
         .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Run not found".into()))?;
+    if let Some(expected)=body.get("expected_run_revision") {
+        if expected.as_u64().is_none() || expected!=&run["run_revision"] {return Err(conflict("Run changed; no control applied"));}
+    }
     match action.as_str() {
-        "cancel" => {
+        "cancel" | "pause" => {
             if let Some(token) = app.active.lock().await.get(&id) {
                 token.cancel();
             }
@@ -377,7 +385,7 @@ pub(crate) async fn command(
                     run["uncertain"] = json!(true);
                     parallel_batch::mark_uncertain_writes(&mut run);
                 } else {
-                    run["status"] = json!("cancelled");
+                    run["status"] = json!(if action=="pause"{"paused"}else{"cancelled"});
                 }
                 run["error"] = json!("Cancelled by user");
             }
@@ -491,7 +499,7 @@ pub(crate) async fn command(
             &result,
         )
         .await?;
-    if action=="cancel" {phase3_api::quiesce_session_resources(&app,result["session_id"].as_str().unwrap()).await?;}
+    if matches!(action.as_str(),"cancel"|"pause") {phase3_api::quiesce_session_resources(&app,result["session_id"].as_str().unwrap()).await?;}
     Ok(Json(result))
 }
 pub(crate) async fn approval(State(app): State<App>, Path(id): Path<String>, Json(body): Json<Value>) -> Api {

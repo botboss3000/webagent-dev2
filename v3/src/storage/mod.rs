@@ -509,6 +509,8 @@ impl Store {
             &self.agent_pool
         } else if key.starts_with("session:")
             || key.starts_with("session_mode:")
+            || key.starts_with("session_chat_controls:")
+            || key.starts_with("receipt:chat_controls:")
             || key.starts_with("compaction_segment:")
             || key.starts_with("session_ability_state:")
             || key.starts_with("run:")
@@ -518,6 +520,9 @@ impl Store {
             || key.starts_with("administrator_host:")
             || key.starts_with("administrator_notice:")
             || key.starts_with("attachment:")
+            || key.starts_with("session_usage:")
+            || key=="attachment_quota"
+            || key.starts_with("message_attachments:")
             || key.starts_with("memory:")
             || key.starts_with("promotion:")
             || key.starts_with("receipt:session:")
@@ -1367,7 +1372,25 @@ impl Store {
         sqlx::query("INSERT INTO run_index(id,session_id,status,updated_at,enqueue_seq) VALUES(?,?,?,?,(SELECT COALESCE(MAX(enqueue_seq),0)+1 FROM run_index)) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,enqueue_seq=COALESCE(run_index.enqueue_seq,excluded.enqueue_seq)")
             .bind(run["id"].as_str().ok_or_else(||anyhow!("Invalid run"))?).bind(run["session_id"].as_str().unwrap_or(""))
             .bind(run["status"].as_str().unwrap_or("failed")).bind(run["updated_at"].as_i64().unwrap_or(0)).execute(&mut **tx).await?;
-        let view = serde_json::json!({"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
+        // Session totals advance in the same transaction as the run. Re-saving
+        // a run contributes only its delta, so retries and recovery cannot double-count.
+        let view_key=format!("run_view:{}",run["id"].as_str().unwrap());
+        let previous:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?").bind(&view_key).fetch_optional(&mut **tx).await?;
+        let previous=previous.map(|raw|self.unseal(&raw)).transpose()?.unwrap_or(Value::Null);
+        let new_usage=crate::usage::public(&run["usage"]);
+        if new_usage.is_object() && previous["usage"]!=new_usage {
+            let usage_key=format!("session_usage:{}",run["session_id"].as_str().unwrap());
+            let raw:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?").bind(&usage_key).fetch_optional(&mut **tx).await?;
+            let mut total=raw.map(|raw|self.unseal(&raw)).transpose()?.unwrap_or(serde_json::json!({}));
+            for field in ["input_tokens","output_tokens","cached_input_tokens","reported_calls","unreported_calls","unknown_cost_calls","unknown_cache_calls"]{
+                total[field]=serde_json::json!(total[field].as_u64().unwrap_or(0).saturating_sub(previous["usage"][field].as_u64().unwrap_or(0)).saturating_add(new_usage[field].as_u64().unwrap_or(0)));
+            }
+            total["known_cost_usd"]=serde_json::json!((total["known_cost_usd"].as_f64().unwrap_or(0.)-previous["usage"]["known_cost_usd"].as_f64().unwrap_or(0.)+new_usage["known_cost_usd"].as_f64().unwrap_or(0.)).max(0.));
+            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(&usage_key).bind(self.seal(&total)?).execute(&mut **tx).await?;
+            // Aggregates are read from the database; they must not use the doc cache.
+            self.cache.lock().unwrap().invalidate(&[usage_key]);
+        }
+        let view = serde_json::json!({"usage":new_usage,"model":crate::public_run_model(run),"attachments":run["attachments"],"run_revision":run["run_revision"],"context_assembly_report":run["context_assembly_report"],"context_controls":run["context_controls"],"compactions":run["compactions"],"dispatch_mode":run["dispatch_mode"],"chat_model_revision":run["chat_model_revision"],"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
             "pending":run["pending"],"uncertain":run["uncertain"],"turns":run["turns"],"phase":run["phase"],"updated_at":run["updated_at"]});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
             .bind(format!("run_view:{}",run["id"].as_str().unwrap())).bind(self.seal(&view)?).execute(&mut **tx).await?;
@@ -1389,6 +1412,21 @@ impl Store {
         rows.iter()
             .map(|r| self.unseal(&r.get::<Vec<u8>, _>("value")))
             .collect()
+    }
+    pub(crate) async fn delete_pending_upload(&self,sid:&str,aid:&str)->Result<()>{
+        let mut tx=self.pool.begin().await?;
+        sqlx::query("UPDATE docs SET value=value WHERE key='attachment_quota'").execute(&mut *tx).await?;
+        let raw:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key=?").bind(format!("attachment:{aid}")).fetch_optional(&mut *tx).await?;
+        let Some(raw)=raw else{return Ok(())};
+        let record=self.unseal(&raw)?;
+        if record["session_id"]!=sid||!record["run_id"].is_null(){return Err(anyhow!("Attachment removal unavailable"));}
+        let quota:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key='attachment_quota'").fetch_optional(&mut *tx).await?;
+        let used=quota.map(|raw|self.unseal(&raw)).transpose()?.and_then(|v|v["bytes"].as_u64()).unwrap_or(0);
+        sqlx::query("UPDATE docs SET value=? WHERE key='attachment_quota'").bind(self.seal(&json!({"bytes":used.saturating_sub(record["bytes"].as_u64().unwrap_or(0))}))?).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM docs WHERE key=?").bind(format!("attachment:{aid}")).execute(&mut *tx).await?;
+        tx.commit().await?;
+        self.cache.lock().unwrap().invalidate(&[format!("attachment:{aid}"),"attachment_quota".into()]);
+        Ok(())
     }
     pub async fn delete(&self, key: &str) -> Result<()> {
         self.validate_agent_doc_key(key)?;

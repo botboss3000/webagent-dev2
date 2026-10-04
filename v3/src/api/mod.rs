@@ -5,6 +5,11 @@ mod admin;
 mod sessions;
 mod promotions;
 mod chat;
+mod chat_controls;
+pub(crate) mod media_lane;
+pub(crate) mod uploads;
+mod voice;
+#[cfg(test)]mod composer_tests;
 mod ability_admin;
 mod service_admin;
 mod administrator;
@@ -16,6 +21,9 @@ pub(crate) use admin::*;
 pub(crate) use sessions::*;
 pub(crate) use promotions::*;
 pub(crate) use chat::*;
+pub(crate) use chat_controls::*;
+pub(crate) use voice::*;
+pub(crate) use uploads::{upload,upload_delete,upload_content,upload_describe};
 pub(super) fn router(app: App) -> Router {
     let messaging = user_api::messaging_router()
         .route_layer(middleware::from_fn_with_state(app.clone(), message_api_auth));
@@ -99,7 +107,7 @@ pub(super) fn router(app: App) -> Router {
             response.headers_mut().insert("cache-control",HeaderValue::from_static("no-store"));
             response.headers_mut().insert("x-content-type-options",HeaderValue::from_static("nosniff"));
             response.headers_mut().insert("referrer-policy",HeaderValue::from_static("same-origin"));
-            response.headers_mut().insert("content-security-policy",HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"));
+            response.headers_mut().insert("content-security-policy",HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"));
             response
         })).with_state(app)
 }

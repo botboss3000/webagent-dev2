@@ -97,17 +97,13 @@ pub(crate) async fn snapshot(State(app): State<App>, Path(id): Path<String>) -> 
         .get(&key("session", &id))
         .await?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Session not found".into()))?;
-    let (messages, last_seq) = app.store.chat_snapshot(&id).await?;
-    let runs = app
-        .store
-        .recent_runs(Some(&id))
-        .await?
-        .iter()
-        .map(public_run)
-        .collect::<Vec<_>>();
+    let (mut messages, last_seq) = app.store.chat_snapshot(&id).await?;
+    uploads::message_files(&app,&mut messages).await?;
+    let usage=crate::usage::public(&app.store.get(&format!("session_usage:{id}")).await?.unwrap_or(Value::Null));
+    let runs = public_runs(&app,app.store.recent_runs(Some(&id)).await?).await?;
     let components = app.store.base_chat_components(&id).await?;
     Ok(Json(
-        json!({"session":app.store.session_read_summary(&id).await?,
+        json!({"usage":usage,"session":app.store.session_read_summary(&id).await?,
         "messages":messages,"runs":runs,"components":components,"last_seq":last_seq}),
     ))
 }
@@ -508,6 +504,8 @@ pub(crate) async fn session_ability_set(
 #[serde(deny_unknown_fields)]
 pub(crate) struct SessionModeBody {
     pub(crate) mode: String,
+    #[serde(default)] pub(crate) expected_revision: Option<u64>,
+    #[serde(default)] pub(crate) confirm_write: bool,
 }
 pub(crate) async fn session_mode_get(State(app): State<App>, Path(id): Path<String>) -> Api {
     if app.store.get(&key("session", &id)).await?.is_none() {
@@ -520,7 +518,7 @@ pub(crate) async fn session_mode_set(
     Path(id): Path<String>,
     Json(body): Json<SessionModeBody>,
 ) -> Api {
-    change_session_mode(&app,&id,&body.mode,None,None).await
+    change_session_mode_authorized(&app,&id,&body.mode,body.expected_revision,None,body.confirm_write).await
 }
 #[derive(Clone, Copy)]
 pub(crate) struct ModeCall<'a> { pub run_id: &'a str, pub generation: &'a str, pub pending_id: &'a str }
@@ -529,7 +527,12 @@ pub(crate) struct ModeCall<'a> { pub run_id: &'a str, pub generation: &'a str, p
 pub(crate) async fn change_session_mode(
     app: &App, id: &str, mode: &str, expected_revision: Option<u64>, tool: Option<ModeCall<'_>>,
 ) -> Api {
-
+    change_session_mode_authorized(app,id,mode,expected_revision,tool,true).await
+}
+async fn change_session_mode_authorized(
+    app: &App, id: &str, mode: &str, expected_revision: Option<u64>, tool: Option<ModeCall<'_>>,
+    human_confirmed: bool,
+) -> Api {
     let _guard = app.gate.lock().await;
     if app.store.get(&key("session", &id)).await?.is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, "Session not found".into()));
@@ -541,6 +544,11 @@ pub(crate) async fn change_session_mode(
         Some(crate::execution_modes::resolve(&config,mode).map_err(|_|bad("Unknown execution mode"))?)
     };
     let target_policy=named.as_ref().map(|m|m["permission_policy"].as_str().unwrap()).unwrap_or(mode);
+    // Browser widening needs deliberate confirmation; model calls retain their approval gate.
+    if tool.is_none() && current["mode"]=="read_only" && target_policy=="write"
+        && (!human_confirmed || expected_revision.is_none()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"Confirm write-capable mode with the current revision".into()));
+    }
     let receipt = tool.map(|call| {
         let key = format!("receipt:session_mode:{id}:{}",call.pending_id);
         let hash = digest(&json!([id,mode,expected_revision,call.run_id,call.generation,call.pending_id]));

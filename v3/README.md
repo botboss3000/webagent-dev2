@@ -58,7 +58,7 @@ The adapter calls the fixed `https://api.deepseek.com/chat/completions` endpoint
 streams text, and translates tool calls/results. API usage is billed by DeepSeek;
 saving a key confirms storage, not account entitlement. Keys are never returned
 to the browser. Each accepted run pins its transport and credential reference. Each accepted run pins its
-provider and model so changing the agent setting affects only later runs.
+provider and model so changing the agent setting affects only later runs. Composer model preferences are different: their revision is re-resolved and pinned at the next model-call boundary within the current run. A dispatched call keeps its original selection; the independently pinned System plan is unchanged.
 
 Development UI files in `v3/ui` and the selected shared CSS, Agents partial,
 fonts, and favicon are mounted read-only into the v3 container. HTML, CSS, and
@@ -100,9 +100,10 @@ and sizes, placeholder, transcript width, and tail clearance. The composer uses 
 `ui/shared/js/chat-pill-config.js` with only its sign-in hook adapted;
 `controls/footer-handle.js` reuses the v2 footer drag interaction with v3-scoped
 conversation persistence. Keep these copies synchronized when the v2 reference
-changes. Attachment, voice, execution-mode, model-picker, abilities, and
-notification actions remain visibly unavailable until their v3 contracts are
-ported; unavailable usage statistics are omitted, not fabricated. Other v2 controls
+changes. Attachment, voice, Continue, execution-mode, and model-picker actions now have
+V3 contracts. Model and mode choices require the matching runtime image; media
+controls remain disabled until the runtime advertises composer support. Abilities
+and notification actions remain pending and are marked red. Provider-reported token usage and cost are persisted per run, with transactional session totals. The composer context strip opens the v2-style context panel with measured JSON-byte composition and separate reported tokens. Calls made before usage recording was installed cannot be reconstructed; totals cover recorded calls. Unknown usage/cost is labeled unavailable; no tokenizer or price is invented. Message gutters retain the v2 action order and More menu; undo, delete, fork, stored-row details, schema access and per-session compaction actions are red until their backend contracts are ported. Other v2 controls
 remain unsupported until their v3 features are implemented. Run and approval
 cards remain visible above the composer regardless of footer layout, so
 approvals stay accessible. Rust, Python worker, and dependency changes still
@@ -548,14 +549,21 @@ publication receipt are replaced only after the durable commit succeeds; a stora
 failure leaves the in-memory run unchanged. Oversized candidates pause for
 review; empty responses retain the explicit failure behavior. Rich closing flags,
 working-message promotion, classifiers and repair loops are later modules.
-A first Phase 5 attachment slice accepts up to two inline `text/plain` entries on
+The inline attachment path accepts `text/plain` entries on
 `POST /api/v3/sessions/{id}/messages`: `{"name":"note.txt","media_type":"text/plain","text":"..."}`.
-Each is limited to 16 KiB, with a 32 KiB total. Admission saves encrypted
+Limits are supplied only by chat_limits.attachments. Admission saves encrypted
 user-owned records, the queued run, and the retry receipt atomically. Chat
 shows the author's message while model context includes labeled, untrusted
 attachment text. The response and run view carry IDs and digests; the owner can
-read a record at `GET /api/v3/sessions/{id}/attachments/{aid}`. Binary uploads,
-PDF extraction, image descriptions, and UI attachment actions remain unsupported.
+read a record at `GET /api/v3/sessions/{id}/attachments/{aid}`. The composer also uploads session-owned encrypted files through
+POST /sessions/{id}/attachments (size/count restrictions only when configured). An upload ID makes retries idempotent. Send links attachment_ids
+atomically to the run; public history and events retain downloadable metadata.
+Paste, drop, staged previews, removal and upload retry use this same path.
+Text and structured text are decoded as untrusted source material; the context
+excerpt is bounded while the read-attachment tool can page the complete text.
+Images use an explicitly appointed Image In model, or an image-capable Standard
+model when Image In is absent. PDFs, audio and video retain v2 metadata-only
+handling; PDF extraction is not provided. SVG and active documents are downloads.
 Session memory can be saved explicitly after a completed run with
 `POST /api/v3/sessions/{id}/memories` and
 `{"source_run_id":"...","client_memory_id":"...","text":"..."}`.
@@ -893,3 +901,26 @@ removes their schemas for ordinary accounts. Renewable access leases stop pendin
 on revocation. Jobs retain rollback image/config exports and stopped containers;
 uncertain interrupted deployment requires reconciliation. Source input changes make
 a build stale even if compilation passed.
+
+### Attachment limits in chat.json
+
+Configure v3/data/config/chat.json (or V3_CHAT_UI_CONFIG_PATH) under
+chat_limits.attachments:
+
+    { "max_file_size_mb": 25, "max_per_message": 10 }
+
+Missing or null keys mean no application size/count limit. Positive integers
+restrict file size in MiB and attachment count; there are no fixed configuration
+ceilings beyond machine numeric representation. Invalid values reject attachment
+operations. The former 256 MiB storage quota is removed; physical storage limits
+still apply. Rust reads settings on upload/message admission, and the composer
+receives them through session controls. Refresh the browser after a configuration
+change. The current JSON explicitly selects 25 MiB and 10 files; delete those
+keys or set them to null for unrestricted application defaults.
+
+The current encrypted-record upload transport buffers JSON/base64 and decoded
+file data in memory. Removing application caps does not remove memory, SQLite,
+network/proxy, or model-provider constraints. Context previews and reader pages
+remain bounded without truncating the stored file or imposing a maximum offset.
+Updated API and loop images are required initially; subsequent JSON limit changes
+need no rebuild.

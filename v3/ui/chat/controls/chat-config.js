@@ -133,15 +133,17 @@ function applyFooter(profile, mode) {
         stats: byId('chat-pill-stats-row'), pillButtons: document.querySelector('#chat-input-row .chat-pill-buttons'),
         mic: byId('chat-voice-btn'), send: byId('chat-send'), attach: byId('chat-attach-btn'),
         stop: byId('chat-stop-btn'), continue: byId('chat-continue-btn') };
-      for (const [node, feature] of [[footerNodes.attach,'Attachments'],[footerNodes.mic,'Voice'],[footerNodes.continue,'Continue']]) {
+      for (const [node, feature] of [[footerNodes.attach,'Attachments'],[footerNodes.mic,'Voice']]) {
         node.type = 'button';
-        node.disabled = true;
-        node.title = feature + ' — unavailable in v3';
+        node.disabled = byId('chat-input-row').dataset.composerAvailable !== 'true';
+        node.title = feature === 'Attachments' ? 'Attach files (or paste / drop onto the chat pill)' : 'Voice conversation';
       }
       footerNodes.send.type = 'submit';
       footerNodes.stop.type = 'button';
-      // No invented usage: v3 does not currently provide these totals.
-      byId('chat-token-bar').hidden = true;
+      footerNodes.continue.type = 'button';
+      footerNodes.continue.disabled = false;
+      // Provider usage and measured context are supplied by the v3 stats adapter.
+      byId('chat-token-bar').hidden = false;
       footerControls = Object.fromEntries(Array.from(byId('chat-footer-row').querySelectorAll('[data-header-control]')).map(n => [n.dataset.headerControl,n]));
       for (const name of ['changes','browser_notifications']) {
         const node = document.createElement('button'); node.type = 'button';
@@ -151,11 +153,12 @@ function applyFooter(profile, mode) {
         footerControls[name] = node;
       }
       for (const [name,node] of Object.entries(footerControls)) {
-        node.type = 'button'; node.disabled = true;
-        node.title = name.replaceAll('_',' ') + ' — unavailable in v3';
+        node.type = 'button';
+        if(['mode','model_changer'].includes(name))continue;
+        node.disabled = true;node.classList.add('v3-backend-pending');
+        node.title = name.replaceAll('_',' ') + ' — backend port pending';
       }
-      // Until usage metadata is ported, omit zero stats just as v2 does.
-      footerNodes.stats.style.display = 'none';
+      footerNodes.stats.style.display = '';
       initFooterHandle();
       const handle = byId('chat-footer-handle');
       handle.tabIndex = 0; handle.setAttribute('role','button');
@@ -174,14 +177,15 @@ function applyFooter(profile, mode) {
     footerNodes.stop.dataset.configEnabled=String(pill.controls?.stop?.enabled !== false);
     footerNodes.stop.hidden=!footerNodes.stop.dataset.run || pill.controls?.stop?.enabled === false;
     footerNodes.stop.style.display=footerNodes.stop.hidden ? 'none' : '';
-    footerNodes.continue.hidden=true;
-    footerNodes.continue.style.display='none';
-    // Canonical mic/send presentation toggles on content, without inventing voice support.
-    const hasText=!!footerNodes.input.value.trim();
+    footerNodes.continue.dataset.configEnabled=String(pill.controls?.continue?.enabled !== false);
+    const continuing=!footerNodes.stop.dataset.run && !footerNodes.input.value.trim() && !Number(footerNodes.pill.dataset.attachmentCount) && pill.controls?.continue?.enabled !== false;
+    footerNodes.continue.hidden=!continuing;
+    footerNodes.continue.style.display=continuing ? '' : 'none';
+    // V2 mic/send presentation includes staged attachments.
+    const hasText=!!footerNodes.input.value.trim()||!!Number(footerNodes.pill.dataset.attachmentCount);
     footerNodes.pill.classList.toggle('has-text',hasText);
     footerNodes.send.style.display=hasText ? '' : 'none';
     footerNodes.mic.style.display=hasText ? 'none' : '';
-    footerNodes.stats.style.display='none';
     const row=byId('chat-footer-row');
     const below=profile.active_footer?.below_pill || {};
     row.replaceChildren();
@@ -209,12 +213,16 @@ export function applyChatConfig() {
   const profile = currentChatProfile();
   if (!profile) return;
   const surface = surfaceName();
-  const mode = byId('chat-input').value || document.activeElement === byId('chat-input') ? 'active' : 'idle';
+  const focused = document.activeElement;
+  const inComposer = byId('chat-input-area')?.contains(focused) || focused?.closest('.v3-context-panel:not([hidden]), .v3-chat-model-list:not([hidden]), .v3-mode-confirm[open]');
+  const mode = byId('chat-input').value || focused === byId('chat-input') || (currentFooterMode === 'active' && inComposer) ? 'active' : 'idle';
   if (applyingFooter) return;
   if (surface === currentSurface && mode === currentFooterMode) {
-    const text=!!byId('chat-input').value.trim();
+    const text=!!byId('chat-input').value.trim()||!!Number(byId('chat-input-row').dataset.attachmentCount);
     footerNodes?.pill.classList.toggle('has-text',text);
-    if(footerNodes){footerNodes.send.style.display=text ? '' : 'none';footerNodes.mic.style.display=text ? 'none' : '';}
+    if(footerNodes){footerNodes.send.style.display=text ? '' : 'none';footerNodes.mic.style.display=text ? 'none' : '';
+      const continuing=!footerNodes.stop.dataset.run&&!text&&footerNodes.continue.dataset.configEnabled!=='false';
+      footerNodes.continue.hidden=!continuing;footerNodes.continue.style.display=continuing?'':'none';}
     return;
   }
   currentSurface = surface;
@@ -245,7 +253,20 @@ export async function initChatConfig() {
     listenersBound = true;
     window.addEventListener('resize', () => { currentSurface = ''; applyChatConfig(); });
     new ResizeObserver(applyChatConfig).observe(byId('chat-panel'));
-    const input = byId('chat-input');
-    for (const eventName of ['focus', 'blur', 'input']) input.addEventListener(eventName, applyChatConfig);
+    // Defer focusout until the destination has focus; a synchronous textarea
+    // blur must not detach a stats/mode/model control before its click fires.
+    // Delegation also survives chat-partial remounts.
+    // Pointer controls belong to the composer interaction: keep its caret
+    // and selection instead of letting a button blur an empty composer.
+    // Keyboard focus and editable popup fields retain their normal behavior.
+    document.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || document.activeElement !== byId('chat-input')) return;
+      const control = event.target.closest?.('button, [role="button"], #chat-footer-handle, [data-header-control]');
+      if (!control || !control.closest('#chat-input-area, #chat-header, .v3-context-panel, .v3-chat-model-list, .session-dropdown-menu')) return;
+      event.preventDefault();
+    }, true);
+    document.addEventListener('focusin', applyChatConfig);
+    document.addEventListener('focusout', () => setTimeout(applyChatConfig, 0));
+    document.addEventListener('input', event => { if(event.target === byId('chat-input'))applyChatConfig(); });
   }
 }

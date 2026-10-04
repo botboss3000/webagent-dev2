@@ -31,6 +31,7 @@ mod workflow;
 #[path = "api/progress.rs"] mod task_progress;
 #[path = "gates/protocol.rs"] mod gate_protocol;
 mod promotion;
+mod usage;
 #[path = "models/provider/mod.rs"] mod provider;
 #[path = "models/selection.rs"] mod model_selection;
 #[path = "models/platform_catalog.rs"] mod platform_catalog;

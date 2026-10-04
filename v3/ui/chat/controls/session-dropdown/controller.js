@@ -54,6 +54,9 @@ export function mountSessionDropdown(root, {refresh, select, guard, resetSearch 
   // report that the keyboard is already closed.
   function _dismissKeyboardBeforeOpen() {
     const active = document.activeElement;
+    // The conversation trigger is part of the composer controls. Opening its
+    // menu must preserve the draft caret rather than collapse the empty pill.
+    if (active?.id === 'chat-input') return false;
     const hadEditableFocus = _isEditableElement(active)
       || document.body.classList.contains('chat-pill-focused');
     if (!hadEditableFocus) return false;

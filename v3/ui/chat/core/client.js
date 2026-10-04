@@ -28,6 +28,19 @@ export function createChatClient({request, note, EventSourceClass = EventSource}
   }
   return {
     open, disconnect,
+    usage:id=>request("/sessions/"+encodeURIComponent(id)+"/usage"),
+    snapshot:id=>request('/sessions/'+encodeURIComponent(id)),
+    upload:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/attachments','POST',body),
+    describeUpload:(id,aid)=>request('/sessions/'+encodeURIComponent(id)+'/attachments/'+encodeURIComponent(aid)+'/describe','POST',{}),
+    removeUpload:(id,aid)=>request('/sessions/'+encodeURIComponent(id)+'/attachments/'+encodeURIComponent(aid),'DELETE'),
+    voiceAudio:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/voice/audio','POST',body),
+    voiceRoute:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/voice/route','POST',body),
+    voiceControl:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/voice/control','POST',body),
+    voiceCapabilities:id=>request('/sessions/'+encodeURIComponent(id)+'/voice/capabilities'),
+    voiceSpeech:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/voice/speech','POST',body),
+    controls: id => request('/sessions/' + encodeURIComponent(id) + '/controls'),
+    mode: (id, body) => request('/sessions/' + encodeURIComponent(id) + '/mode', 'PUT', body),
+    model: (id, body) => request('/sessions/' + encodeURIComponent(id) + '/model', 'PUT', body),
     sessions: (status = 'active') => request('/sessions?status=' + encodeURIComponent(status)),
     search: ({q, status = 'active', continuation}) => {
       const params = new URLSearchParams({q, status, limit: '20'});

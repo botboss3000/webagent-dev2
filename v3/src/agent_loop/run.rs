@@ -24,6 +24,15 @@ pub(crate) async fn execute_run(
         if run["generation"] != generation || status(&run) != "running" || cancel.is_cancelled() {
             return Ok(());
         }
+        // Apply a composer choice before validating the next dispatch. This never
+        // cancels/replays the model response or tool effects from the previous call.
+        if run["phase"]=="model" {
+            match apply_chat_model_preference(&app,&mut run).await {
+                Ok(true)=>{context_accounting.reset();app.save(&mut run).await?;}
+                Ok(false)=>{},
+                Err(_)=>{run["status"]=json!("paused");run["error"]=json!("Selected model unavailable; choose a permitted connected model and resume");app.save(&mut run).await?;return Ok(());}
+            }
+        }
         let agent_id=run["agent_id"].as_str().unwrap_or("shared_default").to_owned();
         let access=app.store.live_access(app.store.current_user_id(),&agent_id).await;
         if access.as_ref().map_or(true, |access| !access.admitted()) || !app.run_model_authorized(&run).await {
@@ -309,7 +318,15 @@ pub(crate) async fn execute_run(
                     let _=drain.await;
                     return Ok(());
                 }
-                if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
+                // A user choice made during credential retrieval is a new envelope,
+            // not an access failure. Reassemble before sending anything upstream.
+            let live_mode=session_mode(&app,&sid).await?;
+            let live_choice=app.store.get(&format!("session_chat_controls:{sid}")).await?;
+            if live_mode["revision"]!=mode["revision"]
+                || live_choice.as_ref().and_then(|v|v["revision"].as_u64()).unwrap_or(0)!=current["chat_model_revision"].as_u64().unwrap_or(0) {
+                drop(sender);drop(dispatch_guard);let _=drain.await;continue;
+            }
+            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
                     .is_ok_and(|key|key==assembled_asset_key) {
                     current["status"]=json!("stopped");
                     current["error"]=json!("Ability access or bundle changed before model dispatch; review and resume");
@@ -372,6 +389,7 @@ pub(crate) async fn execute_run(
                     app.save(&mut run).await?;
                     return Ok(());
                 }
+                if let Ok(value)=&response{usage::record(&mut run,value);}
                 let summary = response.ok().and_then(|value| {
                     value["output"].as_array().map(|output| {
                         output
@@ -425,6 +443,8 @@ pub(crate) async fn execute_run(
             let schemas = envelope.schemas.to_vec();
             run["attempt"] = json!(run["attempt"].as_u64().unwrap() + 1);
             run["context_assembly_report"] = report;
+            run["dispatch_mode"]=json!({"execution_mode":mode["execution_mode"],"mode":mode["mode"],"revision":mode["revision"]});
+            run["context_controls"]=json!({"trigger_tokens":compaction_config.trigger_tokens,"tail_tokens":compaction_config.tail_tokens,"characters_per_token":compaction_config.characters_per_token});
             app.save(&mut run).await?;
             let snapshot = workflow::ModelSnapshot {
                 input_digest,
@@ -480,6 +500,13 @@ pub(crate) async fn execute_run(
                 drop(dispatch_guard);
                 let _=collector.await;
                 return Ok(());
+            }
+            // Refresh choices which arrived during credential retrieval before dispatch.
+            let live_mode=session_mode(&app,&sid).await?;
+            let live_choice=app.store.get(&format!("session_chat_controls:{sid}")).await?;
+            if live_mode["revision"]!=mode["revision"]
+                || live_choice.as_ref().and_then(|v|v["revision"].as_u64()).unwrap_or(0)!=current["chat_model_revision"].as_u64().unwrap_or(0) {
+                drop(sender);drop(dispatch_guard);let _=collector.await;continue;
             }
             if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
                 .is_ok_and(|key|key==assembled_asset_key) {
@@ -572,6 +599,7 @@ pub(crate) async fn execute_run(
                     return Ok(());
                 }
                 Ok(response) => {
+                    usage::record(&mut run,&response);
                     if run["failover_state"].is_object() {
                         run["failover_state"]["response_started"] = json!(true);
                     }

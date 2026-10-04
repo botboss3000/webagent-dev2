@@ -498,14 +498,14 @@ mod tests {
         let auth=format!("auth:{}",crate::digest(&json!(cookie)));
         app.store.put(&auth,&json!({"user_id":"admin"})).await.unwrap();
         let result=crate::api::session_mode_set(State(app.clone()),Path(sid.clone()),
-            Json(crate::api::SessionModeBody {mode:"read_only".into()})).await;
+            Json(crate::api::SessionModeBody {mode:"read_only".into(),expected_revision:None,confirm_write:false})).await;
         assert!(matches!(result,Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,_))));
         assert_eq!(crate::session_mode(&app,&sid).await.unwrap()["mode"],"read_only");
         assert!(app.store.get(&auth).await.unwrap().is_none());
         assert!(app.store.get(&format!("administrator_browser:{sid}")).await.unwrap().is_none());
         // A caller retry can confirm no-worker shutdown without widening the saved mode.
         let _ = crate::api::session_mode_set(State(app.clone()),Path(sid.clone()),
-            Json(crate::api::SessionModeBody {mode:"read_only".into()})).await.unwrap();
+            Json(crate::api::SessionModeBody {mode:"read_only".into(),expected_revision:None,confirm_write:false})).await.unwrap();
         assert!(quiesce_session_resources(&app,&crate::uuid()).await.is_err());
     }
 }

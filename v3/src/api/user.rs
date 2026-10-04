@@ -78,12 +78,31 @@ path_json!(session_restore => restore_session_api, String, crate::store::session
 path_json!(session_patch => patch_session_api, String, crate::store::session::SessionPatch);
 path_arg!(diagnostics => run_diagnostics_api, (String, String));
 path_arg!(progress => run_progress_api, (String, String));
+path_arg!(chat_controls => chat_controls_get, String);
+path_arg!(chat_usage => chat_usage_get, String);
+path_json!(chat_model => chat_model_set, String, crate::api::ChatModelBody);
 path_arg!(mode_get => session_mode_get, String);
 path_json!(mode_set => session_mode_set, String, SessionModeBody);
 path_arg!(abilities => session_abilities, String);
 path_json!(ability_set => session_ability_set, (String, String), SessionAbilityBody);
 path_json!(send => send, String, Value);
+path_json!(voice_route => voice_route, String, Value);
+path_json!(voice_control => voice_control, String, Value);
+path_json!(voice_audio => voice_audio, String, Value);
+path_arg!(voice_capabilities => voice_capabilities,String);
+path_json!(voice_speech => voice_speech,String,Value);
 path_arg!(attachment => attachment_get, (String, String));
+async fn upload(Extension(app): Extension<App>, Path(sid): Path<String>,
+    request: axum::extract::Request) -> Response {
+    let app = match session_app(app, &sid).await { Ok(app) => app, Err(error) => return error.into_response() };
+    let body = match crate::api::uploads::request_body(&app,request).await {
+        Ok(body) => body, Err(error) => return error.into_response(),
+    };
+    crate::upload(State(app),Path(sid),Json(body)).await.into_response()
+}
+path_arg!(upload_delete => upload_delete, (String,String));
+path_arg!(upload_content => upload_content, (String,String));
+path_arg!(upload_describe => upload_describe, (String,String));
 path_arg!(memory_list => memory_list, String);
 path_json!(memory_save => memory_save, String, Value);
 path_arg!(memory_delete => memory_delete, (String, String));
@@ -161,7 +180,7 @@ async fn user_status(Extension(app): Extension<App>) -> crate::Api {
     let mut runs=app.store.active_runs().await?;
     runs.extend(app.store.recent_runs(None).await?);
     Ok(Json(serde_json::json!({"shutoff":app.shutoff().await?,
-        "runs":runs.iter().map(crate::public_run).collect::<Vec<_>>()})))
+        "runs":crate::public_runs(&app,runs).await?})))
 }
 
 pub(crate) fn router() -> Router<App> {
@@ -174,6 +193,9 @@ pub(crate) fn router() -> Router<App> {
         .route("/sessions/{id}", get(snapshot).patch(session_patch).delete(session_recycle))
         .route("/sessions/{id}/restore", post(session_restore))
         .route("/sessions/{id}/read", axum::routing::put(session_read))
+        .route("/sessions/{id}/controls", get(chat_controls))
+        .route("/sessions/{id}/usage", get(chat_usage))
+        .route("/sessions/{id}/model", axum::routing::put(chat_model))
         .route("/sessions/{id}/mode", get(mode_get).put(mode_set))
         .route("/sessions/{id}/abilities", get(abilities))
         .route("/sessions/{id}/abilities/{ability_id}", axum::routing::put(ability_set))
@@ -183,8 +205,16 @@ pub(crate) fn router() -> Router<App> {
         .route("/sessions/{id}/promotions/{request_id}/review", get(promotion_review))
         .route("/sessions/{id}/promotions/{request_id}", get(promotion_receipt))
         .route("/sessions/{id}/promotions/{request_id}/reject", post(promotion_reject))
-        .route("/sessions/{id}/messages", post(send))
-        .route("/sessions/{id}/attachments/{aid}", get(attachment))
+        .route("/sessions/{id}/messages", post(send).layer(axum::extract::DefaultBodyLimit::disable()))
+        .route("/sessions/{id}/voice/route",post(voice_route).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/voice/capabilities",get(voice_capabilities))
+        .route("/sessions/{id}/voice/speech",post(voice_speech).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/voice/control",post(voice_control))
+        .route("/sessions/{id}/voice/audio",post(voice_audio).layer(axum::extract::DefaultBodyLimit::max(15*1024*1024)).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/attachments",post(upload).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/attachments/{aid}", get(attachment).delete(upload_delete).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/attachments/{aid}/content",get(upload_content).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
+        .route("/sessions/{id}/attachments/{aid}/describe",post(upload_describe).layer(axum::middleware::from_fn(crate::api::media_lane::limit)))
         .route("/sessions/{id}/memories", get(memory_list).post(memory_save))
         .route("/sessions/{id}/memories/{mid}", axum::routing::delete(memory_delete))
         .route("/sessions/{id}/events", get(events))
@@ -196,5 +226,5 @@ pub(crate) fn messaging_router() -> Router<App> {
     Router::new()
         .route("/sessions", post(create_session))
         .route("/sessions/{id}", get(snapshot))
-        .route("/sessions/{id}/messages", post(send))
+        .route("/sessions/{id}/messages", post(send).layer(axum::extract::DefaultBodyLimit::disable()))
 }

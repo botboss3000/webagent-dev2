@@ -42,9 +42,18 @@ cannot select another owner's stored secret.
 
 [models/selection.rs](../src/models/selection.rs) separates roster membership,
 capabilities and six explicit role appointments. Standard routes chat; System
-routes compaction. Premium, Image In, Image Out and Voice remain configurable
-but have no workflow. Each role has independent ordered backups. A permitted
-custom choice selects one roster entry without changing Standard.
+routes compaction. Image In describes uploaded images, and Voice handles transcription and
+ephemeral conversation routing. Premium and Image Out remain configurable
+without a separate workflow. Each role has independent ordered backups. A permitted
+custom choice selects one roster entry without changing Standard. The chat footer
+reads permitted choices through api/chat_controls.rs. Its revisioned preference
+and retry receipt live in the owning user session; admission rechecks the choice
+and pins it for dispatch. The loop consumes a newer composer revision at the next model-call boundary without another user message, preserving the current call and separate System plan. The public run view exposes only the dispatched model ID.
+Usage accounting in src/usage.rs accepts only bounded provider-reported numeric fields. Store::index_run updates session totals by the difference from the previous encrypted run view in the same transaction; repeated saves do not double-count. GET /sessions/{id}/usage returns a safe numeric summary and latest context projection. Context bytes and provider tokens remain separate, and unreported cost/cache values stay unknown.
+Execution-mode changes from the footer supply the current revision; moving from
+read-only to write-capable requires explicit browser confirmation. Model-tool
+mode changes still require their separate Rust approval gate. Continue creates
+a fresh ordinary user turn and never retries a stopped run implicitly.
 
 [api/chat.rs](../src/api/chat.rs) pins both role plans and their revisions.
 [app.rs](../src/app.rs) and [agent_loop/run.rs](../src/agent_loop/run.rs) recheck
@@ -277,3 +286,33 @@ snapshot. Cargo tool output keeps the final 8 KiB so diagnostics remain visible
 within the model context budget. The development API container needs 2 GiB of
 memory for full V3 source compilation. No UI journey was run. Broader ability
 groups remain pending as documented in the port ledger.
+
+## Composer media and voice
+
+api/uploads.rs keeps upload bytes in encrypted caller-owned documents. Pending
+files can be removed with an atomic quota update; admission makes the run link
+immutable. Public chat metadata is separate from model-facing excerpts.
+Core/base/session_adapter.rs reads text, native image descriptions or honest
+metadata, never raw binary content or another conversation's uploads.
+
+api/voice.rs owns a bounded transient voice lane per caller and conversation.
+PCM16 frames use cookie/CSRF-authenticated HTTP requests with monotonically
+numbered, replay-safe frames. Rust VAD ends a turn after speech and silence;
+periodic partial and final transcription use the agent's pinned Voice role.
+MediaRecorder is the browser fallback. Audio, quick questions, answers and
+unconfirmed proposals are memory-only and expire; restart discards them.
+Confirmed work enters the existing send path with a durable receipt. Target-run
+and mode revisions fence changes; cancellation preserves uncertain-write recovery.
+Spoken confirmations never approve a pending tool action.
+
+Spoken replies use the browser by default. The optional installation speech
+service requires V3_VOICE_TTS_API_KEY; V3_VOICE_TTS_MODEL accepts tts-1,
+tts-1-hd or gpt-4o-mini-tts. Its endpoint is fixed to OpenAI, and it never reads
+v2 credentials. Agent Voice transcription needs an audio-capable API connection;
+a ChatGPT subscription connection alone cannot transcribe microphone recordings.
+
+The focused acceptance tests are api/composer_tests.rs, provider media tests,
+and tests/chat-controls.test.cjs / tests/composer-media.test.cjs. These use
+isolated stores and local providers. Browser and live-provider acceptance require
+deployment of both matching V3 API and loop images; fixture success alone does
+not establish live microphone/provider acceptance.

@@ -22,3 +22,46 @@ body.light .v3-config-bubble,[data-theme=light] .v3-config-bubble{background:var
 #chat-messages-inner .bubble-body{white-space:pre-wrap;overflow-wrap:anywhere}
 #chat-messages-inner .turn-gutter{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 #chat-messages-inner .turn-gutter-btn:disabled{opacity:.4;cursor:not-allowed}
+/* Red marks a visible reference control awaiting a v3 backend contract. */
+#chat-panel .v3-backend-pending,.bubble-more-menu .v3-backend-pending,.v3-context-panel .v3-backend-pending{color:var(--danger,#e5484d)!important;opacity:1!important}
+#chat-panel .v3-backend-pending svg,.bubble-more-menu .v3-backend-pending svg{stroke:var(--danger,#e5484d)!important}
+.v3-context-panel{display:block;position:fixed;z-index:10020;width:min(360px,calc(100vw - 16px));max-height:65dvh;overflow:auto}
+.v3-context-panel[hidden]{display:none!important}
+.v3-context-panel .cmp-cc-top{display:flex;justify-content:space-between;gap:12px;margin:8px 0;font-size:12px}
+.v3-context-panel .cmp-cx-hint{font-size:11px;color:var(--fg-3)}
+.v3-context-panel .cmp-cc-slider{width:100%}
+.v3-context-panel .cmp-cx-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--bg-tint)}
+.v3-context-panel .cmp-cx-seg{display:block;min-height:8px}
+.v3-context-panel .cmp-cx-prompt{background:var(--accent)}
+.v3-context-panel .cmp-cx-runtime{background:var(--fg-3)}
+.v3-context-panel .cmp-cx-compactable{background:var(--success,#3b9d6a)}
+.v3-context-panel .cmp-cc-head{margin-top:14px}
+.bubble-more-menu .bubble-more-row{width:100%;font:inherit;background:transparent;border:0;text-align:left;color:var(--fg-1)}
+.bubble-more-menu .bubble-more-label{display:flex;align-items:center;gap:6px}
+.bubble-more-menu .bubble-more-value{font-size:11px;color:var(--fg-3)}
+.tts-speaking{background:var(--bg-tint);border-radius:3px}
+.tts-pause-btn{font-size:11px;margin:0 4px;color:var(--fg-2);background:var(--bg-tint);border:0;border-radius:var(--r-sm)}
+
+/* V2 picker structure; v3-only lifecycle and confirmation surfaces. */
+.v3-chat-model-list[hidden]{display:none!important}
+.v3-chat-model-list{display:block;position:fixed;z-index:10020;width:min(290px,calc(100vw - 16px));max-height:50dvh}
+.v3-chat-model-list .csp-list{max-height:35dvh;overflow:auto}
+.v3-chat-model-list .cml-item{width:100%;color:var(--fg-1);background:transparent;border:0;text-align:left}
+.v3-chat-model-list .cml-item[aria-pressed=true]{background:var(--bg-tint)}
+.v3-chat-model-list .cml-item:disabled{opacity:.5}
+.v3-mode-confirm{max-width:min(420px,calc(100vw - 32px));color:var(--fg-1);background:var(--bg-elev);border:var(--border-width) solid var(--border);border-radius:var(--r-md);padding:20px}
+.v3-mode-confirm::backdrop{background:rgba(0,0,0,.5)}
+.v3-mode-confirm button{padding:8px 12px;margin-right:8px;color:var(--fg-1);background:var(--bg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm)}
+
+#chat-preview-bar {gap:8px;flex-wrap:wrap;padding:8px 12px;}
+#chat-preview-bar:not([style*="display: none"]):not([style*="display:none"]) {display:flex;}
+#chat-preview-bar .chat-preview-item {display:flex;align-items:center;gap:6px;max-width:220px;border:1px solid var(--border);border-radius:8px;padding:4px 8px;}
+#chat-preview-bar .chat-preview-item img,.chat-attachments img {width:48px;height:48px;object-fit:cover;border-radius:4px;}
+#chat-preview-bar .chat-preview-item span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#chat-preview-bar button {border:0;background:transparent;color:inherit;cursor:pointer;}
+.chat-attachments {display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
+.chat-attachments a {display:flex;gap:6px;align-items:center;color:inherit;}
+.voice-conversation-caption {padding:8px 12px;text-align:center;font-size:13px;}
+.voice-conversation-controls {display:flex;gap:8px;justify-content:center;margin-bottom:8px;}
+.voice-conversation-controls[hidden],.voice-conversation-caption[hidden] {display:none;}
+.voice-conversation-control {border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:4px 10px;}

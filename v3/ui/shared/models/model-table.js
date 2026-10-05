@@ -3,6 +3,7 @@
 import { makeRowsReorderable } from './ordering.js';
 import { tipBadge } from './field-tip.js';
 import { copyText } from './clipboard.js';
+import { icon } from './icons.js';
 import { advanceDeleteBtn, resetDeleteBtn } from './delete-control.js';
 import { modelAddGuard } from './model-add-guard.js';
 
@@ -323,6 +324,7 @@ export function mountModelTable(host, opts = {}) {
   // renderer but must never expose provider, credential, roster, or role writes.
   const catalogReadOnly = opts.catalogReadOnly === true;
   const userCatalog = opts.userCatalog === true;
+  const inlineCatalogAdd = opts.inlineCatalogAdd === true;
   const agentLocalRoster = opts.agentLocalRoster === true;
 
   // ── instance state ──
@@ -381,6 +383,8 @@ export function mountModelTable(host, opts = {}) {
   });
   let fetchDebounce = null, autosaveDebounce = null;
   let modelsBusy = 0;   // >0 while the provider's available-model list is loading (drives the + button spinner)
+  let catalogAddBusy = false;
+  let modelLoadRevision = 0;
   let pendingSubscriptionRow = null;
   const subscriptionCountdowns = new WeakMap();
   const subscriptionCountdownHandles = new Set();
@@ -659,6 +663,7 @@ export function mountModelTable(host, opts = {}) {
   clearBtn.className = 'ac-btn ac-btn-ghost ac-btn-sm'; clearBtn.textContent = 'Clear';
   const modelCheck = makeCheck();
   addControl.appendChild(addBtn); addControl.appendChild(freeBtn); addControl.appendChild(clearBtn); addControl.appendChild(modelCheck);
+  if (inlineCatalogAdd) addControl.hidden = true;
   modelBar.appendChild(capsEl); modelBar.appendChild(addControl);
   modelLabel.appendChild(searchWrap); modelLabel.appendChild(modelBar);
   modelRow.appendChild(modelLabel);
@@ -917,7 +922,9 @@ export function mountModelTable(host, opts = {}) {
 
   function renderModelDropdown(filter) {
     modelDd.innerHTML = '';
-    if (!S.allModels.length) {
+    const manualId = inlineCatalogAdd && opts.manualModelEntry && S.currentProvider !== 'webagent_catalog'
+      && !isSubscriptionProvider() ? modelSearch.value.trim() : '';
+    if (!S.allModels.length && !manualId) {
       modelDd.innerHTML = '<div class="ac-model-results-empty">Models will appear here when available.</div>';
       return;
     }
@@ -928,6 +935,12 @@ export function mountModelTable(host, opts = {}) {
       const matchesText = !filter || m.id.toLowerCase().includes(filter) || (m.name || '').toLowerCase().includes(filter);
       return matchesText && selectedCaps.every((cap) => cap.matches(m));
     });
+    // Providers without a list endpoint still need an explicit row for a
+    // caller-entered upstream ID now that the old Add button is gone.
+    if (manualId && !S.allModels.some(m => m.id.toLowerCase() === manualId.toLowerCase())
+        && selectedCaps.every(cap => cap.matches({id:manualId,text_capable:true}))) {
+      filtered.unshift({id:manualId,name:'Manual model ID',text_capable:true});
+    }
     if (!filtered.length) {
       modelDd.innerHTML = '<div class="ac-model-results-empty">No models match your search.</div>';
       return;
@@ -935,6 +948,7 @@ export function mountModelTable(host, opts = {}) {
     filtered.forEach(m => {
       const item = document.createElement('div');
       item.className = 'ac-model-item';
+      if (inlineCatalogAdd) item.classList.add('ac-model-item-selectable');
       if (m.id === S.selectedModel) item.style.background = 'rgba(var(--brand-rgb),0.12)';
       const isPlatformCatalogModel = m.catalog_origin === 'platform';
       const ctx = fmtContext(m.context);
@@ -965,15 +979,85 @@ export function mountModelTable(host, opts = {}) {
         + `</div>`
         + (badges ? `<div class="ac-model-item-badges">${badges}</div>` : '')
         + `<div class="ac-model-item-caps">${capBadges}</div>`;
-      item.addEventListener('click', () => {
-        S.selectedModel = m.id; modelSearch.value = isPlatformCatalogModel ? visibleModelName : (m.name || visibleModelName);
-        S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable };
-        renderDetectedCaps(m);
-        setModelStatus(`Selected: ${visibleModelName}`, true);
-        autosaveSingle(modelCheck);
-        renderSubscriptionAuth();
-        renderModelDropdown(modelSearch.value.toLowerCase());
-      });
+      if (inlineCatalogAdd) {
+        const selectedRow = S.providers.find(row => S.currentProvider === 'webagent_catalog'
+          ? row.catalog_source_id === m.id || row.entry_id === m.id
+          : row.provider === S.currentProvider && row.model === m.id);
+        const added = !!selectedRow;
+        const selector = document.createElement('button');
+        selector.type = 'button';
+        selector.className = 'ac-model-row-selector';
+        selector.classList.toggle('is-added', added);
+        selector.disabled = catalogReadOnly || catalogAddBusy;
+        selector.setAttribute('aria-pressed', String(added));
+        selector.setAttribute('aria-label', `${added ? 'Remove' : 'Add'} ${visibleModelName} ${added ? 'from' : 'to'} available models`);
+        selector.title = added ? 'Remove from available models' : 'Add to available models';
+        selector.innerHTML = icon(added ? 'check-square' : 'plus-square', { size: '18px' });
+        selector.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (catalogAddBusy) return;
+          if (added) {
+            advanceDeleteBtn(selector, {
+              iconName: 'check-square',
+              size: '18px',
+              armTitle: 'Click again to remove from this agent',
+              armLabel: `Confirm removal of ${visibleModelName} from available models`,
+              busyTitle: 'Removing from agent…',
+              busyLabel: `Removing ${visibleModelName} from available models`,
+              onConfirm: async () => {
+                catalogAddBusy = true;
+                modelDd.querySelectorAll('.ac-model-row-selector').forEach(control => { control.disabled = true; });
+                const previousProviders = [...S.providers];
+                const previousRoles = { ...S.roleAssignments };
+                S.providers = S.providers.filter(row => row !== selectedRow);
+                for (const [role, entryId] of Object.entries(S.roleAssignments)) {
+                  if (entryId === selectedRow.entry_id) delete S.roleAssignments[role];
+                }
+                try {
+                  await saveRoster();
+                  renderSaved({ animate: true });
+                  onModelChange();
+                  setModelStatus('');
+                } catch (error) {
+                  S.providers = previousProviders;
+                  S.roleAssignments = previousRoles;
+                  setModelStatus(error?.message || 'Unable to remove model');
+                } finally {
+                  catalogAddBusy = false;
+                  renderModelDropdown(modelSearch.value.toLowerCase());
+                }
+              },
+            });
+            return;
+          }
+          catalogAddBusy = true;
+          modelDd.querySelectorAll('.ac-model-row-selector').forEach(control => { control.disabled = true; });
+          S.selectedModel = m.id;
+          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable };
+          (async () => {
+            try {
+              const saved = await addModel();
+              if (saved) setModelStatus('');
+            } catch (error) {
+              setModelStatus(error?.message || 'Unable to add model');
+            } finally {
+              catalogAddBusy = false;
+              renderModelDropdown(modelSearch.value.toLowerCase());
+            }
+          })();
+        });
+        item.appendChild(selector);
+      } else {
+        item.addEventListener('click', () => {
+          S.selectedModel = m.id; modelSearch.value = isPlatformCatalogModel ? visibleModelName : (m.name || visibleModelName);
+          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable };
+          renderDetectedCaps(m);
+          setModelStatus(`Selected: ${visibleModelName}`, true);
+          autosaveSingle(modelCheck);
+          renderSubscriptionAuth();
+          renderModelDropdown(modelSearch.value.toLowerCase());
+        });
+      }
       modelDd.appendChild(item);
     });
   }
@@ -1190,7 +1274,7 @@ export function mountModelTable(host, opts = {}) {
       const matches = rows.filter(row => row.model === S.selectedModel);
       if (matches.length) return matches[matches.length - 1];
     }
-    return pendingSubscriptionRow;
+    return rows.find(row => row.credential_configured) || null;
   }
   let subscriptionVerification = null;
   let subscriptionCheckBusy = false;
@@ -1224,6 +1308,7 @@ export function mountModelTable(host, opts = {}) {
     const vaultName = subscriptionScope === 'agent' ? "this agent's" : subscriptionScope === 'platform' ? "the app's" : 'your personal';
     saveCredentialBtn.title = `Save this validated credential to ${vaultName} vault`;
     updateCredentialSaveState();
+    [urlRow, keyRow, subscriptionRow].forEach(row => { row.hidden = false; });
     urlRow.style.display = subscription ? 'none' : '';
     keyRow.style.display = subscription ? 'none' : '';
     subscriptionRow.style.display = subscription ? '' : 'none';
@@ -1276,7 +1361,7 @@ export function mountModelTable(host, opts = {}) {
       if (row.credential_configured) {
         subscriptionVerification = null;
         await loadModels();
-        setModelStatus('ChatGPT account authorized.', true);
+        setModelStatus('');
         renderSaved();
       } else {
         setModelStatus(state.detail || 'Authorization is not complete yet.');
@@ -1319,7 +1404,9 @@ export function mountModelTable(host, opts = {}) {
     subscriptionConnect.style.display = 'none';
     subscriptionState.textContent = 'Issuing verification code…';
     try {
-      let row = matchingSubscriptionRow();
+      // The add form always authorizes a fresh connection. A matching model
+      // name in the saved roster must never rotate that connection's credential.
+      let row = pendingSubscriptionRow;
       const response = await subscriptionRequest(
         '/api/v1/openai-subscription/login/start', row?.entry_id || '', { method: 'POST' },
       );
@@ -1351,6 +1438,7 @@ export function mountModelTable(host, opts = {}) {
   }
   subscriptionConnect.addEventListener('click', startSubscriptionLogin);
   async function loadModels() {
+    const revision = ++modelLoadRevision;
     const provider = S.currentProvider === '_custom' ? '' : S.currentProvider;
     const key = keyInput.value.trim();
     const base = urlInput.value.trim() || S.presets[S.currentProvider]?.base_url || '';
@@ -1364,7 +1452,9 @@ export function mountModelTable(host, opts = {}) {
     setModelStatus('Loading models…');
     setAddBusy(true);
     try {
-      const data = await fetchModels({ provider, api_key: key, base_url: base });
+      const data = await fetchModels({ provider, api_key: key, base_url: base,
+        entry_id: isSubscriptionProvider() ? matchingSubscriptionRow()?.entry_id : undefined });
+      if (revision !== modelLoadRevision) return;
       if (!data || data.error) {
         setModelStatus(data && data.error === 'No API key configured' ? 'Enter an API key to see available models.' : `Error: ${(data && data.error) || 'failed'}`);
         S.allModels = [];
@@ -1372,11 +1462,19 @@ export function mountModelTable(host, opts = {}) {
         return;
       }
       S.allModels = data.models || [];
-      setModelStatus(S.allModels.length ? `${S.allModels.length} models available. Type to filter.` : 'No models available.');
+      setModelStatus(data.preview
+        ? 'Current GPT-6 models. Connect ChatGPT to confirm account access.'
+        : S.allModels.length ? (S.allModels.length + ' models available. Type to filter.')
+        : isSubscriptionProvider() ? 'No models available for this ChatGPT account.' : 'No models available.');
       if (S.selectedModel) {
         const sel = S.allModels.find(m => m.id === S.selectedModel);
         if (sel) { S.selCaps = { text: sel.text_capable !== false, image: !!sel.image_capable, imageOut: !!sel.image_out_capable, voice: !!sel.voice_capable }; renderDetectedCaps(sel); }
       }
+      renderModelDropdown(modelSearch.value.toLowerCase());
+    } catch (error) {
+      if (revision !== modelLoadRevision) return;
+      S.allModels = [];
+      setModelStatus(error?.message || 'Could not load models');
       renderModelDropdown(modelSearch.value.toLowerCase());
     } finally {
       setAddBusy(false);
@@ -2452,7 +2550,7 @@ export function mountModelTable(host, opts = {}) {
         ? ` <span class="ac-cap-badge on" title="${p.catalog_origin === 'byo' ? 'Your bring-your-own model' : 'Available through your app entitlement'}" style="margin-left:6px;">${p.catalog_origin === 'byo' ? 'BYO' : 'App catalog'}</span>`
         : '');
     const subscriptionMeta = p.provider === 'openai_subscription' && !catalogReadOnly
-      ? `<span class="ac-model-credential-email">${readOnly ? 'Managed by app admin' : esc(p.credential_email || 'ChatGPT account not connected')}</span>`
+      ? `<span class="ac-model-credential-email">${readOnly ? 'Managed by app admin' : esc(p.credential_email || (p.credential_configured ? 'ChatGPT account connected' : 'ChatGPT account not connected'))}</span>`
       : '';
     label.innerHTML = `<span class="ac-ability-name ac-saved-model-name"><span class="ac-saved-model-text"><bdi dir="ltr">${esc(rowDisplayName(p))}</bdi></span>${badge}</span>${subscriptionMeta}`;
     row.appendChild(label);
@@ -2995,6 +3093,7 @@ export function mountModelTable(host, opts = {}) {
     if (!subscription && !platformCatalog && !baseUrl) return setModelStatus('Please enter a Base URL');
     if (!subscription && !platformCatalog && !apiKey) return setModelStatus('Please enter an API Key');
     if (!free && !S.selectedModel) return setModelStatus('Please select a model');
+    if (subscription && !matchingSubscriptionRow()?.credential_configured) return setModelStatus('Connect ChatGPT before adding a model.');
     let savedRow = null;
     const capText = S.selCaps.text !== false, capImage = !!S.selCaps.image, capImageOut = !!S.selCaps.imageOut, capVoice = !!S.selCaps.voice;
     // The first agent-roster model claims Standard so the app has an explicit chat
@@ -3012,9 +3111,10 @@ export function mountModelTable(host, opts = {}) {
     if (guardMessage) return setModelStatus(guardMessage);
     if (!dupe) {
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
+      const subscriptionConnection = subscription ? matchingSubscriptionRow() : null;
       // Persisted IDs are owned by the server. `_uid` is the only client-side row
       // identity; adapters hydrate `entry_id` into this same object after save.
-      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!pendingSubscriptionRow?.credential_configured : true, credential_email: subscription ? (pendingSubscriptionRow?.credential_email || '') : '', credential_plan_type: subscription ? (pendingSubscriptionRow?.credential_plan_type || '') : '', _uid: ++S.uid };
+      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), connection_id: subscriptionConnection?.connection_id || '', catalog_source_id: platformCatalog ? S.selectedModel : '', display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!subscriptionConnection?.credential_configured : true, credential_email: subscription ? (subscriptionConnection?.credential_email || '') : '', credential_plan_type: subscription ? (subscriptionConnection?.credential_plan_type || '') : '', _uid: ++S.uid };
       const previousRoles = { ...S.roleAssignments };
       const parentModel = aliasTarget;
       const previousGroups = S.providers.map(row => [row, row.alias_group_id]);
@@ -3067,7 +3167,7 @@ export function mountModelTable(host, opts = {}) {
     if (subscription && pendingSubscriptionRow?.entry_id === savedRow?.entry_id) {
       pendingSubscriptionRow = null;
     }
-    setModelStatus('Saved', true);
+    setModelStatus(inlineCatalogAdd ? '' : 'Saved', true);
     displayNameInput.value = '';
     renderSubscriptionAuth();
     onModelChange();
@@ -3094,20 +3194,21 @@ export function mountModelTable(host, opts = {}) {
     keyInput.value = ''; keyInput.placeholder = 'sk-...';
     validatedCredential = ''; clearTimeout(credentialValidationTimer);
     credentialSelect.hidden = true; credentialSelect.replaceChildren();
-    S.selectedModel = (saved && saved.model) || '';
-    modelSearch.value = S.selectedModel;
-    setModelStatus(S.selectedModel ? `Selected: ${S.selectedModel}` : '', true);
+    S.selectedModel = inlineCatalogAdd ? '' : ((saved && saved.model) || '');
+    modelSearch.value = inlineCatalogAdd ? '' : S.selectedModel;
+    setModelStatus(inlineCatalogAdd ? '' : (S.selectedModel ? `Selected: ${S.selectedModel}` : ''), true);
     renderDetectedCaps(null); S.allModels = [];
     renderModelDropdown(modelSearch.value.toLowerCase());
     renderSubscriptionAuth();
-    if (isSubscriptionProvider()) {
-      // V3: device authorization requires the explicit issue-code button.
-    }
+    // The V3 connection bridge starts the device flow on the user's provider
+    // selection. A failed request restores Retry verification code.
+    if (isSubscriptionProvider() && !activeSubscriptionVerification()
+        && !matchingSubscriptionRow()?.credential_configured) startSubscriptionLogin();
     loadModels();
     autosaveSingle(provCheck);
   });
-  keyInput.addEventListener('input', () => { scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(keyCheck); });
-  urlInput.addEventListener('input', () => { scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(urlCheck); });
+  keyInput.addEventListener('input', () => { modelLoadRevision++; S.allModels = []; renderModelDropdown(modelSearch.value.toLowerCase()); scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(keyCheck); });
+  urlInput.addEventListener('input', () => { modelLoadRevision++; S.allModels = []; renderModelDropdown(modelSearch.value.toLowerCase()); scheduleCredentialValidation(); scheduleFetch(); scheduleAutosave(urlCheck); });
   loadCredentialBtn.addEventListener('click', showCredentialPicker);
   saveCredentialBtn.addEventListener('click', saveCurrentCredential);
   credentialSelect.addEventListener('change', () => applySavedCredential(credentialSelect.value));
@@ -3233,14 +3334,16 @@ export function mountModelTable(host, opts = {}) {
       syncProviderField();
       urlInput.value = cfg.base_url || '';
       keyInput.value = cfg.api_key || '';
-      S.selectedModel = cfg.model || '';
-      modelSearch.value = S.selectedModel;
+      S.selectedModel = inlineCatalogAdd ? '' : (cfg.model || '');
+      modelSearch.value = inlineCatalogAdd ? '' : S.selectedModel;
       S.selCaps = { text: cfg.text_capable !== false, image: !!cfg.image_capable, imageOut: !!cfg.image_out_capable, voice: !!cfg.voice_capable };
       renderDetectedCaps(S.selectedModel ? { text_capable: S.selCaps.text, image_capable: S.selCaps.image, image_out_capable: S.selCaps.imageOut, voice_capable: S.selCaps.voice } : null);
       setModelStatus(S.selectedModel ? `Selected: ${S.selectedModel}` : '', true);
 
       const norm = (p) => ({
         entry_id: p.entry_id || '',
+        connection_id: p.connection_id || '',
+        catalog_source_id: p.catalog_source_id || '',
         alias_group_id: p.alias_group_id || '',
         display_name: p.display_name || '',
         // MODEL-NAME-LEVELS: the catalog's own model name for a catalog row (its

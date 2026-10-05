@@ -12,6 +12,9 @@ mod media;
 const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
+const SUBSCRIPTION_MODELS: &str = "https://chatgpt.com/backend-api/codex/models";
+// GPT-6 Luna requires at least Codex 0.155 in the current model catalog.
+const CODEX_MODEL_CLIENT_VERSION: &str = "0.155.0";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_INSTRUCTIONS: usize = 96 * 1024;
 pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When asked what abilities or tools are available, check list_abilities; an empty loaded list does not mean the catalog is empty. When a task needs workspace access, search list_abilities using a few task words (or no query for the full permitted catalog), then load_ability to reveal its tools. For development source work, file tools, approved shell and Python commands start in /live-checkout, including its v3 subtree and v2 source. Their reach is determined by container OS permissions; an empty session workspace does not mean source is unavailable. In read-only mode explain that edits require a write-capable mode.";
@@ -239,6 +242,32 @@ async fn checked_json(response: reqwest::Response) -> Result<Value> {
         bail!("Invalid provider authorization response");
     }
     Ok(value)
+}
+
+fn subscription_model_list(value: &Value) -> Result<Value> {
+    let models = value["models"].as_array()
+        .ok_or_else(|| anyhow!("Invalid subscription model catalog"))?;
+    let visible: Vec<Value> = models.iter().filter_map(|model| {
+        if model["visibility"] != "list" { return None; }
+        let id = model["slug"].as_str()?;
+        if id.is_empty() || id.len() > 200 || !id.bytes().all(|b| b.is_ascii_graphic()) {
+            return None;
+        }
+        let name = model["display_name"].as_str().filter(|s| !s.is_empty()).unwrap_or(id);
+        Some(json!({"id":id,"name":name,"display_name":name,"text_capable":true}))
+    }).collect();
+    Ok(json!({"models":visible}))
+}
+
+#[cfg(test)]
+#[test]
+fn subscription_catalog_only_lists_visible_models_in_server_order() {
+    let catalog=json!({"models":[{"slug":"new-gpt","display_name":"New GPT","visibility":"list"},
+        {"slug":"hidden-gpt","visibility":"hide"},{"slug":"older-gpt","visibility":"list"}]});
+    assert_eq!(subscription_model_list(&catalog).unwrap(),json!({"models":[
+        {"id":"new-gpt","name":"New GPT","display_name":"New GPT","text_capable":true},
+        {"id":"older-gpt","name":"older-gpt","display_name":"older-gpt","text_capable":true}]}));
+    assert!(subscription_model_list(&json!({})).is_err());
 }
 
 // JWT claims are metadata only; authentication is performed by the provider.
@@ -490,6 +519,35 @@ impl Provider {
             merged[key] = value.clone();
         }
         decorate(merged)
+    }
+
+    /// Query the account-scoped Codex catalog used by the subscription transport.
+    /// Never return a token or provider error body to the UI.
+    pub async fn subscription_models(&self, tokens: &Value) -> Result<Value> {
+        let mut request = self.client.get(SUBSCRIPTION_MODELS)
+            .query(&[("client_version", CODEX_MODEL_CLIENT_VERSION)])
+            .bearer_auth(required(tokens, "access_token")?)
+            .header("originator", "webagent")
+            .timeout(Duration::from_secs(20));
+        if let Some(account_id) = tokens["account_id"].as_str().filter(|id| !id.is_empty()) {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let response = request.send().await.map_err(|_| anyhow!("Subscription model catalog unavailable"))?;
+        if !response.status().is_success() {
+            bail!("Subscription model catalog unavailable");
+        }
+        let mut stream = response.bytes_stream();
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| anyhow!("Subscription model catalog unavailable"))?;
+            if body.len() + chunk.len() > 2 * 1024 * 1024 {
+                bail!("Subscription model catalog too large");
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let value: Value = serde_json::from_slice(&body)
+            .map_err(|_| anyhow!("Invalid subscription model catalog"))?;
+        subscription_model_list(&value)
     }
 
     /// Typed dispatch boundary; every supported transport must be explicit here.

@@ -13,7 +13,7 @@ export async function mountSelectionTable(host,{request,agentId,onAssignment}) {
   const analyticsHost=document.createElement('div');analyticsHost.className='agent-model-analytics-host';
   const tableHost=document.createElement('div');tableHost.style.marginTop='8px';group.append(analyticsHost,tableHost);host.append(css,pendingCss,group);
   const analytics=initModelAnalytics(analyticsHost,{fetchFn:bridge.blockedFetch,apiPath:p=>p,scope:'user',agentId,description:'Compare the daily usage of every model used with this agent. '+MISSING});
-  const table=mountModelTable(tableHost,{adapter:bridge.adapter,agentLocalRoster:true,userCatalog:true,subscriptionScope:'agent',directivePresentation:'inline',directivesEditable:false,manualModelEntry:true,
+  const table=mountModelTable(tableHost,{adapter:bridge.adapter,agentLocalRoster:true,userCatalog:true,inlineCatalogAdd:true,subscriptionScope:'agent',directivePresentation:'inline',directivesEditable:false,manualModelEntry:true,
     fetchFn:bridge.blockedFetch,onRoster:p=>analytics?.setModelLabels(p),onModelFocus:m=>analytics?.setModelFocus(m),onModelChange:()=>analytics?.reload(),
     advancedExtra:body=>{
       const row=document.createElement('div');row.className='ac-row';row.innerHTML='<div class="ac-ability-row">Reset Usage Counters <span class="v3-contract-pending">'+MISSING+'</span></div><div class="ac-ability-body"><select class="ac-input" disabled><option>All (input + output + cost)</option><option>Input Tokens only</option><option>Output Tokens only</option><option>Cost only</option></select><button class="ac-btn" disabled>Reset</button></div>';row.firstElementChild.onclick=()=>row.classList.toggle('expanded');body.append(row);
@@ -29,9 +29,7 @@ export async function mountSelectionTable(host,{request,agentId,onAssignment}) {
       const line=el.closest('.ac-model-meta-line');badge(line);el.setAttribute('aria-disabled','true');el.tabIndex=-1;el.style.pointerEvents='none';
     }
     for(const row of tableHost.querySelectorAll('.ac-model-cfg-row')){
-      const name=row.querySelector('.ac-ability-name')?.textContent;
-      if(name==='Provider'||name==='Base URL'||name==='Model name')badge(row.querySelector('.ac-ability-label')||row);
-      for(const btn of row.querySelectorAll('button'))if(['Load','Save'].includes(btn.textContent)){btn.disabled=true;badge(btn.parentElement);}
+      for(const btn of row.querySelectorAll('button'))if(['Load','Save'].includes(btn.textContent)){btn.hidden=true;btn.style.display='none';btn.disabled=true;}
     }
     badge(analyticsHost);
     for(const row of group.querySelectorAll('.ac-directive-row'))badge(row.querySelector('.ac-ability-name')||row);

@@ -329,6 +329,23 @@ async fn connection_status(State(app): State<App>, Extension(identity): Extensio
     Ok(Json(json!({"id":id,"revoked":connection.revoked,
         "connected":!connection.revoked && app.store.get(&connection.credential_ref).await?.is_some(),"authorization":authorization})))
 }
+// Subscription discovery is scoped to the selected owned connection.
+async fn subscription_models(State(app): State<App>, Extension(identity): Extension<Value>,
+    Path(id): Path<String>, Query(params): Query<HashMap<String,String>>) -> Api {
+    let caller=principal(&app,&identity).await?;
+    let agent=selected(&params);
+    authority(&app,&identity,agent,true).await?;
+    let catalog=app.store.model_catalog().await?;
+    let connection=catalog.connections.get(&id).filter(|c|c.owner_id==caller.user_id
+        && c.allowed_agents.contains(agent) && !c.revoked
+        && c.transport==crate::model_selection::Transport::OpenaiSubscription)
+        .ok_or_else(denied)?;
+    let tokens=app.tokens_at(&connection.credential_ref).await
+        .map_err(|_|ApiError(StatusCode::PRECONDITION_REQUIRED,"Connect ChatGPT to list models".into()))?;
+    Ok(Json(app.provider.subscription_models(&tokens).await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"Subscription model catalog unavailable".into()))?))
+}
+
 async fn byo_credential_permission(app:&App, caller:&Principal) -> Result<(),ApiError> {
     let tier=app.store.entitlement_tier(&caller.tier_id).await?.ok_or_else(||denied())?;
     if tier.model_policy.as_ref().is_some_and(|p|!p.allow_byo) {return Err(denied());}
@@ -352,6 +369,21 @@ async fn connection_authorize(State(app): State<App>, Extension(identity): Exten
     connection.credential_ref=reference.clone();
     app.store.save_model_catalog(&catalog,catalog.revision).await?;
     crate::provider_start_for(app.clone(),reference,Some(id)).await
+}
+
+// The connection owner may cancel a pending device flow without revoking a
+// previously connected account. The polling task observes the cleared login.
+async fn connection_authorization_reset(State(app): State<App>, Extension(identity): Extension<Value>,
+    Path(id): Path<String>) -> Api {
+    let caller=principal(&app,&identity).await?;
+    let catalog=app.store.model_catalog().await?;
+    let connection=catalog.connections.get(&id).ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Connection not found".into()))?;
+    if connection.owner_id != caller.user_id {return Err(denied());}
+    let mut login=app.login.write().await;
+    if login.as_ref().is_some_and(|v|v["connection_id"]==id) {
+        *login=None;
+    }
+    Ok(Json(json!({"reset":true})))
 }
 
 #[derive(serde::Deserialize)]
@@ -467,14 +499,36 @@ pub fn router() -> Router<App> {
         .route("/agents/{id}/identity", get(identity_get).put(identity_put))
         .route("/agents/{id}/members", get(members).put(member_set))
         .route("/connections/{id}", get(connection_status))
+        .route("/connections/{id}/models", get(subscription_models))
         .route("/connections/{id}/api-key", axum::routing::put(connection_key))
         .route("/connections/{id}/authorization", axum::routing::post(connection_authorize))
+        .route("/connections/{id}/authorization/reset", axum::routing::post(connection_authorization_reset))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime_tests::{fixture, selection_fixture};
+    #[tokio::test]
+    async fn authorization_reset_is_owner_scoped_and_cancels_only_its_flow() {
+        let (_root, app) = fixture().await;
+        selection_fixture(&app).await;
+        let admin = json!({"_user_id":"admin"});
+        let outsider = json!({"_user_id":"other"});
+        *app.login.write().await = Some(json!({"connection_id":"one","status":"pending","device_auth_id":"fixture"}));
+        assert!(connection_authorization_reset(State(app.clone()),Extension(outsider),
+            Path("one".into())).await.is_err());
+        assert_eq!(app.login.read().await.as_ref().unwrap()["status"],"pending");
+        connection_authorization_reset(State(app.clone()),Extension(admin.clone()),
+            Path("two".into())).await.unwrap();
+        assert_eq!(app.login.read().await.as_ref().unwrap()["status"],"pending");
+        connection_authorization_reset(State(app.clone()),Extension(admin.clone()),
+            Path("one".into())).await.unwrap();
+        assert!(app.login.read().await.is_none());
+        connection_authorization_reset(State(app.clone()),Extension(admin),
+            Path("one".into())).await.unwrap();
+        assert!(app.login.read().await.is_none());
+    }
     #[tokio::test]
     async fn visibility_preferences_preserve_fixed_protocol_and_revision_fence() {
         let (_root,app)=fixture().await;let identity=json!({"_user_id":"admin"});

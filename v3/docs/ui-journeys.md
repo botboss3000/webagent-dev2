@@ -84,10 +84,13 @@ metadata/reference pricing, account defaults, named credential libraries,
 role prompt injections, and reference alias groups. Discovery is not simulated;
 supported providers allow manually entered upstream model IDs. V3's existing
 per-role backups are not equivalent to reference alias groups: their state is
-preserved, but alias-group editing stays blocked. Subscription reset/library
-operations also remain pending. Device authorization requires the explicit
-issue-code action; provider selection alone must not initiate it. Credential
-writes and authorization are connection-owner-only. Reference files remain in
+preserved, but alias-group editing stays blocked. Named credential library
+operations remain pending. Selecting ChatGPT Subscription issues the
+verification code immediately; Reset cancels that connection's pending flow.
+The picker previews the four public GPT-6 choices before authorization and
+replaces them with the connected account's visible catalog after authorization.
+The preview does not establish account entitlement. Credential writes and
+authorization are connection-owner-only. Reference files remain in
 v2_ref because these backend-dependent features have not completed migration.
 
 Observed authenticated journey on https://dev.webagent.live:

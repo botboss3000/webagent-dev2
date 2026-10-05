@@ -1297,6 +1297,36 @@ details.ac-card:not([open]) > *:not(summary) { display: none; }
   color: var(--fg-1, var(--fg-1));
 }
 .ac-model-item:hover { background: rgba(var(--brand-rgb),0.08); }
+.ac-model-add-control[hidden] { display: none !important; }
+.ac-model-item-selectable { position: relative; padding-right: 46px; cursor: default; }
+.ac-model-row-selector {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  color: var(--fg-3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+.ac-model-row-selector svg { pointer-events: none; }
+.ac-model-row-selector:hover { color: var(--accent); }
+.ac-model-row-selector.is-added { color: var(--success); }
+.ac-model-row-selector.warning,
+.ac-model-row-selector.deleting {
+  color: var(--danger);
+}
+.ac-model-row-selector.warning svg { filter: drop-shadow(0 0 5px var(--danger)); }
+.ac-model-row-selector:disabled { cursor: default; opacity: 0.65; }
+.ac-model-row-selector:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ac-model-item-row { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .ac-model-item-badges { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .ac-model-item-caps { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }

@@ -544,7 +544,7 @@ impl App {
         }
     }
 
-    async fn tokens_at(&self, reference: &str) -> Result<Value> {
+    pub(crate) async fn tokens_at(&self, reference: &str) -> Result<Value> {
         let _lock = self.refresh.lock().await;
         let mut tokens = self
             .store

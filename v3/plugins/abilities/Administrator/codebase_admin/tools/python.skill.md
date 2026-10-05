@@ -1,1 +1,1 @@
-Run Python with the session workspace as the working directory. Approval is required. Use it for bounded tasks and verification; the current worker does not isolate Python processes from sibling v3 workspaces.
+Run approved Python from /live-checkout. It can reach container paths permitted by its OS identity and mounts. Approval is required. Use it for bounded tasks and verification; the current worker does not isolate Python processes from sibling v3 workspaces.

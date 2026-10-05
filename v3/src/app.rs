@@ -38,6 +38,7 @@ impl From<anyhow::Error> for ApiError {
             return conflict("Session is recycled; restore it first");
         }
         tracing::error!("Request storage or execution operation failed");
+        diagnostics::backend_error();
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Operation failed; check development logs".into(),
@@ -208,6 +209,8 @@ async fn assembled_agent_instructions(store: &Store, agent_id: &str) -> Result<S
 /// Advance a pinned cursor only for a typed, safe pre-response failure.
 fn model_failure(run: &mut Value, error: &anyhow::Error) -> Result<()> {
     use model_selection::{FailureKind, FailoverState, NextAction, SelectionPlan};
+    let failed_selection = run["provider_selection"].clone();
+    let failed_candidate = run["failover_state"]["candidate_index"].as_u64();
     let failure = error.downcast_ref::<provider::ProviderFailure>();
     let kind = failure.map(|e| e.kind).unwrap_or(FailureKind::Protocol);
     let mut state: FailoverState = run.get("failover_state").filter(|v| !v.is_null())
@@ -237,6 +240,9 @@ fn model_failure(run: &mut Value, error: &anyhow::Error) -> Result<()> {
         NextAction::Backup => format!("Primary/backup provider failed; trying the next configured connection: {error}"),
         NextAction::Terminal => format!("Provider request failed; no safe retry or eligible backup remains: {error}"),
     });
+    let diagnostic_run=json!({"id":run["id"],"session_id":run["session_id"],
+        "provider_selection":failed_selection,"failed_candidate_index":failed_candidate,"failover_state":run["failover_state"]});
+    diagnostics::failure(&diagnostic_run, error, match action { NextAction::Retry => "retry", NextAction::Backup => "backup", NextAction::Terminal => "terminal" });
     Ok(())
 }
 // Compaction has its own pinned System cursor. Failover must never rewrite the chat role.
@@ -246,7 +252,7 @@ fn system_dispatch_run(run: &Value) -> Result<Value> {
     if plan.role != model_selection::ModelRole::System {return Err(anyhow!("Invalid System role plan"));}
     let state:model_selection::FailoverState=serde_json::from_value(run["system_failover_state"].clone())?;
     let candidate=plan.candidates.get(state.candidate_index).ok_or_else(||anyhow!("System candidates exhausted"))?;
-    Ok(json!({"agent_id":run["agent_id"],"selection_plan":plan,"failover_state":state,
+    Ok(json!({"id":run["id"],"session_id":run["session_id"],"agent_id":run["agent_id"],"selection_plan":plan,"failover_state":state,
         "uncertain":run["uncertain"],"provider_selection":provider::ProviderSelection {
             provider:candidate.transport.provider_id(),model:candidate.upstream_model.clone()}.value()}))
 }
@@ -562,6 +568,7 @@ async fn run_process() -> Result<()> {
         .init();
     let root = PathBuf::from(std::env::var("V3_STATE_ROOT").unwrap_or_else(|_| "/state".into()));
     let role=std::env::var("V3_PROCESS_ROLE").unwrap_or_else(|_|"api".into());
+    if role != "health" { diagnostics::init(&root).await; }
     if role=="health" {
         let url=format!("sqlite://{}?mode=ro",root.join("db/app.db").display());
         let pool=sqlx::SqlitePool::connect(&url).await?;

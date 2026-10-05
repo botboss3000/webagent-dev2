@@ -1,3 +1,3 @@
-Search workspace files with a literal `query` by default. Set `regex=true` for a Rust-style regular expression, `file_glob` to limit filenames, or `comments_only=true` to inspect comment lines. For a comment outline, pass a single file `path`, `comments_only=true`, and omit `query`.
+Search files at an absolute container path or relative live-checkout path with a literal `query` by default. Set `regex=true` for a Rust-style regular expression, `file_glob` to limit filenames, or `comments_only=true` to inspect comment lines. For a comment outline, pass a single file `path`, `comments_only=true`, and omit `query`.
 
 Search accepts a single file or directory. It skips Git metadata, build output, and common caches. Results include path and line number. The scan has file, byte, time, and output limits; `truncated=true` means the result is incomplete. Narrow the path or glob, then use `file_read` to inspect context.

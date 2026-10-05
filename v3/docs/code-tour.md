@@ -131,6 +131,10 @@ existing storage and API contracts stay stable through this source move.
    measures append-only history, and [context/assembly.rs](../src/context/assembly.rs)
    combines and validates the request, [context/compaction.rs](../src/context/compaction.rs) plans and validates
    history compaction, and [models/provider/mod.rs](../src/models/provider/mod.rs) sends it.
+   Agent identity stores optional message-format and closing-notification guidance
+   in encrypted metadata. The Identity API revision-fences edits. Message format
+   is call-scoped on every model call, even with the working-message route off;
+   notification guidance accompanies the server-owned closing protocol.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
    again. Some actions need human approval. Eligible independent calls can run
    together under each tool's concurrency setting; rejected calls get their own
@@ -265,7 +269,7 @@ and notices.
 Static worker dispatch loads only installed Administrator adapters. Code Index keeps
 its derived bounded index inside the isolated workspace; Git uses no-follow directory
 descriptors and exact HEAD/review fences; PTYs retain observation sequences and
-bounded output. Seeding, shell, Python and fixed Cargo tasks run under `sandbox.py`;
+bounded output. Seeding and fixed Cargo tasks run under `sandbox.py`; approved shell, Python and terminal commands can reach the live development checkout mounted at /live-checkout, including v3 and v2 source;
 trusted supervisors cancel descendants. Diagnostics profiles and preview authentication
 remain outside the shell-readable workspace. The preview proxy rechecks that the
 listener belongs to the same workspace terminal before forwarding.

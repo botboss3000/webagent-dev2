@@ -1,12 +1,10 @@
 // Agent configuration is distinct from capability-level previews; Rust enforces every save.
+import { buildConfigRow } from '../../../../shared/ability-row-controls.js';
 const node = (tag, cls = '', text = '') => {
   const el = document.createElement(tag); el.className = cls; el.textContent = text; return el;
 };
 const row = (name, control, hint = '') => {
-  const el = node('div', 'ac-ability-row ac-row-static');
-  const label = node('div', 'ac-ability-label');
-  label.append(node('div', 'ac-ability-name', name), node('div', 'ac-ability-desc', hint));
-  el.append(label, control); return el;
+  return buildConfigRow({ name, desc: hint, descTitle: hint, control });
 };
 const field = (name, value = '', type = 'text', maxLength = 2048) => {
   const input = node('input', 'ac-input'); input.type = type; input.value = value;

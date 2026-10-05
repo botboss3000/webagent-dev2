@@ -9,13 +9,14 @@ pub struct VisibilityConfig { pub tool_name: String, pub guidance: String }
 /// Per-agent preferences never replace the server-owned gate protocol.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentVisibility { pub enabled: bool, pub guidance: String }
+pub struct AgentVisibility { pub enabled: bool, pub guidance: String, #[serde(default)] pub format: String }
 impl Default for AgentVisibility {
-    fn default() -> Self { Self { enabled: true, guidance: String::new() } }
+    fn default() -> Self { Self { enabled: true, guidance: String::new(), format: String::new() } }
 }
 impl AgentVisibility {
     pub fn validate(&self) -> Result<()> {
         if self.guidance.len() > 4096 { bail!("Additional guidance must be at most 4096 bytes"); }
+        if self.format.len() > 4096 { bail!("Message format must be at most 4096 bytes"); }
         Ok(())
     }
 }
@@ -52,9 +53,11 @@ mod tests {
     use super::*;
     #[test]
     fn agent_visibility_is_additive_strict_and_byte_bounded() {
-        let defaults=AgentVisibility::default();assert!(defaults.enabled);assert!(defaults.guidance.is_empty());
-        assert!(AgentVisibility{enabled:false,guidance:"x".repeat(4096)}.validate().is_ok());
-        assert!(AgentVisibility{enabled:true,guidance:"é".repeat(2049)}.validate().is_err());
+        let defaults=AgentVisibility::default();assert!(defaults.enabled);assert!(defaults.guidance.is_empty());assert!(defaults.format.is_empty());
+        assert!(AgentVisibility{enabled:false,guidance:"x".repeat(4096),format:"Short lines".into()}.validate().is_ok());
+        assert!(AgentVisibility{enabled:true,guidance:"é".repeat(2049),format:String::new()}.validate().is_err());
+        assert!(AgentVisibility{enabled:true,guidance:String::new(),format:"x".repeat(4097)}.validate().is_err());
+        assert_eq!(serde_json::from_value::<AgentVisibility>(json!({"enabled":true,"guidance":"ok"})).unwrap().format,"");
         assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":true,"guidance":"ok","fixed_protocol":"override"})).is_err());
         assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":"yes","guidance":"ok"})).is_err());
     }

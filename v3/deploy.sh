@@ -8,7 +8,7 @@ case "${1:-build}" in
     # two named gate JSON files enter from runtime data; no session state does.
     python3 -B -c 'import hashlib,json,pathlib; baseline=json.loads(pathlib.Path("v3/ui-baseline.json").read_text()); assert all(hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected for path,expected in baseline["assets"].items()), "Shared UI baseline changed; review and explicitly update v3/ui-baseline.json"'
     # Gate config is protected state: tar may read only the two named JSON files.
-    sudo -n tar --exclude=__pycache__ --exclude=*.pyc --exclude=*.pyo -cf - v3/Dockerfile v3/Cargo.toml v3/Cargo.lock v3/.gitignore v3/src v3/ui v3/plugins/abilities v3/plugins/gates v3/worker.py v3/sandbox.py v3/launch.py v3/promote.py \
+    sudo -n tar --exclude=__pycache__ --exclude=*.pyc --exclude=*.pyo -cf - v3/Dockerfile v3/Cargo.toml v3/Cargo.lock v3/build.rs v3/.gitignore v3/src v3/ui v3/plugins/abilities v3/plugins/gates v3/worker.py v3/sandbox.py v3/launch.py v3/promote.py \
       v3/ui-baseline.json v3/tests v3/docs v3/README.md v3/deploy.sh v3/config \
       v3/data/config/gates/message_visibility_v1.json v3/data/config/gates/closing_status_v1.json \
       ui/shared/css/app1.css ui/shared/css/app2.css ui/shared/css/app3.css ui/shared/css/design-system.css ui/shared/css/index.css \
@@ -16,7 +16,7 @@ case "${1:-build}" in
       | docker build -f v3/Dockerfile -t webagent-dev-v3:local -
     ;;
   build-loop)
-    sudo -n tar --exclude=__pycache__ --exclude=*.pyc --exclude=*.pyo -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/src v3/config v3/ui v3/plugins/abilities v3/plugins/gates \
+    sudo -n tar --exclude=__pycache__ --exclude=*.pyc --exclude=*.pyo -cf - v3/Dockerfile.loop v3/Cargo.toml v3/Cargo.lock v3/build.rs v3/src v3/config v3/ui v3/plugins/abilities v3/plugins/gates \
       v3/data/config/gates/message_visibility_v1.json v3/data/config/gates/closing_status_v1.json \
       | docker build -f v3/Dockerfile.loop -t webagent-dev-v3-loop:local -
     ;;
@@ -34,6 +34,10 @@ case "${1:-build}" in
     if [ ! -f v3/data/config/chat.json ]; then
       cp data/config/chat_ui.json v3/data/config/chat.json
     fi
+    # Seed the documented admin storage policy once, never overwrite edits.
+    if [ ! -f v3/data/config/app-settings.json ]; then
+      cp v3/config/app-settings.json v3/data/config/app-settings.json
+    fi
     docker run -d --name webagent-dev-v3 --restart unless-stopped --read-only \
       --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID \
       --security-opt no-new-privileges:true --pids-limit 256 --memory 2g --memory-swap 3g --cpus 2 \
@@ -44,6 +48,7 @@ case "${1:-build}" in
       --mount type=bind,src=/home/ar/webagent-dev2/v3/workspaces,dst=/workspaces \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/runtime,dst=/run/v3 \
       --mount type=bind,src=/home/ar/webagent-dev2/v3,dst=/live-v3 \
+      --mount type=bind,src=/home/ar/webagent-dev2,dst=/live-checkout \
       --mount type=bind,src=/home/ar/webagent-dev2/v3/ui,dst=/opt/v3/ui,readonly \
       --env V3_CHAT_UI_CONFIG_PATH=/state/config/chat.json \
       --env V3_MESSAGE_API_TOKEN \

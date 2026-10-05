@@ -1,0 +1,1 @@
+{"schema_version":1,"id":"diagnostics","runtime":"rust","description":"Bounded sanitized operational flight recorder"}

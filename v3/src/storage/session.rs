@@ -122,7 +122,7 @@ impl Store {
         let timestamp: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(created_at),0) FROM chat WHERE session_id=?")
             .bind(sid).fetch_one(&mut **tx).await?;
         session["last_active_at"] = json!(timestamp.max(session["last_active_at"].as_i64().unwrap_or(0)));
-        sqlx::query("UPDATE docs SET value=? WHERE key=?").bind(self.seal(&session)?).bind(&key).execute(&mut **tx).await?;
+        sqlx::query("UPDATE docs SET value=? WHERE key=?").bind(self.encode_user_record(&session)?).bind(&key).execute(&mut **tx).await?;
         Ok(())
     }
 
@@ -166,12 +166,12 @@ impl Store {
         let previous = session["read_through_seq"].as_u64().ok_or_else(|| anyhow!("Invalid stored read cursor"))?;
         if through > previous {
             session["read_through_seq"] = json!(through);
-            sqlx::query("UPDATE docs SET value=? WHERE key=?").bind(self.seal(&session)?).bind(&key).execute(&mut *tx).await?;
+            sqlx::query("UPDATE docs SET value=? WHERE key=?").bind(self.encode_user_record(&session)?).bind(&key).execute(&mut *tx).await?;
         }
         let result = json!({"session":self.read_summary_in(&mut tx,sid,&session).await?});
         if through > previous {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,'session_read',?)")
-                .bind(sid).bind(self.seal(&result)?).execute(&mut *tx).await?;
+                .bind(sid).bind(self.encode_user_record(&result)?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[key]);
@@ -252,11 +252,11 @@ impl Store {
         let summary = self.read_summary_in(&mut tx, sid, &session).await?;
         let result = json!({"session":summary});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
-            .bind(&receipt_key).bind(self.seal(&json!({"digest":fingerprint,"result":result}))?)
+            .bind(&receipt_key).bind(self.encode_user_record(&json!({"digest":fingerprint,"result":result}))?)
             .execute(&mut *tx).await?;
         if changed {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?, 'session_updated', ?)")
-                .bind(sid).bind(self.seal(&result)?).execute(&mut *tx).await?;
+                .bind(sid).bind(self.encode_user_record(&result)?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[session_key]);
@@ -314,11 +314,11 @@ impl Store {
         }
         let result = json!({"session":self.read_summary_in(&mut tx,sid,&session).await?});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)").bind(&receipt_key)
-            .bind(self.seal(&json!({"digest":fingerprint,"result":result}))?).execute(&mut *tx).await?;
+            .bind(self.encode_user_record(&json!({"digest":fingerprint,"result":result}))?).execute(&mut *tx).await?;
         if changed {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)").bind(sid)
                 .bind(if restore { "session_restored" } else { "session_recycled" })
-                .bind(self.seal(&result)?).execute(&mut *tx).await?;
+                .bind(self.encode_user_record(&result)?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[key]);
@@ -400,13 +400,13 @@ impl Store {
                 let upgraded = with_session_metadata(&session, activity)?;
                 if upgraded != session {
                     sqlx::query("UPDATE docs SET value=? WHERE key=?")
-                        .bind(self.seal(&upgraded)?).bind(&key).execute(&mut *tx).await?;
+                        .bind(self.encode_user_record(&upgraded)?).bind(&key).execute(&mut *tx).await?;
                 }
                 after = key;
             }
         }
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
-            .bind(MIGRATION_KEY).bind(self.seal(&json!({"version":1}))?)
+            .bind(MIGRATION_KEY).bind(self.encode_user_record(&json!({"version":1}))?)
             .execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())

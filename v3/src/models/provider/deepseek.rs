@@ -155,7 +155,7 @@ impl Provider {
             _ = cancel.cancelled() => return Err(typed_failure(FailureKind::Cancelled,false,"Provider request cancelled")),
             result = tokio::time::timeout(Duration::from_secs(60),request.send()) => result
                 .map_err(|_|typed_failure(FailureKind::Transient,false,"Provider connection timed out"))?
-                .map_err(|_|typed_failure(FailureKind::Transient,false,"Provider connection failed"))?
+                .map_err(|e|transport_failure(e,false,"Provider connection failed"))?
         };
         if !response.status().is_success() { return Err(response_failure(response,&cancel).await); }
         let mut stream = response.bytes_stream();
@@ -172,7 +172,7 @@ impl Provider {
                 return completion.result().map_err(|e|typed_failure(FailureKind::Protocol,started,e.to_string()));
             }
             let chunk = chunk.ok_or_else(||typed_failure(FailureKind::Transient,started,"Provider stream ended before completion"))?
-                .map_err(|_|typed_failure(FailureKind::Transient,started,"Provider stream interrupted"))?;
+                .map_err(|e|transport_failure(e,started,"Provider stream interrupted"))?;
             for event in frames.push(&chunk).map_err(|_|typed_failure(FailureKind::Protocol,started,"Invalid Provider stream event"))? {
                 // Any choice means generation began, even if only reasoning arrived.
                 started |= event["choices"].as_array().is_some_and(|v|!v.is_empty());

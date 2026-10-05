@@ -1,1 +1,1 @@
-List a directory in the current session workspace. Start at `.` when the project location is unknown. Paths cannot escape this workspace.
+List a directory at an absolute container path, such as /live-checkout, or a relative path in the live checkout. Start at /live-checkout for development source. Absolute, parent-relative and symlink paths use ordinary container filesystem resolution.

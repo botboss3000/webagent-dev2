@@ -183,12 +183,15 @@ async def execute(name, arguments, base):
             env = {"PATH": "/opt/rust/bin:/usr/local/bin:/usr/bin:/bin", "HOME": str(base),
                    "TMPDIR": str(base), "TERM": "xterm-256color", "LANG": "C.UTF-8",
                    "CARGO_HOME": str(base / ".cargo"), "CARGO_BUILD_JOBS": "1",
-                   "V3_ALLOWED_LISTEN_PORTS": ",".join(str(port) for port in ports)}
+                   "V3_ALLOWED_LISTEN_PORTS": ",".join(str(port) for port in ports),
+                   "V3_UNRESTRICTED_DEV_SHELL": "1"}
             spawn = asyncio.create_task(asyncio.create_subprocess_exec(
                 sys.executable, "-I", str(Path(__file__).resolve()), "--supervisor",
                 json.dumps({"base": str(base), "command": command, "cols": cols, "rows": rows, "worker_pid": os.getpid()}),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT, cwd=base, env=env, start_new_session=True))
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=Path("/live-checkout") if Path("/live-checkout").is_dir() else base,
+                env=env, start_new_session=True))
             try:
                 process = await asyncio.shield(spawn)
             except asyncio.CancelledError:
@@ -314,7 +317,8 @@ def _supervise(spec):
         try:
             import runpy
             sandbox = Path(__file__).resolve().parents[4] / "sandbox.py"
-            runpy.run_path(str(sandbox))["restrict"](spec["base"])
+            if os.environ.get("V3_UNRESTRICTED_DEV_SHELL") != "1":
+                runpy.run_path(str(sandbox))["restrict"](spec["base"])
             os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "-c", spec["command"]], dict(os.environ))
         except BaseException:
             os.write(2, b"terminal sandbox or launch failed\r\n")

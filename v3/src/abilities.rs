@@ -92,6 +92,63 @@ fn valid_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
+pub(crate) fn search_words(text: &str) -> Vec<String> {
+    text.to_lowercase().split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty()).map(str::to_owned).collect()
+}
+
+pub(crate) fn near_word(query: &str, word: &str) -> bool {
+    if query == word || query.len() >= 4 && word.starts_with(query) { return true; }
+    let aliases: &[&str] = match query {
+        "code" | "coding" => &["source", "repository"],
+        "edit" | "editing" | "change" | "remove" | "delete" | "fix" => &["write", "patch"],
+        "inspect" | "browse" => &["read", "review", "search"],
+        "compile" | "build" => &["cargo", "worker"],
+        "skill" | "skills" => &["guidance"],
+        "theme" => &["theming", "appearance", "palette"],
+        _ => &[],
+    };
+    if aliases.contains(&word) { return true; }
+    if !query.is_ascii() || !word.is_ascii() { return false; }
+    let (left, right) = (query.as_bytes(), word.as_bytes());
+    if left.len() >= 4 && left.len() == right.len() {
+        for index in 0..left.len() - 1 {
+            if left[index] == right[index + 1] && left[index + 1] == right[index]
+                && left[..index] == right[..index] && left[index + 2..] == right[index + 2..] {
+                return true;
+            }
+        }
+    }
+    if query.len() < 5 || query.len().abs_diff(word.len()) > 1 { return false; }
+    let (mut i, mut j, mut edits) = (0, 0, 0);
+    while i < left.len() && j < right.len() {
+        if left[i] == right[j] { i += 1; j += 1; continue; }
+        edits += 1;
+        if edits > 1 { return false; }
+        if left.len() >= right.len() { i += 1; }
+        if right.len() >= left.len() { j += 1; }
+    }
+    edits + usize::from(i < left.len() || j < right.len()) == 1
+}
+
+fn discovery_score(ability: &Value, query: &str) -> usize {
+    let fields = [("id", 5), ("name", 5), ("group_name", 2),
+        ("description", 2), ("skill_summary", 2)];
+    search_words(query).into_iter()
+        .filter(|term| !matches!(term.as_str(),
+            "a" | "an" | "and" | "for" | "in" | "my" | "of" | "on" |
+            "or" | "please" | "the" | "this" | "to" | "with"))
+        .map(|term| {
+            let field_score = fields.iter().filter(|(field, _)| ability[*field].as_str()
+                .is_some_and(|text| search_words(text).iter().any(|word| near_word(&term, word))))
+                .map(|(_, weight)| *weight).max().unwrap_or(0);
+            let tool_score = ability["tools"].as_array().is_some_and(|tools| tools.iter()
+                .filter_map(|tool| tool["name"].as_str())
+                .any(|name| search_words(name).iter().any(|word| near_word(&term, word))));
+            field_score.max(usize::from(tool_score) * 3)
+        }).sum()
+}
+
 fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let meta = fs::symlink_metadata(path)?;
     if !meta.file_type().is_file() || meta.len() > limit {
@@ -360,19 +417,25 @@ impl Catalog {
         if !valid_id(ability_id) { bail!("Invalid bundled ability ID"); }
         let ability = self.abilities.iter().find(|a| a.id == ability_id)
             .filter(|a| Self::available(a, visibility, state)
-                && Self::skill_mode(visibility, ability_id) != "off"
                 && allow_ability(ability_id)
                 && a.tools.iter().any(|tool| Self::supported(tool)
                     && Self::tool_mode(visibility, tool) != "off" && allow_tool(tool)))
             .context("Bundled skills unavailable under current access")?;
         let mut assets = Vec::new();
-        if let Some(text) = &ability.skill { assets.push(("ability", ability.id.as_str(), text)); }
+        if Self::skill_mode(visibility, ability_id) != "off" {
+            if let Some(text) = &ability.skill { assets.push(("ability", ability.id.as_str(), text)); }
+        }
         for (name, text) in &ability.tool_skills {
             if Self::supported(name) && Self::tool_mode(visibility, name) != "off" && allow_tool(name) {
                 assets.push(("tool", name.as_str(), text));
             }
         }
-        for (name, text) in &ability.selectable_skills { assets.push(("selectable", name.as_str(), text)); }
+        for (name, text) in &ability.selectable_skills {
+            if Self::selectable_metadata(name,text).is_some()
+                && Self::selectable_mode(visibility, ability_id, name, text) != "off" {
+                assets.push(("selectable", name.as_str(), text));
+            }
+        }
         assets.retain(|(kind, name, text)| Self::skill_live(ability, kind, name, text));
         Ok((ability, assets))
     }
@@ -384,7 +447,11 @@ impl Catalog {
         let (ability, assets) = self.bundled_candidates(ability_id, visibility, state, &allow_ability, &allow_tool)?;
         Ok(assets.into_iter().map(|(kind, name, text)| json!({
             "ability_id":ability.id,"kind":kind,"skill_id":name,
-            "bytes":text.len(),"sha256":hex::encode(Sha256::digest(text.as_bytes()))
+            "bytes":text.len(),"sha256":hex::encode(Sha256::digest(text.as_bytes())),
+            "summary":text.lines().take(16).find_map(|line|
+                line.strip_prefix("when_to_use:").or_else(||line.strip_prefix("title:"))
+                    .or_else(||line.strip_prefix("# ")))
+                .map(|line|line.trim().chars().take(240).collect::<String>())
         })).collect())
     }
 
@@ -449,6 +516,40 @@ impl Catalog {
         visibility["skill_visibility"][id].as_str().unwrap_or("visible")
     }
 
+    fn selectable_metadata(name: &str, text: &str) -> Option<(String, String, &'static str)> {
+        let mut lines = text.lines();
+        if lines.next()? != "---" { return None; }
+        let (mut id, mut title, mut when, mut mode) = (None, None, None, "visible");
+        let mut closed = false;
+        for line in lines.by_ref() {
+            if line == "---" { closed = true; break; }
+            let Some((key, value)) = line.split_once(':') else { continue; };
+            let value = value.trim().trim_matches(|c| c == '\'' || c == '"');
+            match key.trim() {
+                "id" => id = Some(value),
+                "title" => title = Some(value),
+                "when_to_use" => when = Some(value),
+                "default_mode" => mode = value,
+                _ => {}
+            }
+        }
+        let title = title.filter(|v| !v.is_empty())?;
+        let when = when.filter(|v| !v.is_empty())?;
+        if !closed || id != Some(name) || lines.all(|line| line.trim().is_empty()) { return None; }
+        let mode = match mode {
+            "visible" | "always" | "always_on" => "visible",
+            "discoverable" | "selectable" => "discoverable",
+            _ => return None,
+        };
+        Some((title.to_owned(), when.to_owned(), mode))
+    }
+
+    fn selectable_mode<'a>(visibility: &'a Value, ability: &str, name: &str, text: &str) -> &'a str {
+        let key = format!("{ability}:{name}");
+        visibility["skill_visibility"][&key].as_str().unwrap_or_else(||
+            Self::selectable_metadata(name, text).map(|(_, _, mode)| mode).unwrap_or("off"))
+    }
+
     fn tool_mode<'a>(visibility: &'a Value, name: &str) -> &'a str {
         visibility["tool_modes"][name].as_str().unwrap_or("visible")
     }
@@ -479,13 +580,26 @@ impl Catalog {
             .collect::<Vec<_>>();
         let visible = Self::is_visible(visibility, &ability.id);
         let off = Self::is_off(visibility, &ability.id);
+        let mut general_skills=Vec::new();
+        if ability.skill.as_ref().is_some_and(|text| Self::skill_live(ability,"ability",&ability.id,text)) {
+            general_skills.push(json!({"skill_id":"core","title":"Skill","when_to_use":ability.skill_summary,
+                "mode":Self::skill_mode(visibility,&ability.id)}));
+        }
+        for (name,text) in &ability.selectable_skills {
+            if !Self::skill_live(ability,"selectable",name,text) {continue;}
+            if let Some((title,when,_))=Self::selectable_metadata(name,text) {
+                general_skills.push(json!({"skill_id":name,"title":title,"when_to_use":when,
+                    "mode":Self::selectable_mode(visibility,&ability.id,name,text)}));
+            }
+        }
         json!({"id":ability.id,"group":ability.group,"group_name":ability.group_name,
             "name":ability.name,"description":ability.description,
             "kind":ability.kind,"readiness":ability.readiness,"config":ability.config,
             "skill_summary":ability.skill_summary,"migration_note":ability.migration_note,
             "icon":ability.icon,"color":ability.color,"tools":tools,
             "has_skill":ability.skill.as_ref().is_some_and(|text| Self::skill_live(ability, "ability", &ability.id, text)),
-            "selectable_skills":ability.selectable_skills.iter().filter(|(name, text)| Self::skill_live(ability, "selectable", name, text)).map(|(name, _)| name).collect::<Vec<_>>(),
+            "selectable_skills":ability.selectable_skills.iter().filter(|(name, text)| Self::skill_live(ability, "selectable", name, text) && Self::selectable_metadata(name,text).is_some() && Self::selectable_mode(visibility,&ability.id,name,text)!="off").map(|(name, _)| name).collect::<Vec<_>>(),
+            "general_skills":general_skills,
             "skill_visibility":Self::skill_mode(visibility, &ability.id),
             "visibility":if off {"off"} else if visible {"visible"} else {"discoverable"},
             "active":Self::active(state, &ability.id)})
@@ -512,12 +626,36 @@ impl Catalog {
                 let mut item = Self::describe(ability, policy, visibility, &Value::Null);
                 item["available"] = json!(Self::executable(ability) && ability.tools.iter().any(|name| Self::supported(name)));
                 item["tools"] = json!(ability.tools.iter().map(|name| {
+                    let description=crate::tools::schemas().iter().find(|schema|schema["name"]==*name)
+                        .and_then(|schema|schema["description"].as_str()).unwrap_or("").to_owned();
                     json!({"name":name,"policy":policy["rules"][name],
-                        "mode":Self::tool_mode(visibility,name),"supported":Self::supported(name)})
+                        "mode":Self::tool_mode(visibility,name),"supported":Self::supported(name),
+                        "description":description,
+                        "has_tool_skill":ability.tool_skills.get(name)
+                            .is_some_and(|text|Self::skill_live(ability,"tool",name,text))})
                 }).collect::<Vec<_>>());
                 item
             })
             .collect()
+    }
+
+    /// Administrator viewer projection: only validated, unchanged bundle guidance.
+    /// This does not activate the ability or alter model-facing visibility.
+    pub fn configuration_skill(&self, id: &str) -> Option<&str> {
+        let ability = self.abilities.iter().find(|ability| ability.id == id && Self::present(ability))?;
+        ability.skill.as_deref().filter(|text| Self::skill_live(ability, "ability", id, text))
+    }
+
+    pub fn configuration_skill_asset(&self, id: &str, kind: &str, name: &str) -> Option<&str> {
+        let ability = self.abilities.iter().find(|a| a.id == id && Self::present(a))?;
+        let text = match kind {
+            "skill" if valid_id(name) => ability.selectable_skills.get(name)
+                .filter(|text| Self::selectable_metadata(name,text).is_some()),
+            "tool" if valid_id(name) && ability.tools.iter().any(|tool| tool == name) => ability.tool_skills.get(name),
+            _ => None,
+        }?;
+        Self::skill_live(ability, if kind == "skill" {"selectable"} else {"tool"}, name, text)
+            .then_some(text.as_str())
     }
 
     /// Installed owners of a tool, independent of visibility or activation.
@@ -587,7 +725,7 @@ impl Catalog {
     ) -> Vec<Value> {
         let mut schemas = vec![
             json!({"type":"function","name":"list_abilities",
-                "description":"Find available abilities and their tool policies before using workspace tools.",
+                "description":"Search permitted abilities by task words, ability names or tool names; use an empty query to list all.",
                 "parameters":{"type":"object","properties":{"query":{"type":"string"}},
                     "required":[],"additionalProperties":false}}),
             json!({"type":"function","name":"load_ability",
@@ -668,6 +806,15 @@ impl Catalog {
                     part.push_str(skill);
                 }
             }
+            for (name, skill) in &ability.selectable_skills {
+                if Self::selectable_mode(visibility, &ability.id, name, skill) == "visible"
+                    && Self::skill_live(ability, "selectable", name, skill) {
+                    part.push_str("\n\nSkill ");
+                    part.push_str(name);
+                    part.push_str(":\n");
+                    part.push_str(skill);
+                }
+            }
             if part.len() <= (LIMIT - MARKER_RESERVE).saturating_sub(text.len()) {
                 text.push_str(&part);
             } else {
@@ -733,7 +880,7 @@ impl Catalog {
         let mut out = String::new();
         add(&mut out, "# [TOOLS]");
         add(&mut out, "These tools can be called now. A call may still require approval.");
-        if can_list { add(&mut out, "- list_abilities — check the live ability catalog"); }
+        if can_list { add(&mut out, "- list_abilities — search with task words or use an empty query for the full permitted catalog"); }
         if can_load { add(&mut out, "- load_ability — load an ability's tools and how-to guidance"); }
         let mut omitted = false;
         for (name, description) in ready_tools {
@@ -752,7 +899,7 @@ impl Catalog {
         if !discoverable.is_empty() {
             add(&mut out, "");
             add(&mut out, "# [ABILITIES]");
-            add(&mut out, "These abilities are available but not loaded. Call load_ability with an ID to reveal its tools and how-to guidance. An empty loaded list does not mean no abilities are available. Use list_abilities for the full current catalog.");
+            add(&mut out, "These abilities are available but not loaded. Call load_ability with an ID to reveal its tools and how-to guidance. An empty loaded list does not mean no abilities are available. Search list_abilities with task words or use an empty query for the full permitted catalog.");
             for (id, name, summary) in discoverable {
                 let row = if summary.is_empty() { format!("- {id} — {name}") }
                     else { format!("- {id} — {name}: {summary}") };
@@ -783,34 +930,19 @@ impl Catalog {
                 if query.len() > 200 {
                     return json!({"status":"error","output":"Query is too long"});
                 }
-                let found = self
-                    .catalog_with(policy, visibility, state)
+                let mut found = self.catalog_with(policy, visibility, state)
                     .into_iter()
-                    .filter(|ability| {
-                        query.is_empty()
-                            || ability["id"].as_str().unwrap_or("").contains(&query)
-                            || ability["group_name"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_lowercase()
-                                .contains(&query)
-                            || ability["name"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_lowercase()
-                                .contains(&query)
-                            || ability["description"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_lowercase()
-                                .contains(&query)
-                            || ability["tools"].as_array().is_some_and(|tools| {
-                                tools.iter().any(|tool| {
-                                    tool["name"].as_str().unwrap_or("").contains(&query)
-                                })
-                            })
-                    })
-                    .collect::<Vec<_>>();
+                    .filter_map(|ability| {
+                        let score = discovery_score(&ability, &query);
+                        (query.is_empty() || score > 0).then_some((score, ability))
+                    }).collect::<Vec<_>>();
+                if !query.is_empty() {
+                    found.sort_by(|(left_score, left), (right_score, right)| {
+                        right_score.cmp(left_score).then_with(||
+                            left["id"].as_str().cmp(&right["id"].as_str()))
+                    });
+                }
+                let found = found.into_iter().map(|(_, ability)| ability).collect::<Vec<_>>();
                 json!({"status":"ok","catalog_version":self.version,"abilities":found})
             }
             "load_ability" => {
@@ -849,7 +981,7 @@ impl Catalog {
                 json!({"status":"ok","ability":ability,
                     "skill":if Self::skill_mode(visibility, id) == "off" {None} else {entry.skill.as_ref().filter(|text| Self::skill_live(entry, "ability", &entry.id, text))},
                     "tool_skills":permitted_skills,
-                    "selectable_skills":entry.selectable_skills.iter().filter(|(name, text)| Self::skill_live(entry, "selectable", name, text)).map(|(name, _)| name).collect::<Vec<_>>(),
+                    "selectable_skills":entry.selectable_skills.iter().filter(|(name, text)| Self::skill_live(entry, "selectable", name, text) && Self::selectable_metadata(name,text).is_some() && Self::selectable_mode(visibility,id,name,text)!="off").map(|(name, _)| name).collect::<Vec<_>>(),
                     "catalog_version":self.version})
             }
             _ => json!({"status":"denied","output":"Unknown discovery operation"}),
@@ -900,6 +1032,29 @@ mod tests {
     }
 
     #[test]
+    fn natural_task_search_finds_permitted_ability_and_tools() {
+        let (_root, catalog) = fixture();
+        let mut run = json!({"loaded_abilities":[]});
+        let policy = policy();
+        let visible = Value::Null;
+        let active = json!({"active":[],"suppressed":[]});
+        let result = catalog.discover_with("list_abilities",
+            &json!({"query":"Inspect and edit the current session workspace source code"}),
+            &mut run, &policy, &visible, &active);
+        assert_eq!(result["abilities"][0]["id"], "codebase_admin");
+        let typo = catalog.discover_with("list_abilities", &json!({"query":"edti"}),
+            &mut run, &policy, &visible, &active);
+        assert_eq!(typo["abilities"][0]["id"], "codebase_admin");
+        let denied = json!({"rules":{"file_list":"deny","file_read":"deny",
+            "file_search":"deny","source_review":"deny","state_inspect":"deny",
+            "prompt_slot_read":"deny","file_write":"deny","file_edit":"deny",
+            "workspace_seed":"deny","source_patch":"deny","promotion_propose":"deny",
+            "shell":"deny","python":"deny"}});
+        assert!(catalog.discover_with("list_abilities", &json!({"query":"source"}),
+            &mut run, &denied, &visible, &active)["abilities"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn changed_manifest_withdraws_cached_loaded_tools_until_reload() {
         for change in ["pending", "remove_tool", "malformed"] {
             let (root, catalog) = fixture();
@@ -944,27 +1099,39 @@ mod tests {
         let (root, _) = fixture();
         let folder = root.path().join("Administrator/codebase_admin");
         fs::create_dir(folder.join("skills")).unwrap();
-        fs::write(folder.join("skills/ui_theming.skill.md"), "Scoped theme guidance").unwrap();
+        let theme = "---\nid: ui_theming\ntitle: UI theming\nwhen_to_use: Use for theme changes\ndefault_mode: visible\n---\nScoped theme guidance";
+        fs::write(folder.join("skills/ui_theming.skill.md"), theme).unwrap();
+        fs::write(folder.join("skills/ui_toggle_list.skill.md"),
+            "---\nid: ui_toggle_list\ntitle: Toggle lists\nwhen_to_use: Use for list controls\ndefault_mode: discoverable\n---\nScoped list guidance").unwrap();
         let catalog = Catalog::load(root.path()).unwrap();
         let visible = json!({"visibility":{"codebase_admin":"visible"}});
         let active = json!({"active":["codebase_admin"],"suppressed":[]});
         let list = catalog.bundled_skill_list("codebase_admin", &visible, &active,
             |_| true, |tool| tool == "file_read").unwrap();
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 3);
         assert!(!list.iter().any(|s| s["kind"] == "tool"));
         let loaded = catalog.bundled_skill_load("codebase_admin", "selectable", "ui_theming",
             &visible, &active, |_| true, |_| true).unwrap();
-        assert_eq!(loaded["text"], "Scoped theme guidance");
+        assert_eq!(loaded["text"], theme);
         assert_eq!(loaded["source_kind"], "untrusted_bundled_guidance");
         assert_eq!(loaded["activates"], false);
-        assert_eq!(loaded["sha256"], hex::encode(Sha256::digest(b"Scoped theme guidance")));
+        assert_eq!(loaded["sha256"], hex::encode(Sha256::digest(theme.as_bytes())));
         assert!(catalog.bundled_skill_load("codebase_admin", "selectable", "../ui_theming",
             &visible, &active, |_| true, |_| true).is_err());
         assert!(catalog.bundled_skill_load("codebase_admin", "tool", "file_edit",
             &visible, &active, |_| true, |tool| tool == "file_read").is_err());
         assert!(catalog.bundled_skill_list("codebase_admin", &visible, &active, |_| false, |_| true).is_err());
         let off = json!({"visibility":{"codebase_admin":"visible"},"skill_visibility":{"codebase_admin":"off"}});
-        assert!(catalog.bundled_skill_list("codebase_admin", &off, &active, |_| true, |_| true).is_err());
+        let without_root=catalog.bundled_skill_list("codebase_admin", &off, &active,
+            |_| true, |tool|tool=="file_read").unwrap();
+        assert_eq!(without_root.len(),2);
+        assert!(!without_root.iter().any(|skill|skill["kind"]=="ability"));
+        let separate=json!({"visibility":{"codebase_admin":"visible"},
+            "skill_visibility":{"codebase_admin:ui_theming":"off"}});
+        let separate_list=catalog.bundled_skill_list("codebase_admin",&separate,&active,
+            |_|true,|tool|tool=="file_read").unwrap();
+        assert!(!separate_list.iter().any(|skill|skill["skill_id"]=="ui_theming"));
+        assert!(separate_list.iter().any(|skill|skill["skill_id"]=="ui_toggle_list"));
         assert!(catalog.bundled_skill_list("codebase_admin", &visible,
             &json!({"active":["codebase_admin"],"suppressed":["codebase_admin"]}), |_| true, |_| true).is_err());
         assert!(catalog.bundled_skill_list("codebase_admin", &json!({}), &json!({}), |_| true, |_| true).is_err());
@@ -979,7 +1146,7 @@ mod tests {
         let mut run = json!({"loaded_abilities":["codebase_admin"]});
         let discovery = catalog.discover_with("load_ability", &json!({"ability_id":"codebase_admin"}),
             &mut run, &policy(), &visible, &active);
-        assert!(discovery["selectable_skills"].as_array().unwrap().is_empty());
+        assert!(!discovery["selectable_skills"].as_array().unwrap().iter().any(|skill|skill=="ui_theming"));
         fs::remove_file(folder.join("codebase_admin.skill.md")).unwrap();
         fs::remove_file(folder.join("tools/file_edit.skill.md")).unwrap();
         let guidance = catalog.visible_guidance(&policy(), &visible, &active);
@@ -1084,6 +1251,16 @@ mod tests {
         assert!(names.contains(&"prompt_slot_read".to_owned()));
         assert!(names.contains(&"prompt_slot_write".to_owned()));
         assert!(!names.contains(&"python".to_owned()));
+    }
+
+    #[test]
+    fn configuration_skill_rejects_unknown_and_changed_assets() {
+        let (root, catalog) = fixture();
+        assert_eq!(catalog.configuration_skill("codebase_admin"), Some("Use scoped workspace tools."));
+        assert_eq!(catalog.configuration_skill("../codebase_admin"), None);
+        assert_eq!(catalog.configuration_skill("missing"), None);
+        fs::write(root.path().join("Administrator/codebase_admin/codebase_admin.skill.md"), "changed").unwrap();
+        assert_eq!(catalog.configuration_skill("codebase_admin"), None);
     }
 
     #[test]

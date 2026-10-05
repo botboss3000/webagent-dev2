@@ -18,6 +18,7 @@ services:
     volumes:
       - ./data:/state
       - ./workspaces:/workspaces
+      - ..:/live-checkout
     tmpfs:
       - /run:rw,nosuid,nodev,size=16m
       - /tmp:rw,nosuid,nodev,size=32m

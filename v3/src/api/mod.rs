@@ -28,6 +28,7 @@ pub(super) fn router(app: App) -> Router {
     let messaging = user_api::messaging_router()
         .route_layer(middleware::from_fn_with_state(app.clone(), message_api_auth));
     let admin_api = Router::new()
+        .merge(diagnostics::router())
         .route("/status", get(overview))
         .route("/settings", put(settings))
         .nest("/admin/access", phase3_api::router())
@@ -64,6 +65,10 @@ pub(super) fn router(app: App) -> Router {
         .route("/agents/{id}/members/{user}/capability-level",put(ability_admin::member_set))
         .route("/agents/{id}/abilities/{ability}/visibility",put(ability_admin::visibility_set))
         .route("/agents/{id}/abilities/{ability}/skill-visibility",put(ability_admin::skill_set))
+        .route("/agents/{id}/abilities/{ability}/skill-content",get(ability_admin::skill_content))
+        .route("/agents/{id}/abilities/{ability}/skills/{skill}/content",get(ability_admin::skill_named_content))
+        .route("/agents/{id}/abilities/{ability}/skills/{skill}/visibility",put(ability_admin::skill_named_set))
+        .route("/agents/{id}/abilities/{ability}/tools/{tool}/skill-content",get(ability_admin::tool_skill_content))
         .route("/agents/{id}/abilities/{ability}/tools/{tool}/mode",put(ability_admin::tool_set))
         .route("/auth/me", get(me))
         .route("/auth/ui-config", get(chat_ui_config))
@@ -102,6 +107,7 @@ pub(super) fn router(app: App) -> Router {
         .route_service("/",ServeFile::new(format!("{ui}/index.html")))
         .nest_service("/v3-ui",ServeDir::new(ui)).nest_service("/ui",ServeDir::new(shared))
         .layer(DefaultBodyLimit::max(2*1024*1024))
+        .layer(middleware::from_fn(diagnostics::http_errors))
         .layer(middleware::from_fn(|request:Request,next:Next|async move{
             let mut response=next.run(request).await;
             response.headers_mut().insert("cache-control",HeaderValue::from_static("no-store"));

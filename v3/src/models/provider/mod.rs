@@ -14,7 +14,7 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_INSTRUCTIONS: usize = 96 * 1024;
-pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When asked what abilities or tools are available, check list_abilities; an empty loaded list does not mean the catalog is empty. When a task needs workspace access, use list_abilities to find a suitable ability and load_ability to make its tools available.";
+pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When asked what abilities or tools are available, check list_abilities; an empty loaded list does not mean the catalog is empty. When a task needs workspace access, search list_abilities using a few task words (or no query for the full permitted catalog), then load_ability to reveal its tools. For development source work, file tools, approved shell and Python commands start in /live-checkout, including its v3 subtree and v2 source. Their reach is determined by container OS permissions; an empty session workspace does not mean source is unavailable. In read-only mode explain that edits require a write-capable mode.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,13 +98,32 @@ pub struct ProviderFailure {
     pub kind: crate::model_selection::FailureKind,
     pub response_started: bool,
     detail: String,
+    pub transport: Option<TransportDiagnostic>,
+    pub http_status: Option<u16>,
 }
 impl std::fmt::Display for ProviderFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.detail) }
 }
 impl std::error::Error for ProviderFailure {}
 pub(crate) fn typed_failure(kind: crate::model_selection::FailureKind, started: bool, detail: impl Into<String>) -> anyhow::Error {
-    ProviderFailure { kind, response_started: started, detail: detail.into() }.into()
+    ProviderFailure { kind, response_started: started, detail: detail.into(), transport: None, http_status: None }.into()
+}
+/// Allowlisted transport facts, never reqwest Display/Debug (which may contain URLs).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TransportDiagnostic {
+    pub timeout: bool, pub connect: bool, pub body: bool, pub decode: bool,
+    pub request: bool, pub status: Option<u16>, pub io_kind: Option<String>,
+}
+fn transport_failure(error:reqwest::Error,started:bool,detail:&str)->anyhow::Error {
+    use std::error::Error;
+    let mut source=error.source(); let mut io_kind=None;
+    while let Some(cause)=source {
+        if let Some(io)=cause.downcast_ref::<std::io::Error>() {io_kind=Some(format!("{:?}",io.kind()));break;}
+        source=cause.source();
+    }
+    ProviderFailure {kind:crate::model_selection::FailureKind::Transient,response_started:started,
+        detail:detail.into(),http_status:error.status().map(|s|s.as_u16()),transport:Some(TransportDiagnostic {timeout:error.is_timeout(),connect:error.is_connect(),
+        body:error.is_body(),decode:error.is_decode(),request:error.is_request(),status:error.status().map(|s|s.as_u16()),io_kind})}.into()
 }
 fn failure_kind(value: &Value) -> crate::model_selection::FailureKind {
     use crate::model_selection::FailureKind::*;
@@ -204,7 +223,8 @@ async fn response_failure(response: reqwest::Response, cancel: &CancellationToke
         408 | 429 | 500..=599 => Transient,
         _ => value.as_ref().map(failure_kind).unwrap_or(MalformedRequest),
     };
-    typed_failure(kind, false, format!("Provider HTTP {status}: {detail}"))
+    ProviderFailure {kind,response_started:false,detail:format!("Provider HTTP {status}: {detail}"),
+        transport:None,http_status:Some(status)}.into()
 }
 
 async fn checked_json(response: reqwest::Response) -> Result<Value> {
@@ -587,7 +607,7 @@ impl Provider {
             _ = cancel.cancelled() => return Err(typed_failure(crate::model_selection::FailureKind::Cancelled, response_started, "Provider request cancelled")),
             response = tokio::time::timeout(Duration::from_secs(60), request.send()) =>
                 response.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, false, "Provider connection timed out"))?
-                    .map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, false, "Provider connection failed"))?
+                    .map_err(|e| transport_failure(e, false, "Provider connection failed"))?
         };
         if !response.status().is_success() {
             return Err(response_failure(response, &cancel).await);
@@ -609,7 +629,7 @@ impl Provider {
             let Some(chunk) = chunk else {
                 return Err(typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream ended before completion"));
             };
-            let chunk = chunk.map_err(|_| typed_failure(crate::model_selection::FailureKind::Transient, response_started, "Provider stream interrupted"))?;
+            let chunk = chunk.map_err(|e| transport_failure(e, response_started, "Provider stream interrupted"))?;
             for event in frames.push(&chunk).map_err(|e| typed_failure(crate::model_selection::FailureKind::Protocol, response_started, e.to_string()))? {
                 let event_type = event["type"].as_str().unwrap_or("unknown");
                 if event_type.len() <= 128 && (event_kinds.contains_key(event_type) || event_kinds.len() < 64) {

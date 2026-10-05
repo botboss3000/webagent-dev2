@@ -257,14 +257,19 @@ pub(crate) async fn policy_set(State(app): State<App>, Json(body): Json<Value>) 
     let rules = body["rules"]
         .as_object()
         .ok_or_else(|| bad("rules required"))?;
-    let schemas = tools::schemas();
-    if rules.len() != schemas.len() {
+    // Discovery is dispatched by Rust rather than tools::execute, but its
+    // installation rules are still required by the same live permission check.
+    let names: std::collections::BTreeSet<String> = tools::schemas().iter()
+        .filter_map(|schema| schema["name"].as_str().map(str::to_owned))
+        .chain(["list_abilities", "load_ability"].into_iter().map(str::to_owned))
+        .collect();
+    if rules.len() != names.len() {
         return Err(bad("Specify every tool policy"));
     }
-    for schema in &schemas {
+    for name in &names {
         if !matches!(
             rules
-                .get(schema["name"].as_str().unwrap())
+                .get(name)
                 .and_then(Value::as_str),
             Some("allow" | "deny" | "require_approval")
         ) {
@@ -281,6 +286,47 @@ pub(crate) async fn policy_set(State(app): State<App>, Json(body): Json<Value>) 
     for user_id in app.store.all_user_ids().await? {phase3_api::quiesce_user(&app,&user_id,None).await?;}
     Ok(Json(value))
 }
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn policy_roundtrip_includes_discovery_and_preserves_restrictions() {
+        let (_root, app) = crate::runtime_tests::fixture().await;
+        let mut body = policy_default();
+        body["rules"]["file_write"] = json!("allow");
+        body["rules"]["shell"] = json!("require_approval");
+        body["rules"]["python"] = json!("deny");
+        body["rules"]["load_ability"] = json!("require_approval");
+        let saved = policy_set(State(app.clone()), Json(body.clone())).await.unwrap().0;
+        assert_eq!(saved["rules"], body["rules"]);
+        assert_eq!(saved["version"], 2);
+        assert_eq!(app.store.get("policy").await.unwrap().unwrap(), saved);
+        let access = app.store.live_access("admin", "shared_default").await.unwrap();
+        for (name, expected) in [("file_write", access::Permission::Auto),
+            ("shell", access::Permission::Ask), ("python", access::Permission::Deny)] {
+            let permission = access::Permission::from_policy(policy_decision(&saved, name)).unwrap();
+            assert_eq!(access.tool_decision(name, permission, true, true, false, false).permission, expected);
+        }
+        assert_eq!(access.tool_decision("file_write", access::Permission::Auto,
+            true, true, true, false).permission, access::Permission::Deny);
+
+        for name in ["file_read", "list_abilities", "load_ability"] {
+            let mut missing = body.clone();
+            missing["rules"].as_object_mut().unwrap().remove(name);
+            assert!(policy_set(State(app.clone()), Json(missing)).await.is_err());
+        }
+        let mut unknown = body.clone();
+        unknown["rules"].as_object_mut().unwrap().remove("load_ability");
+        unknown["rules"]["unknown_tool"] = json!("allow");
+        assert!(policy_set(State(app.clone()), Json(unknown)).await.is_err());
+        let mut invalid = body;
+        invalid["rules"]["list_abilities"] = json!("invalid");
+        assert!(policy_set(State(app.clone()), Json(invalid)).await.is_err());
+        assert_eq!(app.store.get("policy").await.unwrap().unwrap(), saved);
+    }
+}
+
 // Tenant connections are the sole credential authority after the catalog migration.
 // Retire the global route so installation oversight cannot bypass connection ownership.
 pub(crate) async fn provider_start(State(_app): State<App>) -> Api {

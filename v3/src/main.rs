@@ -13,6 +13,7 @@
 #[path = "gates/mod.rs"] mod gate_registry;
 #[path = "gates/controls.rs"] mod gate_controls;
 #[path = "agent_loop/tools/batch.rs"] mod parallel_batch;
+mod diagnostics;
 mod execution_modes;
 mod abilities;
 mod services;

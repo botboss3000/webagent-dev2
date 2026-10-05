@@ -111,13 +111,13 @@ impl Store {
         let document = json!({"schema_version":1,"revision":next,"kind":kind,
             "id":id,"session_id":sid,"updated_by_run":rid,"artifact":artifact});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(&key).bind(self.seal(&document)?).execute(&mut *tx).await?;
+            .bind(&key).bind(self.encode_user_record(&document)?).execute(&mut *tx).await?;
         let output = json!({"revision":next,"kind":kind,"id":id,"artifact":artifact});
         let receipt = json!({"fingerprint":fingerprint,"output":output});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
-            .bind(&receipt_key).bind(self.seal(&receipt)?).execute(&mut *tx).await?;
+            .bind(&receipt_key).bind(self.encode_user_record(&receipt)?).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,'base_task_artifact',?)")
-            .bind(sid).bind(self.seal(&json!({"kind":kind,"id":id,"revision":next}))?)
+            .bind(sid).bind(self.encode_user_record(&json!({"kind":kind,"id":id,"revision":next}))?)
             .execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(output)

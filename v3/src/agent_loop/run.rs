@@ -171,6 +171,15 @@ pub(crate) async fn execute_run(
             let before_model = gate_registry::selected(&workflow_policy,
                 workflow::Checkpoint::ModelDispatch)?;
             let agent_visibility = gate_controls::agent_visibility(&app.store, &agent_id).await?;
+            // Identity format applies to every model call, even when the working-message route is off.
+            if !agent_visibility.format.trim().is_empty() {
+                contributions.push(context_input::Contribution {
+                    id:"agent_message_format".into(),source:"agent_identity".into(),
+                    lifetime:context_input::Lifetime::Call,
+                    content:format!("Apply this format to user-facing messages in this call:\n{}", &agent_visibility.format),
+                    turn:run["turns"].as_u64().unwrap_or(0),call:call_number,
+                });
+            }
             if agent_visibility.enabled && before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
                 let mut config=gate_registry::visibility_config()?;
                 if !agent_visibility.guidance.is_empty() {
@@ -189,9 +198,11 @@ pub(crate) async fn execute_run(
             if before_publication.iter().any(|item|item.id==gate_registry::CLOSING_STATUS) {
                 let config=gate_registry::closing_config()?;
                 gate_schemas.push(gate_controls::closing_schema(&config));
+                // Closing notification guidance accompanies the fixed status protocol.
+                let closing=gate_controls::agent_closing(&app.store,&agent_id).await?;
                 contributions.push(context_input::Contribution {
                     id:"gate_closing_status".into(),source:"native_gate_config".into(),
-                    lifetime:context_input::Lifetime::Call,content:config.guidance,
+                    lifetime:context_input::Lifetime::Call,content:gate_controls::closing_guidance(&config,&closing),
                     turn:run["turns"].as_u64().unwrap_or(0),call:call_number,
                 });
             }

@@ -1,7 +1,7 @@
 //! The closing gate records status and a short notification intent before publication.
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClosingConfig {
@@ -14,6 +14,40 @@ pub struct ClosingConfig {
     pub fallback_notification: String,
 }
 
+/// Agent preferences guide the private closing notification.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentClosing {
+    pub notification_guidance: String,
+}
+impl AgentClosing {
+    pub fn validate(&self) -> Result<()> {
+        if self.notification_guidance.len() > 4096 {
+            bail!("Notification guidance must be at most 4096 bytes");
+        }
+        Ok(())
+    }
+}
+
+pub async fn agent_closing(store: &crate::store::Store, agent: &str) -> Result<AgentClosing> {
+    let view = store.for_agent(agent).await?;
+    let blob: Vec<u8> = sqlx::query_scalar("SELECT metadata FROM agents WHERE id=?")
+        .bind(agent).fetch_one(&view.agent_pool).await?;
+    let metadata = view.unseal(&blob)?;
+    let settings = if metadata["closing_message"].is_null() { AgentClosing::default() }
+        else { serde_json::from_value(metadata["closing_message"].clone())? };
+    settings.validate()?;
+    Ok(settings)
+}
+
+pub fn guidance(config: &ClosingConfig, settings: &AgentClosing) -> String {
+    let mut text = config.guidance.clone();
+    if !settings.notification_guidance.trim().is_empty() {
+        text.push_str("\nFor the private closing notification only, follow this agent guidance:\n");
+        text.push_str(&settings.notification_guidance);
+    }
+    text
+}
 pub fn closing_schema(config: &ClosingConfig) -> Value {
     json!({"type":"function","name":config.tool_name,
         "description":"Record the final reply status and a short notification intent before finishing.",
@@ -55,5 +89,15 @@ mod tests {
         assert!(closing_status(&json!({"flag":"unknown","notification":"Done"}),&config).is_err());
         assert!(closing_status(&json!({"flag":"complete","notification":"one two three four five six"}),&config).is_err());
         assert_eq!(fallback_status(&config)["flag"],"unverified");
+    }
+    #[test]
+    fn agent_guidance_is_bounded_and_keeps_the_fixed_protocol() {
+        let config=crate::gate_registry::closing_config().unwrap();
+        let settings=AgentClosing{notification_guidance:"Name the next step".into()};
+        settings.validate().unwrap();
+        let combined=guidance(&config,&settings);
+        assert!(combined.starts_with(&config.guidance));
+        assert!(combined.contains("Name the next step"));
+        assert!(AgentClosing{notification_guidance:"x".repeat(4097)}.validate().is_err());
     }
 }

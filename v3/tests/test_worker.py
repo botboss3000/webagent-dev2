@@ -112,16 +112,16 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target.read_text(), "other writer")
         self.assertEqual(list(base.glob(".v3-write-*")), [])
 
-    async def test_file_write_rejects_symlink_and_oversized_content(self):
+    async def test_file_write_follows_symlink_and_rejects_oversized_content(self):
         base = worker.workspace_path(self.session)
         target = base / "safe.txt"
         target.write_text("original")
         (base / "alias").symlink_to(target)
-        with self.assertRaises(ValueError):
-            await self.run_tool("file_write", {"path": "alias", "content": "replacement"})
+        await self.run_tool("file_write", {"path": "alias", "content": "replacement"})
         with self.assertRaises(ValueError):
             await self.run_tool("file_write", {"path": "safe.txt", "content": "x" * (worker.LIMIT + 1)})
-        self.assertEqual(target.read_text(), "original")
+        self.assertEqual(target.read_text(), "replacement")
+        self.assertTrue((base / "alias").is_symlink())
         self.assertEqual(list(base.glob(".v3-write-*")), [])
 
     async def test_source_patch_applies_reviewed_multifile_diff(self):
@@ -405,15 +405,34 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
             await self.run_tool("workspace_seed", {})
         self.assertFalse((worker.ROOT / self.session / "webagent-v3").exists())
 
-    async def test_files_and_escape(self):
+    async def test_files_follow_container_paths(self):
         await self.run_tool("file_write", {"path": "a/file.txt", "content": "hello"})
         self.assertEqual((await self.run_tool("file_read", {"path": "a/file.txt"}))["output"], "hello")
         self.assertIn("a/file.txt:1:hello", (await self.run_tool("file_search", {"query": "hello"}))["output"])
-        with self.assertRaises(ValueError):
-            await self.run_tool("file_read", {"path": "../../etc/passwd"})
-        (worker.ROOT / self.session / "escape").symlink_to("/etc")
-        with self.assertRaises((ValueError, OSError)):
-            await self.run_tool("file_read", {"path": "escape/passwd"})
+        outside = Path(self.tmp.name) / "outside.txt"
+        outside.write_text("outside")
+        self.assertEqual((await self.run_tool("file_read", {
+            "path": "../../outside.txt"}))["output"], "outside")
+        (worker.ROOT / self.session / "escape").symlink_to(Path(self.tmp.name))
+        self.assertEqual((await self.run_tool("file_read", {
+            "path": "escape/outside.txt"}))["output"], "outside")
+        checkout = Path(self.tmp.name) / "checkout"
+        checkout.mkdir()
+        (checkout / "v3").mkdir()
+        (checkout / "v3/README.md").write_text("live checkout")
+        with mock.patch.object(worker, "LIVE_CHECKOUT", checkout):
+            self.assertEqual((await self.run_tool("file_read", {
+                "path": "v3/README.md"}))["output"], "live checkout")
+
+    async def test_absolute_container_path_can_be_read_and_edited(self):
+        target = Path(self.tmp.name) / "live-source.rs"
+        target.write_text("old")
+        read = await self.run_tool("file_read", {"path": str(target)})
+        self.assertEqual(read["output"], "old")
+        edited = await self.run_tool("file_edit", {
+            "path": str(target), "old_text": "old", "new_text": "new"})
+        self.assertEqual(edited["status"], "success")
+        self.assertEqual(target.read_text(), "new")
 
     async def test_file_read_pages_beyond_first_megabyte(self):
         base = worker.workspace_path(self.session)
@@ -446,23 +465,27 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
         (base / "src/other.py").write_text("# TODO: Python\n")
         (base / "target/generated.rs").write_text("// TODO: ignored\n")
         (base / ".git/config.rs").write_text("// TODO: ignored\n")
-        (base / "src/escape.rs").symlink_to("/etc/passwd")
+        outside = Path(self.tmp.name) / "external.rs"
+        outside.write_text("// TODO: external\n")
+        (base / "src/escape.rs").symlink_to(outside)
         regex = await self.run_tool("file_search", {
             "path": "src", "query": r"fn\s+main", "regex": True,
             "file_glob": "*.rs"})
         self.assertIn("src/main.rs:2:fn main()", regex["output"])
         comments = await self.run_tool("file_search", {
             "query": "TODO", "comments_only": True, "file_glob": "*.rs"})
-        self.assertEqual(comments["output"], "src/main.rs:1:// TODO: inspect parser")
+        self.assertIn("src/main.rs:1:// TODO: inspect parser", comments["output"])
+        self.assertIn("target/generated.rs:1:// TODO: ignored", comments["output"])
+        self.assertIn(".git/config.rs:1:// TODO: ignored", comments["output"])
         outline = await self.run_tool("file_search", {
             "path": "src/main.rs", "comments_only": True})
         self.assertEqual(outline["output"], "src/main.rs:1:// TODO: inspect parser")
-        with self.assertRaises((ValueError, OSError)):
-            await self.run_tool("file_search", {
-                "path": "src/escape.rs", "query": "root"})
-        with self.assertRaisesRegex(ValueError, "excluded"):
-            await self.run_tool("file_search", {
-                "path": "target", "query": "TODO"})
+        linked = await self.run_tool("file_search", {
+            "path": "src/escape.rs", "query": "external"})
+        self.assertIn("src/escape.rs:1:// TODO: external", linked["output"])
+        target = await self.run_tool("file_search", {
+            "path": "target", "query": "TODO"})
+        self.assertIn("target/generated.rs:1:// TODO: ignored", target["output"])
         with self.assertRaisesRegex(ValueError, "directory search"):
             await self.run_tool("file_search", {"path": "src", "comments_only": True})
 
@@ -490,19 +513,20 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
                 "expected_sha256": result["previous_sha256"]})
         self.assertEqual(path.read_text(), "first = 1\nsecond = 3\n")
 
-    async def test_file_edit_rejects_ambiguous_and_escaping_paths(self):
+    async def test_file_edit_rejects_ambiguous_and_accepts_container_paths(self):
         path = worker.workspace_path(self.session) / "source.py"
         path.write_text("same\nsame\n")
         with self.assertRaisesRegex(ValueError, "exactly once"):
             await self.run_tool("file_edit", {
                 "path": "source.py", "old_text": "same", "new_text": "different"})
-        with self.assertRaisesRegex(ValueError, "path escapes workspace"):
-            await self.run_tool("file_edit", {
-                "path": "../source.py", "old_text": "same", "new_text": "different"})
-        (worker.ROOT / self.session / "escape").symlink_to("/tmp")
-        with self.assertRaises((ValueError, OSError)):
-            await self.run_tool("file_edit", {
-                "path": "escape/source.py", "old_text": "same", "new_text": "different"})
+        outside = worker.ROOT / "outside.py"
+        outside.write_text("first")
+        await self.run_tool("file_edit", {
+            "path": "../outside.py", "old_text": "first", "new_text": "second"})
+        (worker.ROOT / self.session / "escape").symlink_to(worker.ROOT)
+        await self.run_tool("file_edit", {
+            "path": "escape/outside.py", "old_text": "second", "new_text": "third"})
+        self.assertEqual(outside.read_text(), "third")
         self.assertEqual(path.read_text(), "same\nsame\n")
 
     async def test_file_edit_rejects_oversized_result(self):
@@ -519,6 +543,11 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
         self.assertEqual(result["output"].strip(), "absent")
         result = await self.run_tool("shell", {"command": "printf working"})
         self.assertEqual(result["output"], "working")
+        checkout = Path(self.tmp.name) / "checkout"
+        checkout.mkdir()
+        with mock.patch.object(worker, "LIVE_CHECKOUT", checkout):
+            result = await self.run_tool("shell", {"command": "pwd"})
+        self.assertEqual(result["output"].strip(), str(checkout))
 
     async def test_timeout(self):
         result = await self.run_tool("shell", {"command": "sleep 30"}, 1)
@@ -599,6 +628,13 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
         (worker.CONTROL / "shutoff").write_text("1")
         with self.assertRaisesRegex(ValueError, "disabled"):
             await self.run_tool("shell", {"command": "touch forbidden"})
+
+    async def test_approved_shell_can_read_outside_session_workspace(self):
+        outside = Path(self.tmp.name) / "live-source.txt"
+        outside.write_text("LIVE_SOURCE")
+        result = await self.run_tool("shell", {"command": "cat " + str(outside)})
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["output"], "LIVE_SOURCE")
 
     async def test_output_is_bounded(self):
         result = await self.run_tool("python", {"code": "print('x' * 2000000)"})

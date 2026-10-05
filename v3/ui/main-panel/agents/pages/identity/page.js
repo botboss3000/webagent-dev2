@@ -1,6 +1,7 @@
 
 'use strict';
 import { renderVisibility } from './visibility.js';
+import { renderClosing } from './closing.js';
 // Adapted V2 Identity fields; V3 transport, tenant permissions and revision fencing.
 export async function renderIdentity(host, request, {agentId, onSaved = () => {}}) {
   const path = '/models/agents/' + encodeURIComponent(agentId) + '/identity';
@@ -65,7 +66,6 @@ export async function renderIdentity(host, request, {agentId, onSaved = () => {}
     const task = queue.then(async()=>{ const saved=await request(path,'PUT',{revision:agent.revision,...patch}); agent=saved; onSaved(saved); return saved; });
     queue=task.catch(()=>{}); return task;
   };
-  renderVisibility(content, agent, persist);
   select.addEventListener('change',async()=>{select.disabled=true;try {await persist({default_execution_mode:select.value});notice.textContent='Default mode saved';} catch(error){notice.textContent='Save failed: '+error.message;} finally {fill();select.disabled=!agent.can_manage;} });
   const editor=document.createElement('div'); editor.style.cssText='display:flex;flex-direction:column;gap:8px;padding:10px 0';content.append(editor);
   const renderModes=()=>{
@@ -96,5 +96,7 @@ export async function renderIdentity(host, request, {agentId, onSaved = () => {}
     });
     if(agent.can_manage){const add=document.createElement('button');add.type='button';add.className='ac-btn ac-btn-ghost';add.textContent='Add mode';add.addEventListener('click',()=>{let n=1;while(modes.some(m=>m.id==='custom-'+n))n++;modes.push({id:'custom-'+n,label:'New mode',description:'',permission_policy:'read_only',prompt:'',builtin:false,_new:true});renderModes();});editor.append(add);}
   };renderModes();
+  renderVisibility(content, agent, persist);
 
+  renderClosing(content, agent, persist);
 }

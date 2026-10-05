@@ -1,6 +1,6 @@
 # Interactive coding terminals in V3
 
-Terminal Control runs real interactive processes in the current session workspace. Commands run as an isolated worker identity inside a filesystem and signal sandbox. They cannot read other sessions, application state, or live source. Coding CLI binaries and their credentials are not implicitly installed or supplied. Use Codebase Admin `shell` for one-shot commands.
+Terminal Control starts real interactive processes in /live-checkout when that mount is present. Approved commands run as the development checkout owner and can reach the mounted live checkout at /live-checkout, including v3 and v2 source. Coding CLI binaries and their credentials are not implicitly installed or supplied. Use Codebase Admin `shell` for one-shot commands.
 
 Use `terminal_open` → `terminal_read` → `terminal_send` → `terminal_wait` → `terminal_read`, then `terminal_close`. Each send requires the exact `sequence` from a fresh read or wait. New output or an earlier send invalidates that observation; read again after a stale-observation error. Do not replay input after an uncertain result.
 

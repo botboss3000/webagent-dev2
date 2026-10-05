@@ -37,7 +37,7 @@ def prepare():
     worker_dir = SOCKET.parent
     worker_dir.mkdir(parents=True, exist_ok=True)
     worker_dir.chmod(0o750)
-    os.chown(worker_dir, 1101, 1100)
+    os.chown(worker_dir, 1000, 1100)
     WORKSPACES.chmod(0o770)
     os.chown(WORKSPACES, 1101, 1100)
     for name, value in (("dispatch.lock", ""), ("shutoff", "0")):
@@ -87,7 +87,7 @@ def main():
     }
     worker = subprocess.Popen(
         ["/usr/bin/python3", "-I", "/build/worker.py"], env=worker_env,
-        preexec_fn=lambda: identity(1101),
+        preexec_fn=lambda: identity(1000),
     )
     try:
         deadline = time.monotonic() + 10

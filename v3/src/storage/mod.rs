@@ -10,7 +10,7 @@ mod activity;
 use crate::access;
 use crate::cache::{Cache, ContextCache};
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
@@ -88,6 +88,7 @@ pub struct Store {
     user_states: Arc<RwLock<HashMap<String, UserState>>>,
     agent_states: Arc<RwLock<HashMap<String, SqlitePool>>>,
     cipher: Aes256Gcm,
+    admin_database_encryption: bool,
     cache: Arc<Mutex<Cache>>,
     context_cache: Arc<Mutex<ContextCache>>,
     context_gate: Arc<RwLock<()>>,
@@ -241,6 +242,16 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
 impl Store {
     pub async fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
+        let settings_path = root.join("config/app-settings.json");
+        let admin_database_encryption = match std::fs::read(&settings_path) {
+            Ok(bytes) => {
+                let settings: Value = serde_json::from_slice(&bytes)?;
+                settings["admin_database_encryption"]["enabled"].as_bool()
+                    .ok_or_else(|| anyhow!("app-settings.json requires admin_database_encryption.enabled boolean"))?
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) => return Err(e.into()),
+        };
         let key = load_or_create_key(root)?;
         // Keep the administrator's original data path during migration.
         let admin_state = UserState::new(open_pool(&root.join("user_data/admin/admin.db"),true,true).await?);
@@ -258,6 +269,7 @@ impl Store {
             agent_id: "shared_default".to_owned(),
             user_states: Arc::new(RwLock::new(user_states)),
             agent_states: Arc::new(RwLock::new(agent_states)),
+            admin_database_encryption,
             cipher: Aes256Gcm::new_from_slice(&key)
                 .map_err(|_| anyhow!("Invalid encryption key"))?,
             cache: admin_state.cache,
@@ -312,7 +324,7 @@ impl Store {
             agent_pool:self.agent_pool.clone(),root:self.root.clone(),
             user_id:user_id.to_owned(),agent_id:self.agent_id.clone(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
-            cipher:self.cipher.clone(),cache:state.cache,
+            cipher:self.cipher.clone(),admin_database_encryption:self.admin_database_encryption,cache:state.cache,
             context_cache:state.context_cache,context_gate:state.context_gate};
         handle.migrate_session_metadata().await?;
         Ok(handle)
@@ -339,7 +351,7 @@ impl Store {
             agent_pool:pool,root:self.root.clone(),
             user_id:self.user_id.clone(),agent_id:agent_id.to_owned(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
-            cipher:self.cipher.clone(),
+            cipher:self.cipher.clone(),admin_database_encryption:self.admin_database_encryption,
             cache:self.cache.clone(),context_cache:self.context_cache.clone(),
             context_gate:self.context_gate.clone()})
     }
@@ -775,7 +787,7 @@ impl Store {
                 .or_else(|| session["created_at"].as_i64())
                 .unwrap_or(0);
             sqlx::query("INSERT OR IGNORE INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,?,NULL)")
-                .bind(&id).bind(sid).bind(run_id).bind(role).bind(self.seal(content)?)
+                .bind(&id).bind(sid).bind(run_id).bind(role).bind(self.encode_user_record(content)?)
                 .bind(created_at).execute(&self.pool).await?;
             let row = sqlx::query(
                 "SELECT session_id,run_id,role,content,created_at FROM chat WHERE id=?",
@@ -985,6 +997,20 @@ impl Store {
         legacy.close().await;
         result
     }
+    // Only user-plane writers may call this. seal() remains encrypted for
+    // application/agent secrets and authenticated search continuation cursors.
+    fn encode_user_record(&self, value: &Value) -> Result<Vec<u8>> {
+        if self.user_id != "admin" || self.admin_database_encryption { return self.seal(value); }
+        let mut nonce = [0; 12];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        let aad = serde_json::to_vec(&json!(["v3-admin-plaintext-v1", value]))?;
+        let tag = self.cipher.encrypt(Nonce::from_slice(&nonce), Payload { msg: &[], aad: &aad })
+            .map_err(|_| anyhow!("Storage authentication failed"))?;
+        Ok(serde_json::to_vec(&json!({"format":"v3-admin-plaintext-v1","value":value,"nonce":nonce,"tag":tag}))?)
+    }
+    fn encode_for_pool(&self, pool: &SqlitePool, value: &Value) -> Result<Vec<u8>> {
+        if std::ptr::eq(pool, &self.pool) { self.encode_user_record(value) } else { self.seal(value) }
+    }
     pub fn seal(&self, value: &Value) -> Result<Vec<u8>> {
         let mut nonce = [0; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
@@ -1000,6 +1026,19 @@ impl Store {
         Ok(data)
     }
     pub fn unseal(&self, data: &[u8]) -> Result<Value> {
+        // A nonce in the legacy binary format can begin with '{'; only a
+        // parsed, explicitly versioned envelope selects the plaintext reader.
+        if let Ok(record) = serde_json::from_slice::<Value>(data) {
+            if record["format"] == "v3-admin-plaintext-v1" {
+                let nonce: [u8; 12] = serde_json::from_value(record["nonce"].clone())?;
+                let tag: Vec<u8> = serde_json::from_value(record["tag"].clone())?;
+                let value = record.get("value").ok_or_else(|| anyhow!("Invalid plaintext record"))?;
+                let aad = serde_json::to_vec(&json!(["v3-admin-plaintext-v1", value]))?;
+                self.cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &tag, aad: &aad })
+                    .map_err(|_| anyhow!("Storage authentication failed"))?;
+                return Ok(value.clone());
+            }
+        }
         if data.len() < 28 {
             return Err(anyhow!("Invalid encrypted record"));
         }
@@ -1177,7 +1216,7 @@ impl Store {
         item: &Value,
     ) -> Result<()> {
         let inserted = sqlx::query("INSERT OR IGNORE INTO interactions(session_id,run_id,step,item,created_at) VALUES(?,?,?,?,strftime('%s','now'))")
-            .bind(sid).bind(run_id).bind(step).bind(self.seal(item)?)
+            .bind(sid).bind(run_id).bind(step).bind(self.encode_user_record(item)?)
             .execute(&mut **tx).await?.rows_affected();
         if inserted == 0 { return Ok(()); }
         // ACTIVITY-BOUNDARY: immutable public anchor, atomic with the private item.
@@ -1202,7 +1241,7 @@ impl Store {
         };
         let inserted = sqlx::query("INSERT OR IGNORE INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),?)")
             .bind(id).bind(sid).bind(run_id).bind(role)
-            .bind(self.seal(content)?).bind(terminal).execute(&mut **tx).await?;
+            .bind(self.encode_user_record(content)?).bind(terminal).execute(&mut **tx).await?;
         if inserted.rows_affected() > 0 { self.touch_session_activity(tx, sid).await?; }
         Ok(())
     }
@@ -1295,7 +1334,7 @@ impl Store {
                 if let Some(pair) = previous_hashes.get(ordinal).filter(|pair| pair.0 == plain_hash) {
                     manifest.push(pair.clone());
                 } else {
-                    let sealed = self.seal(item)?;
+                    let sealed = self.encode_user_record(item)?;
                     manifest.push((plain_hash, recovery_digest(&sealed)));
                     sqlx::query("INSERT INTO recovery_input(run_id,ordinal,item) VALUES(?,?,?) ON CONFLICT(run_id,ordinal) DO UPDATE SET item=excluded.item")
                         .bind(rid).bind(ordinal as i64).bind(sealed).execute(&mut **tx).await?;
@@ -1309,7 +1348,7 @@ impl Store {
             &metadata
         } else { value };
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(key).bind(self.seal(stored)?).execute(&mut **tx).await?;
+            .bind(key).bind(self.encode_for_pool(self.pool_for(key), stored)?).execute(&mut **tx).await?;
         Ok(())
     }
 
@@ -1386,14 +1425,14 @@ impl Store {
                 total[field]=serde_json::json!(total[field].as_u64().unwrap_or(0).saturating_sub(previous["usage"][field].as_u64().unwrap_or(0)).saturating_add(new_usage[field].as_u64().unwrap_or(0)));
             }
             total["known_cost_usd"]=serde_json::json!((total["known_cost_usd"].as_f64().unwrap_or(0.)-previous["usage"]["known_cost_usd"].as_f64().unwrap_or(0.)+new_usage["known_cost_usd"].as_f64().unwrap_or(0.)).max(0.));
-            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(&usage_key).bind(self.seal(&total)?).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(&usage_key).bind(self.encode_user_record(&total)?).execute(&mut **tx).await?;
             // Aggregates are read from the database; they must not use the doc cache.
             self.cache.lock().unwrap().invalidate(&[usage_key]);
         }
         let view = serde_json::json!({"usage":new_usage,"model":crate::public_run_model(run),"attachments":run["attachments"],"run_revision":run["run_revision"],"context_assembly_report":run["context_assembly_report"],"context_controls":run["context_controls"],"compactions":run["compactions"],"dispatch_mode":run["dispatch_mode"],"chat_model_revision":run["chat_model_revision"],"id":run["id"],"session_id":run["session_id"],"status":run["status"],"error":run["error"],
             "pending":run["pending"],"uncertain":run["uncertain"],"turns":run["turns"],"phase":run["phase"],"updated_at":run["updated_at"]});
         sqlx::query("INSERT INTO docs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(format!("run_view:{}",run["id"].as_str().unwrap())).bind(self.seal(&view)?).execute(&mut **tx).await?;
+            .bind(format!("run_view:{}",run["id"].as_str().unwrap())).bind(self.encode_user_record(&view)?).execute(&mut **tx).await?;
         Ok(())
     }
     pub async fn active_runs(&self) -> Result<Vec<Value>> {
@@ -1422,7 +1461,7 @@ impl Store {
         if record["session_id"]!=sid||!record["run_id"].is_null(){return Err(anyhow!("Attachment removal unavailable"));}
         let quota:Option<Vec<u8>>=sqlx::query_scalar("SELECT value FROM docs WHERE key='attachment_quota'").fetch_optional(&mut *tx).await?;
         let used=quota.map(|raw|self.unseal(&raw)).transpose()?.and_then(|v|v["bytes"].as_u64()).unwrap_or(0);
-        sqlx::query("UPDATE docs SET value=? WHERE key='attachment_quota'").bind(self.seal(&json!({"bytes":used.saturating_sub(record["bytes"].as_u64().unwrap_or(0))}))?).execute(&mut *tx).await?;
+        sqlx::query("UPDATE docs SET value=? WHERE key='attachment_quota'").bind(self.encode_user_record(&json!({"bytes":used.saturating_sub(record["bytes"].as_u64().unwrap_or(0))}))?).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM docs WHERE key=?").bind(format!("attachment:{aid}")).execute(&mut *tx).await?;
         tx.commit().await?;
         self.cache.lock().unwrap().invalidate(&[format!("attachment:{aid}"),"attachment_quota".into()]);
@@ -1470,7 +1509,7 @@ impl Store {
         sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
             .bind(sid)
             .bind(kind)
-            .bind(self.seal(payload)?)
+            .bind(self.encode_for_pool(destination, payload)?)
             .execute(destination)
             .await?;
         Ok(())
@@ -1546,7 +1585,7 @@ impl Store {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
                 .bind(run["session_id"].as_str().unwrap())
                 .bind(kind)
-                .bind(self.seal(payload)?)
+                .bind(self.encode_user_record(payload)?)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -1586,7 +1625,7 @@ impl Store {
             } else {
                 sqlx::query("INSERT INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),NULL)")
                     .bind(message_id).bind(sid).bind(rid).bind("assistant")
-                    .bind(self.seal(&json!(text))?).execute(&mut *tx).await?;
+                    .bind(self.encode_user_record(&json!(text))?).execute(&mut *tx).await?;
                 self.touch_session_activity(&mut tx, sid).await?;
             }
         }
@@ -1652,27 +1691,27 @@ impl Store {
                 "source_digest":source_digest,"source":source,"created_at":created_at});
             sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
                 .bind(format!("compaction_segment:{sid}:{segment_id}"))
-                .bind(self.seal(&segment)?).execute(&mut *tx).await?;
+                .bind(self.encode_user_record(&segment)?).execute(&mut *tx).await?;
             let mut entries=session["compaction_segments"].as_array().cloned().unwrap_or_default();
             if entries.len()>=32 {entries.remove(0);}
             entries.push(json!({"segment_id":segment_id,"source_digest":source_digest,
                 "item_count":source.len(),"created_at":created_at}));
             session["compaction_segments"]=json!(entries);
             sqlx::query("UPDATE docs SET value=? WHERE key=?")
-                .bind(self.seal(&session)?)
+                .bind(self.encode_user_record(&session)?)
                 .bind(&session_key)
                 .execute(&mut *tx)
                 .await?;
         }
         self.index_run(&mut tx, &persisted).await?;
         sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,?,?,strftime('%s','now'))")
-            .bind(rid).bind(kind).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+            .bind(rid).bind(kind).bind(self.encode_user_record(&json!({"schema_version":1,"run_id":rid,
                 "generation":run["generation"],"lease_epoch":run["lease_epoch"],
                 "status":run["status"],"kind":kind}))?)
             .execute(&mut *tx).await?;
         if run["status"]=="completed" {
             sqlx::query("INSERT OR IGNORE INTO publication_outbox(run_id,schema_version,payload,created_at) VALUES(?,1,?,strftime('%s','now'))")
-                .bind(rid).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+                .bind(rid).bind(self.encode_user_record(&json!({"schema_version":1,"run_id":rid,
                     "generation":run["generation"],"status":"completed",
                     "notification_intent":run["closing"]}))?)
                 .execute(&mut *tx).await?;
@@ -1714,7 +1753,7 @@ impl Store {
         sqlx::query("UPDATE run_index SET lease_epoch=?,lease_owner=?,lease_expires_at=? WHERE id=?")
             .bind(epoch+1).bind(owner).bind(until).bind(&rid).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,'claimed',?,strftime('%s','now'))")
-            .bind(&rid).bind(self.seal(&json!({"schema_version":1,"run_id":rid,
+            .bind(&rid).bind(self.encode_user_record(&json!({"schema_version":1,"run_id":rid,
                 "generation":generation,"lease_epoch":epoch+1,"kind":"claimed"}))?)
             .execute(&mut *tx).await?;
         tx.commit().await?;
@@ -1771,7 +1810,7 @@ impl Store {
             sqlx::query("UPDATE loop_commands SET acknowledged_at=strftime('%s','now') WHERE seq=? AND acknowledged_at IS NULL")
                 .bind(seq).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,'command_ack',?,strftime('%s','now'))")
-                .bind(&run_id).bind(self.seal(&json!({"schema_version":1,
+                .bind(&run_id).bind(self.encode_user_record(&json!({"schema_version":1,
                     "run_id":run_id,"command_seq":seq,"kind":"command_ack"}))?)
                 .execute(&mut *tx).await?;
         }
@@ -1871,7 +1910,7 @@ impl Store {
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
                 .bind(sid)
                 .bind(kind)
-                .bind(self.seal(payload)?)
+                .bind(self.encode_for_pool(destination, payload)?)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -1881,11 +1920,11 @@ impl Store {
             let command_id=command_id.unwrap_or_else(||format!("{kind}:{run_id}"));
             sqlx::query("INSERT INTO loop_commands(command_id,run_id,schema_version,kind,payload,created_at) VALUES(?,?,1,?,?,strftime('%s','now'))")
                 .bind(command_id).bind(run_id).bind(kind)
-                .bind(self.seal(&json!({"schema_version":1,"run_id":run_id,
+                .bind(self.encode_user_record(&json!({"schema_version":1,"run_id":run_id,
                     "kind":kind,"status":payload["status"]}))?)
                 .execute(&mut *tx).await?;
             sqlx::query("INSERT INTO loop_events(run_id,schema_version,kind,payload,created_at) VALUES(?,1,?,?,strftime('%s','now'))")
-                .bind(run_id).bind(kind).bind(self.seal(&json!({"schema_version":1,
+                .bind(run_id).bind(kind).bind(self.encode_user_record(&json!({"schema_version":1,
                     "run_id":run_id,"kind":kind}))?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
@@ -3083,5 +3122,53 @@ mod tests {
         let reopened=Store::open(root.path()).await.unwrap();
         assert_eq!(reopened.get("run:bench").await.unwrap().unwrap(),run);
         println!("recovery measurement: items=512 status_saves=50 save_total={elapsed:?} reopen_and_read={:?} unchanged_ciphertext_rows=512",start.elapsed());
+    }
+}
+
+#[cfg(test)]
+mod admin_storage_policy_tests {
+    use super::*;
+    fn configure(root: &Path, enabled: bool) {
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(root.join("config/app-settings.json"),
+            serde_json::to_vec(&json!({"admin_database_encryption":{"enabled":enabled}})).unwrap()).unwrap();
+    }
+    #[tokio::test]
+    async fn admin_plaintext_is_scoped_authenticated_and_backward_compatible() {
+        let root = tempfile::tempdir().unwrap();
+        let old = Store::open(root.path()).await.unwrap();
+        let value = json!({"private":"readable admin fixture"});
+        old.put("memory:old", &value).await.unwrap();
+        configure(root.path(), false);
+        let store = Store::open(root.path()).await.unwrap();
+        assert_eq!(store.get("memory:old").await.unwrap(), Some(value.clone()));
+        store.put("memory:new", &value).await.unwrap();
+        let raw: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='memory:new'").fetch_one(&store.pool).await.unwrap();
+        let mut envelope: Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(envelope["value"], value);
+        envelope["value"]["private"] = json!("tampered");
+        assert!(store.unseal(&serde_json::to_vec(&envelope).unwrap()).is_err());
+        store.put("credential:fixture", &value).await.unwrap();
+        let secret: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='credential:fixture'").fetch_one(&store.app_pool).await.unwrap();
+        assert!(serde_json::from_slice::<Value>(&secret).is_err());
+        store.put("agent:shared_default", &value).await.unwrap();
+        let agent: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='agent:shared_default'").fetch_one(&store.agent_pool).await.unwrap();
+        assert!(serde_json::from_slice::<Value>(&agent).is_err());
+        let mut other = store.clone(); other.user_id = "other".into();
+        assert!(serde_json::from_slice::<Value>(&other.encode_user_record(&value).unwrap()).is_err());
+        assert!(serde_json::from_slice::<Value>(&store.seal(&value).unwrap()).is_err());
+        configure(root.path(), true);
+        let reopened = Store::open(root.path()).await.unwrap();
+        assert_eq!(reopened.get("memory:new").await.unwrap(), Some(value.clone()));
+        reopened.put("memory:encrypted_again", &value).await.unwrap();
+        let raw: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='memory:encrypted_again'").fetch_one(&reopened.pool).await.unwrap();
+        assert!(serde_json::from_slice::<Value>(&raw).is_err());
+    }
+    #[tokio::test]
+    async fn invalid_admin_storage_policy_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        std::fs::write(root.path().join("config/app-settings.json"), br#"{"admin_database_encryption":{"enabled":"false"}}"#).unwrap();
+        assert!(Store::open(root.path()).await.is_err());
     }
 }

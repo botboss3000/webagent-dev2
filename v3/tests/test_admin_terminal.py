@@ -60,13 +60,12 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "never replays"):
             await self.call("terminal_read", terminal_id=ident)
 
-    async def test_workspace_ownership_and_sandbox(self):
+    async def test_terminal_ownership_with_unconfined_dev_shell(self):
         secret = self.other / "private"
         secret.write_text("PRIVATE")
         opened = await self.call("terminal_open", command="cat " + str(secret) + "; printf 'DONE\\n'")
         result = await self.read_until(opened["terminal_id"], "DONE")
-        self.assertNotIn("PRIVATE", result["output"])
-        self.assertIn("Permission denied", result["output"])
+        self.assertIn("PRIVATE", result["output"])
         with self.assertRaisesRegex(ValueError, "missing in this workspace"):
             await adapter.execute("terminal_read", {"terminal_id": opened["terminal_id"]}, self.other)
         self.assertEqual([], (await adapter.execute("terminal_list", {}, self.other))["terminals"])

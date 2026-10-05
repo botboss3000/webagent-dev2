@@ -4,12 +4,13 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('reload restores streamed text, replay is deduplicated, and final output stays safe', async () => {
+test('reload restores the partial reply, replay is deduplicated, and final text renders safely', async () => {
   class Element {
     constructor() {
       this.children = []; this.textContent = ''; this.hidden = false;
       this.value = ''; this.dataset = {};
-      this.classList = { toggle() { return false; }, contains() { return false; } };
+      this.classList = { toggle() { return false; }, contains() { return false; }, add() {} };
+      this.style = { setProperty() {} };
     }
     append(...nodes) { this.children.push(...nodes); }
     replaceChildren(...nodes) { this.children = nodes; }
@@ -45,19 +46,39 @@ test('reload restores streamed text, replay is deduplicated, and final output st
     URL, crypto: require('node:crypto').webcrypto, EventSource,
     setInterval() { return 1; }, clearInterval() {},
     fetch: async url => ({ ok: true, status: 200, json: async () => responses[url.replace('/api/v3', '')] }),
+    createAdministratorNotices: () => ({ start() {}, stop() {} }),
   };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../ui/app.js'), 'utf8'), context);
-  for (let i = 0; i < 10; i++) await new Promise(setImmediate);
-  const transcript = get('chat-messages-inner');
-  assert.equal(transcript.children.length, 2);
-  assert.equal(transcript.children[1].children[1].textContent, 'Saved prefix');
+  const clientSource = fs.readFileSync(path.join(__dirname, '../ui/chat/core/client.js'), 'utf8')
+    .replace(/^import .*;\n/gm, '').replace('export function', 'function');
+  vm.runInNewContext(clientSource + '\nglobalThis.createChatClient = createChatClient;', context);
+  const published = [];
+  const client = context.createChatClient({
+    request: async url => responses[url], note: () => {}, EventSourceClass: EventSource,
+  });
+  await client.open('s', data => {
+    assert.equal(data.partial.text, 'Saved prefix');
+  }, item => published.push(item));
   const emit = item => stream.onmessage({ data: JSON.stringify(item) });
   emit({ seq: 11, kind: 'delta', payload: { run_id: 'r', text: ' plus new' } });
   emit({ seq: 11, kind: 'delta', payload: { run_id: 'r', text: ' duplicate' } });
-  assert.equal(transcript.children[1].children[1].textContent, 'Saved prefix plus new');
   emit({ seq: 12, kind: 'message', payload: { run_id: 'r', role: 'assistant', content: '<script>unsafe()</script>' } });
-  assert.equal(transcript.children.length, 2);
-  assert.equal(transcript.children[1].children[1].textContent, '<script>unsafe()</script>');
+  assert.deepEqual(published.map(item => item.seq), [11, 12]);
+  assert.equal(published[1].payload.content, '<script>unsafe()</script>');
+  client.disconnect();
+  const viewSource = fs.readFileSync(path.join(__dirname, '../ui/chat/core/message-view.js'), 'utf8')
+    .replace(/^import .*;\n/gm, '').replace('export function', 'function');
+  const viewContext = {
+    document: { createElement: () => new Element(), createTextNode: text => ({ textContent: text }) },
+    window: {}, currentChatProfile: () => ({}), _refreshLucideIcons() {},
+    createBubbleGutter: () => new Element(), URL, location: context.location,
+  };
+  vm.runInNewContext(viewSource + '\nglobalThis.createMessage = createMessage;', viewContext);
+  const bubble = viewContext.createMessage({
+    id: 'final', seq: 12, run_id: 'r', role: 'assistant', content: published[1].payload.content,
+  });
+  const body = bubble.children[1].children[0];
+  assert.equal(body.children[0].textContent, '<script>unsafe()</script>');
+  assert.equal(body.innerHTML, undefined);
 });
 
 test('first-run setup validates passwords and creates a v3 admin', async () => {

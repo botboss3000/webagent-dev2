@@ -1,5 +1,8 @@
 # V3 Build
 
+YOUR MAIN OBJECTIVE IS TO BUILD THE V3 APP!
+
+
 Use for compiling/testing the repository's v3 Rust application and building its development image. Run v3_build_status first in the execution environment that will do the build. A plugin supplies structured operations, not missing infrastructure.
 
 Native tasks require Rust 1.90, Cargo, a C compiler for bundled SQLite, dependency-download access (or a populated cache), and writable temporary/cache space. Image builds require a reachable Docker daemon and registry access; the pinned Dockerfile supplies Rust and runtime dependencies. Builds can consume substantial disk, memory, and time. Cargo and Docker execute repository build code, so grant this ability only to trusted agents/callers.
@@ -73,6 +76,7 @@ Session `403498b7-6822-44e9-adae-a2fd9ce32600` found provider HTTP/stream errors
 That session added `/api/v3/admin/messaging` create/send/read routes in source but reported no deployment or compiled-test verification. Machine access is disabled without `V3_MESSAGE_API_TOKEN`; it is narrowly scoped and does not approve tools or unlock settings. HTTP 202 means a run was accepted, not that chat succeeded: poll its status/reply. Check current code, configuration, tests, and live evidence before claiming this API—or any migrated feature—works.
 
 ## Dedicated worker
+Ask user if there is parallel activites ongoing that may cause you to have to redo your efforts before starting the image or deployment process.
 When V3_BUILD_WORKER_URL is configured, status probes the host worker. Use v3_worker_submit for build, then poll v3_worker_job. Deploy only the successful build_job_id after explicit deployment authorization. Keep identical request_id/body on uncertain retries. Never substitute local Docker when remote configuration fails. See docs/v3-build-worker.md for host installation; do not expose the worker publicly or store tokens in chat/source.
 
 ## Authenticated v3 browser validation

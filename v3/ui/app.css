@@ -1,4 +1,59 @@
 /* V3 uses the v2 header and panel mounts with its own Rust API wiring. */
+/* SISTER-PANEL: floating-menu styles ported from ui/main-panel/admin-tools/files.css.
+   The body portal is shared by ability/skill/tool controls, even without File Manager. */
+body {
+  --files-bg-menu: var(--bg-1);
+  --files-border-strong: var(--border-strong);
+  --files-text: var(--fg-2);
+  --files-text-strong: var(--fg-1);
+  --files-link: var(--accent);
+  --files-menu-shadow: 0 6px 18px rgba(var(--shadow-rgb), 0.4);
+  --files-menu-item-hov: rgba(var(--brand-rgb), 0.45);
+  --files-danger: var(--danger);
+  --files-danger-hov: rgba(var(--danger-rgb), 0.25);
+}
+.files-tab-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--files-bg-menu);
+  border: var(--border-width) solid var(--files-border-strong);
+  border-radius: 6px;
+  box-shadow: var(--files-menu-shadow);
+  padding: 4px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.files-tab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--files-text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.files-tab-menu-item:hover { background: var(--files-menu-item-hov); color: var(--files-text-strong); }
+.files-tab-menu-item.danger { color: var(--files-danger); }
+.files-tab-menu-item.danger:hover { background: var(--files-danger-hov); color: var(--files-text-strong); }
+.files-tab-menu-item.danger.armed { color: var(--warning); }
+.files-tab-menu-item.danger.armed:hover { background: rgba(var(--warning-rgb), 0.15); color: var(--warning); }
+.files-tab-menu-item .lucide-icon { width: 14px; height: 14px; flex-shrink: 0; }
+.files-tab-menu-item.checked .files-tab-menu-check { margin-left: auto; color: var(--files-link); font-size: 12px; }
+.files-tab-menu-item .files-tab-menu-check { margin-left: auto; visibility: hidden; }
+.files-tab-menu-item.checked .files-tab-menu-check { visibility: visible; }
+.files-tab-menu-item:disabled { opacity: 0.4; cursor: default; }
+.files-tab-menu-item:disabled:hover { background: transparent; color: var(--files-text); }
+.files-tab-menu-sep { height: 1px; background: var(--files-border-strong); margin: 4px 6px; }
+.files-tab-menu-info { padding: 5px 10px 6px; min-width: 248px; font-size: 11px; line-height: 1.35; color: var(--files-text); opacity: 0.85; }
+
 /* Directory rows highlight flush to the container's clipped, rounded edge. */
 #tab-agents .agent-config-topics{padding:0}
 #tab-agents .agent-config-star{align-self:center;margin-right:18px;padding:0;border:0;background:transparent;color:var(--agent-config-icon);cursor:pointer}
@@ -88,14 +143,11 @@
 #abilities-page .v3-abilities-list,#abilities-page .v3-ability-tools{overflow:visible}
 #abilities-page .v3-ability>.ac-ability-row{cursor:pointer}
 #abilities-page .v3-ability:not(.expanded)>.ac-ability-body{display:none}
-#abilities-page .v3-ability .v3-mode-holder{position:relative;flex-shrink:0}
-#abilities-page .v3-mode-trigger{border:0;background:transparent;color:var(--fg-2);min-width:30px;min-height:28px;cursor:pointer;font-size:20px;line-height:1}
-#abilities-page .v3-mode-menu{position:absolute;right:0;top:100%;z-index:40;min-width:176px;padding:6px;border:var(--border-width) solid var(--border);border-radius:8px;background:var(--bg-elev);box-shadow:0 8px 24px rgba(var(--shadow-rgb),.25)}
-#abilities-page .v3-menu-caption{padding:5px 8px;color:var(--fg-3);font-size:11px;font-weight:600}
-#abilities-page .v3-mode-choice{display:block;width:100%;padding:8px;border:0;border-radius:5px;background:transparent;color:var(--fg-1);text-align:left;cursor:pointer}
-#abilities-page .v3-mode-choice:hover,#abilities-page .v3-mode-choice[aria-pressed=true]{background:rgba(var(--brand-rgb),.12)}
-#abilities-page .v3-mode-choice[aria-pressed=true]:before{content:'✓ ';color:var(--accent)}
-#abilities-page .v3-mode-badge{color:var(--fg-3);font-size:11px;text-transform:capitalize}
-#abilities-page .v3-ability-tools .ac-ability-row{padding:7px 12px}
 #abilities-page .v3-ability-note{margin:10px 8px;color:var(--fg-3);font-size:12px}
 #abilities-page .v3-ability-status{min-height:20px;color:var(--warning)}
+/* Group flags retain the v2 state palette, independent of the app brand accent. */
+#abilities-page .ac-group-status[data-state="on"]{color:var(--success);border-color:var(--success-mid);background:var(--success-soft)}
+#abilities-page .ac-group-status[data-state="mixed"]{color:var(--warning);border-color:var(--warning-soft);background:var(--warning-soft)}
+#abilities-page .ac-group-status[data-state="off"]{color:var(--fg-3);border-color:var(--border);background:var(--bg-1)}
+.v3-tool-skill-dialog{width:min(90vw,720px);max-height:85vh;padding:18px;background:var(--bg-elev);color:var(--fg-1);border:var(--border-width) solid var(--border);border-radius:10px}
+.v3-tool-skill-dialog pre{max-height:65vh;overflow:auto;white-space:pre-wrap;color:var(--fg-2);font-size:12px}

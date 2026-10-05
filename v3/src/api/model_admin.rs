@@ -211,16 +211,18 @@ async fn identity_get(State(app): State<App>, Extension(identity): Extension<Val
         .bind(&id).fetch_one(&store.agent_pool).await.map_err(anyhow::Error::from)?;
     let config=crate::execution_modes::config(&store,&id).await?;
     let settings=crate::gate_controls::agent_visibility(&store,&id).await?;
+    let closing=crate::gate_controls::agent_closing(&store,&id).await?;
+    let closing_protocol=crate::gate_registry::closing_config()?;
     let fixed=crate::gate_registry::visibility_config()?.guidance;
-    Ok(Json(json!({"message_visibility":{"enabled":settings.enabled,"guidance":settings.guidance,"fixed_protocol":fixed},"execution_modes":config["execution_modes"],"default_execution_mode":config["default_execution_mode"],"id":id,"name":row.get::<String,_>("name"),
+    Ok(Json(json!({"closing_message":closing,"closing_protocol":{"flags":closing_protocol.flags,"notification_max_words":closing_protocol.notification_max_words},"message_visibility":{"enabled":settings.enabled,"guidance":settings.guidance,"format":settings.format,"fixed_protocol":fixed},"execution_modes":config["execution_modes"],"default_execution_mode":config["default_execution_mode"],"id":id,"name":row.get::<String,_>("name"),
         "description":row.get::<String,_>("description"),"revision":row.get::<i64,_>("revision"),
         "can_manage":rights["can_manage"]})))
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IdentityUpdate { revision: i64, name: Option<String>, description: Option<String>, execution_modes: Option<Value>, default_execution_mode: Option<String>, message_visibility: Option<crate::gate_controls::AgentVisibility> }
+struct IdentityUpdate { revision: i64, name: Option<String>, description: Option<String>, execution_modes: Option<Value>, default_execution_mode: Option<String>, message_visibility: Option<crate::gate_controls::AgentVisibility>, closing_message: Option<crate::gate_controls::AgentClosing> }
 async fn identity_put(State(app): State<App>, Extension(identity): Extension<Value>, Path(id): Path<String>, Json(body): Json<IdentityUpdate>) -> Api {
-    if body.revision < 0 || (body.name.is_none() && body.description.is_none() && body.execution_modes.is_none() && body.default_execution_mode.is_none() && body.message_visibility.is_none())
+    if body.revision < 0 || (body.name.is_none() && body.description.is_none() && body.execution_modes.is_none() && body.default_execution_mode.is_none() && body.message_visibility.is_none() && body.closing_message.is_none())
         || body.name.as_ref().is_some_and(|s| s.trim().is_empty() || s.len()>200)
         || body.description.as_ref().is_some_and(|s| s.len()>2000) {
         return Err(ApiError(StatusCode::BAD_REQUEST,"Name must contain 1–200 bytes; description at most 2000 bytes".into()));
@@ -239,6 +241,10 @@ async fn identity_put(State(app): State<App>, Extension(identity): Extension<Val
     if let Some(settings)=body.message_visibility {
         settings.validate().map_err(|e|crate::bad(&e.to_string()))?;
         metadata["message_visibility"]=serde_json::to_value(settings).map_err(anyhow::Error::from)?;
+    }
+    if let Some(settings)=body.closing_message {
+        settings.validate().map_err(|e|crate::bad(&e.to_string()))?;
+        metadata["closing_message"]=serde_json::to_value(settings).map_err(anyhow::Error::from)?;
     }
     let changed = sqlx::query("UPDATE agents SET name=COALESCE(?,name),description=COALESCE(?,description),metadata=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
         .bind(body.name.as_deref().map(str::trim)).bind(body.description.as_deref()).bind(store.seal(&metadata)?)
@@ -474,17 +480,40 @@ mod tests {
         let (_root,app)=fixture().await;let identity=json!({"_user_id":"admin"});
         let Json(before)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
         assert_eq!(before["message_visibility"]["enabled"],true);
-        let patch=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,execution_modes:None,default_execution_mode:None,message_visibility:Some(crate::gate_controls::AgentVisibility{enabled:false,guidance:guidance.into()})};
+        let patch=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,execution_modes:None,default_execution_mode:None,message_visibility:Some(crate::gate_controls::AgentVisibility{enabled:false,guidance:guidance.into(),format:"Use short lines".into()}),closing_message:None};
         let revision=before["revision"].as_i64().unwrap();
         let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"Keep progress concise"))).await.unwrap();
         assert_eq!(saved["message_visibility"]["fixed_protocol"],before["message_visibility"]["fixed_protocol"]);
+        assert_eq!(saved["message_visibility"]["format"],"Use short lines");
         assert_eq!(saved["message_visibility"]["enabled"],false);
-        let settings=crate::gate_controls::agent_visibility(&app.store,"shared_default").await.unwrap();assert!(!settings.enabled);assert_eq!(settings.guidance,"Keep progress concise");
+        let settings=crate::gate_controls::agent_visibility(&app.store,"shared_default").await.unwrap();assert!(!settings.enabled);assert_eq!(settings.guidance,"Keep progress concise");assert_eq!(settings.format,"Use short lines");
         let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();assert_eq!(reloaded,saved);
         assert_eq!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"stale"))).await.unwrap_err().0,StatusCode::CONFLICT);
         let outsider=tenant_user(&app,"visibility-outsider").await;
         assert!(identity_put(State(app.clone()),Extension(json!({"_user_id":outsider})),Path("shared_default".into()),Json(patch(revision+1,"forbidden"))).await.is_err());
         assert!(identity_put(State(app.clone()),Extension(identity),Path("shared_default".into()),Json(patch(revision+1,&"x".repeat(4097)))).await.is_err());
+    }
+    #[tokio::test]
+    async fn notification_guidance_roundtrips_with_identity_revision() {
+        let (_root,app)=fixture().await;
+        let identity=json!({"_user_id":"admin"});
+        let Json(before)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
+        assert_eq!(before["closing_message"]["notification_guidance"],"");
+        let revision=before["revision"].as_i64().unwrap();
+        let update=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,
+            execution_modes:None,default_execution_mode:None,message_visibility:None,
+            closing_message:Some(crate::gate_controls::AgentClosing{
+                notification_guidance:guidance.into()})};
+        let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),
+            Path("shared_default".into()),Json(update(revision,"Name the next step"))).await.unwrap();
+        assert_eq!(saved["closing_message"]["notification_guidance"],"Name the next step");
+        let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),
+            Path("shared_default".into())).await.unwrap();
+        assert_eq!(reloaded,saved);
+        assert_eq!(identity_put(State(app.clone()),Extension(identity.clone()),
+            Path("shared_default".into()),Json(update(revision,"stale"))).await.unwrap_err().0,StatusCode::CONFLICT);
+        assert!(identity_put(State(app.clone()),Extension(identity),
+            Path("shared_default".into()),Json(update(saved["revision"].as_i64().unwrap(),&"x".repeat(4097)))).await.is_err());
     }
     #[tokio::test]
     async fn identity_modes_persist_default_and_enforce_live_boundary() {
@@ -494,7 +523,7 @@ mod tests {
         let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{
             revision:before["revision"].as_i64().unwrap(),name:None,description:None,
             execution_modes:Some(json!([{"id":"review","label":"Review","permission_policy":"read_only","prompt":"Inspect only"}])),
-            default_execution_mode:Some("review".into()),message_visibility:None})).await.unwrap();
+            default_execution_mode:Some("review".into()),message_visibility:None,closing_message:None})).await.unwrap();
         let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
         assert_eq!(saved,reloaded);
         let Json(session)=crate::api::create_session(State(app.clone()),Json(json!({"client_request_id":crate::uuid()}))).await.unwrap();
@@ -505,7 +534,7 @@ mod tests {
         let mut modes=saved["execution_modes"].clone();
         modes.as_array_mut().unwrap().last_mut().unwrap()["permission_policy"]=json!("write");
         identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{
-            revision:saved["revision"].as_i64().unwrap(),name:None,description:None,execution_modes:Some(modes),default_execution_mode:None,message_visibility:None})).await.unwrap();
+            revision:saved["revision"].as_i64().unwrap(),name:None,description:None,execution_modes:Some(modes),default_execution_mode:None,message_visibility:None,closing_message:None})).await.unwrap();
         assert_eq!(crate::session_mode(&app,sid).await.unwrap()["mode"],"read_only");
         let Json(next)=crate::api::change_session_mode(&app,sid,"review",Some(0),None).await.unwrap();
         assert_eq!(next["mode"],"write");
@@ -544,12 +573,12 @@ mod tests {
         let identity = json!({"_user_id":"admin"});
         let Json(before) = identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
         let revision = before["revision"].as_i64().unwrap();
-        let Json(saved) = identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("  Renamed  ".into()),description:Some("Description".into()),execution_modes:None,default_execution_mode:None,message_visibility:None})).await.unwrap();
+        let Json(saved) = identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("  Renamed  ".into()),description:Some("Description".into()),execution_modes:None,default_execution_mode:None,message_visibility:None,closing_message:None})).await.unwrap();
         assert_eq!(saved["name"],"Renamed"); assert_eq!(saved["description"],"Description");
-        assert!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("Stale".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
-        assert!(identity_put(State(app.clone()),Extension(identity),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some(" ".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
+        assert!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(IdentityUpdate{revision,name:Some("Stale".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None,closing_message:None})).await.is_err());
+        assert!(identity_put(State(app.clone()),Extension(identity),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some(" ".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None,closing_message:None})).await.is_err());
         let outsider = tenant_user(&app,"identity-outsider").await;
-        assert!(identity_put(State(app.clone()),Extension(json!({"_user_id":outsider})),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some("Forbidden".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None})).await.is_err());
+        assert!(identity_put(State(app.clone()),Extension(json!({"_user_id":outsider})),Path("shared_default".into()),Json(IdentityUpdate{revision:revision+1,name:Some("Forbidden".into()),description:None,execution_modes:None,default_execution_mode:None,message_visibility:None,closing_message:None})).await.is_err());
     }
     #[tokio::test]
     async fn deepseek_keys_are_validated_encrypted_scoped_and_not_returned() {

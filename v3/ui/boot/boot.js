@@ -1,4 +1,9 @@
 "use strict";
+// Reuse the v2 renderer unchanged; the v3 scene owns its boot-only lifetime.
+window.WA_BG.whenReady('bullet-grid', function (renderer) {
+  var canvas = document.querySelector('#boot-curtain canvas');
+  if (canvas) renderer.start(canvas);
+});
   (function () {
     var curtainDone = false;
     var appReadyDone = false;
@@ -11,12 +16,11 @@
       if (curtainDone) return;
       curtainDone = true;
       if (!curtain) return;
+      // Remove every boot visual before releasing the app's visibility gate.
+      window.WA_BG?._get('bullet-grid')?.stop();
+      remove();
+      window.dispatchEvent(new CustomEvent('wa-boot-pointerend'));
       document.body.classList.remove('is-booting');
-      curtain.classList.add('is-revealed');
-      var t = setTimeout(remove, 700);
-      curtain.addEventListener('transitionend', function (e) {
-        if (e.propertyName === 'opacity') { clearTimeout(t); remove(); }
-      });
     }
     function announceAppReady() {
       if (appReadyDone) return;
@@ -65,7 +69,7 @@ try { document.body.classList.toggle("light-mode", localStorage.getItem("v3-them
     var W = 0, H = 0;
 
     // Still booting? True while the pre-paint boot flag is set OR the boot
-    // curtain is still in the DOM (it is removed ~700ms after reveal starts).
+    // curtain is still in the DOM (both are removed synchronously at reveal).
     // This covers both orderings of "tab content mounted" vs "curtain lifts",
     // so the background is never static the moment the app becomes visible.
     function bootActive() {

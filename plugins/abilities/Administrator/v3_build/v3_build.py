@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[4]
 TASKS = {"check": ["check"], "test": ["test"], "release": ["build", "--release"]}
 CONTEXT = (
-    "v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock", "v3/.gitignore", "v3/src", "v3/ui",
+    "v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock", "v3/build.rs", "v3/plugins/diagnostics", "v3/.gitignore", "v3/src", "v3/ui",
     "v3/plugins/abilities", "v3/worker.py", "v3/launch.py", "v3/promote.py", "v3/ui-baseline.json",
     "v3/config", "v3/docs", "v3/plugins/gates", "v3/sandbox.py",
     "v3/data/config/gates/message_visibility_v1.json",

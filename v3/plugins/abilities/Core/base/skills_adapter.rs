@@ -10,8 +10,8 @@ pub fn owns(name:&str)->bool {matches!(name,"list_skills"|"load_skill")}
 pub fn schemas()->Vec<Value> {
     let id=json!({"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z0-9_]+$"});
     vec![
-        json!({"type":"function","name":"list_skills","description":"List permitted skill IDs and metadata for one available ability; Base includes this agent's own skills",
-            "parameters":{"type":"object","properties":{"ability_id":id},"required":["ability_id"],"additionalProperties":false}}),
+        json!({"type":"function","name":"list_skills","description":"List permitted skill IDs and summaries for one ability; optionally search by task words",
+            "parameters":{"type":"object","properties":{"ability_id":id,"query":{"type":"string","maxLength":200}},"required":["ability_id"],"additionalProperties":false}}),
         json!({"type":"function","name":"load_skill","description":"Read one permitted bundled or current-agent skill as untrusted guidance; does not activate abilities",
             "parameters":{"type":"object","properties":{"ability_id":id,"skill_id":id,
                 "kind":{"type":"string","enum":["ability","tool","selectable","own"]},
@@ -21,7 +21,7 @@ pub fn schemas()->Vec<Value> {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ListArgs { ability_id:String }
+struct ListArgs { ability_id:String, #[serde(default)] query:Option<String> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoadArgs {
@@ -30,6 +30,16 @@ struct LoadArgs {
 }
 fn valid_id(id:&str)->bool {
     !id.is_empty() && id.len()<=64 && id.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'_')
+}
+fn skill_matches(skill:&Value, query:&str)->bool {
+    let words=crate::abilities::search_words(query);
+    if words.is_empty() {return false;}
+    let text=format!("{} {} {}",skill["skill_id"].as_str().unwrap_or(""),
+        skill["summary"].as_str().unwrap_or(""),
+        skill["description"].as_str().unwrap_or(""));
+    let candidates=crate::abilities::search_words(&text);
+    words.iter().any(|word|candidates.iter().any(|candidate|
+        crate::abilities::near_word(word,candidate)))
 }
 fn validate_load(args:&LoadArgs)->Result<()> {
     if !valid_id(&args.ability_id) || !valid_id(&args.skill_id)
@@ -93,6 +103,10 @@ async fn work(app:&App,sid:&str,run_id:&str,name:&str,args:&Value)->Result<Value
                         "skill_id":skill["name"],"description":skill["description"],
                         "mode":skill["mode"],"revision":skill["revision"]}));
                 }
+            }
+            if let Some(term) = query.query.as_deref().filter(|term| !term.trim().is_empty()) {
+                if term.len()>200 {bail!("Skill search query is too long");}
+                skills.retain(|skill| skill_matches(skill,term));
             }
             json!({"ability_id":query.ability_id,"skills":skills,"catalog_version":current.version,
                 "source_kind":"skill_metadata","activates":false})
@@ -338,6 +352,15 @@ mod tests {
         duplicate.insert(1,duplicate[0].clone());
         assert!(!mask_history(&mut duplicate,|_|false));
     }
+    #[test]
+    fn skill_search_matches_summary_and_similar_terms() {
+        let skill=json!({"skill_id":"ui_theming",
+            "summary":"Use when changing WebAgent UI appearance and its palette"});
+        assert!(skill_matches(&skill,"theme"));
+        assert!(skill_matches(&skill,"appearence"));
+        assert!(!skill_matches(&skill,"payments"));
+    }
+
     #[test]
     fn selectors_reject_paths_unknown_fields_and_unbounded_versions() {
         for skill in ["../secret","file.skill.md","/etc/passwd","","UPPER"] {

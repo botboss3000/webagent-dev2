@@ -80,11 +80,11 @@ pub fn is_read(name: &str) -> bool {
 pub fn schemas() -> Vec<Value> {
     static SCHEMAS: OnceLock<Vec<Value>> = OnceLock::new();
     SCHEMAS.get_or_init(|| { let mut schemas: Vec<Value> = [
-        ("file_list", "List files in the session workspace", json!({"path":{"type":"string"}}), vec![]),
-        ("file_read", "Read a bounded page of workspace file lines", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1,"maximum":10000000},"limit":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
-        ("file_search", "Search workspace files by literal or regex query; outline comments in one file", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"file_glob":{"type":"string"},"comments_only":{"type":"boolean"}}), vec![]),
-        ("file_write", "Write a workspace file; requires approval", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path","content"]),
-        ("file_edit", "Replace exactly one matching span in an existing workspace file; requires approval", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string"}}), vec!["path","old_text","new_text"]),
+        ("file_list", "List a directory by absolute container path or relative live-checkout path", json!({"path":{"type":"string"}}), vec![]),
+        ("file_read", "Read a bounded page of file lines from a container or live-checkout path", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1,"maximum":10000000},"limit":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
+        ("file_search", "Search container or live-checkout files by literal or regex query; outline comments in one file", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"file_glob":{"type":"string"},"comments_only":{"type":"boolean"}}), vec![]),
+        ("file_write", "Write a container or live-checkout file; requires approval", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path","content"]),
+        ("file_edit", "Replace exactly one matching span in an existing container or live-checkout file; requires approval", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string"}}), vec!["path","old_text","new_text"]),
         ("workspace_seed", "Copy the audited WebAgent v3 source snapshot into this session workspace and create a Git baseline; requires approval", json!({}), vec![]),
         ("source_review", "Review tracked and new changes in the seeded v3 source without modifying its Git index", json!({}), vec![]),
         ("prompt_slot_read", "List or read the current agent's ordered instruction slots", json!({"action":{"type":"string","enum":["list","get"]},"slot_name":{"type":"string"}}), vec!["action"]),
@@ -92,8 +92,8 @@ pub fn schemas() -> Vec<Value> {
         ("state_inspect", "Read bounded public metadata for the current session; catalog, session, chat, or runs", json!({"resource":{"type":"string","enum":["catalog","session","chat","runs"]},"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}), vec!["resource"]),
         ("source_patch", "Apply a checked text patch to the seeded v3 source; requires approval", json!({"patch":{"type":"string"},"expected_review_sha256":{"type":"string"}}), vec!["patch","expected_review_sha256"]),
         ("promotion_propose", "Submit the current reviewed v3 source patch for administrator approval; does not change live source", json!({"expected_review_sha256":{"type":"string"},"summary":{"type":"string"}}), vec!["expected_review_sha256","summary"]),
-        ("shell", "Execute a shell command in the workspace; requires approval", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["command"]),
-        ("python", "Execute Python in the workspace; requires approval", json!({"code":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["code"]),
+        ("shell", "Execute a shell command from the live development checkout; requires approval", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["command"]),
+        ("python", "Execute Python from the live development checkout; requires approval", json!({"code":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["code"]),
     ].into_iter().map(|(name, description, properties, required)| json!({
         "type":"function", "name":name, "description":description,
         "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}

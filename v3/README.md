@@ -924,3 +924,24 @@ network/proxy, or model-provider constraints. Context previews and reader pages
 remain bounded without truncating the stored file or imposing a maximum offset.
 Updated API and loop images are required initially; subsequent JSON limit changes
 need no rebuild.
+
+## Admin database encryption setting
+
+Both processes read `v3/data/config/app-settings.json` (container
+`/state/config/app-settings.json`) at startup. The documented seed template is
+`v3/config/app-settings.json`; `deploy.sh start` copies it only if absent.
+`admin_database_encryption.enabled=false` saves new or rewritten fixed-account
+`admin` user database records as readable JSON with a tamper-detection tag.
+Other users, application and agent databases, and search cursors stay encrypted.
+Missing configuration defaults to encryption; a missing or non-boolean `enabled`
+in an existing file prevents startup. Instructions are JSON `_instructions`
+strings, not invalid JSON comments.
+
+Existing encrypted and authenticated-plaintext records remain readable in either
+mode. There is no bulk conversion; retained recovery items can keep their previous
+encoding. This setting does not make old history plaintext or scrub old WALs and
+backups. Keep `encryption.key`: it protects the remaining ciphertext and authenticates
+plaintext records. Protect the database, WAL files, and backups because plaintext
+can include private conversations and tool output. Rebuild the backend and restart
+**both API and loop together** before using this new format; old binaries cannot
+read it. Source checks alone are not live deployment acceptance.

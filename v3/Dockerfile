@@ -2,18 +2,19 @@ FROM cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8
 FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
 WORKDIR /build
 COPY v3/Cargo.toml v3/Cargo.lock ./
+COPY v3/build.rs ./build.rs
 COPY v3/src ./src
 # COMPACTION CONFIG: build-time tests read this fixture; runtime uses the single
 # host config directory mounted by deploy.sh, not an embedded configuration.
 COPY v3/config ./config
 # GATE-CONFIG: only the two selected non-secret live JSON files enter the image.
 COPY v3/data/config/gates ./data/config/gates
-COPY v3/plugins/gates ./plugins/gates
+COPY v3/plugins ./plugins
 # Runtime tests load the installed ability catalog and chat configuration.
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
 ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-RUN cargo test --locked
+RUN cargo test --locked -- --test-threads=1
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251

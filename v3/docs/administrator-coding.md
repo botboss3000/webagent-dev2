@@ -8,13 +8,13 @@ All eight selected Administrator abilities are marked ready after focused tests 
 
 Rust resolves the authenticated account, current session, its immutable agent binding, installation policy, account tier, agent base policy, membership capability level and session mode before dispatch. The effective permission is the strictest applicable result: deny, approval required or automatic. Visibility controls exposure; it does not grant execution. Live policy is checked again for queued, approved and recovered work. Revocation can prevent a later dispatch even when the original approval exists.
 
-The native runtime owns session inspection, revisioned prompt slots, sanitized run diagnostics, authentication minting, approvals, durable receipts and publication. Compiled adapters expose only declared tools. The isolated worker handles bounded low-level operations within the caller's session workspace. It cannot choose an account or agent or open encrypted application databases.
+The native runtime owns session inspection, revisioned prompt slots, sanitized run diagnostics, authentication minting, approvals, durable receipts and publication. Compiled adapters expose only declared tools. The isolated worker handles bounded low-level operations. Approved shell, Python and terminal commands start in /live-checkout and have the reach of their container OS identity; file tools accept ordinary container paths. The worker cannot choose an account or agent, and application state remains protected by OS permissions.
 
 A separate protected host broker handles installation image builds and development deployment. Neither the application nor the general tool worker receives the Docker socket or arbitrary host command access. Host operations require installation-administrator authority as well as the live ability policy and approval contract.
 
 | Ability | Implemented execution contract |
 | --- | --- |
-| Codebase Admin | Caller-scoped workspace files, search, checked edits/patches, complete change review, shell/Python execution, typed session inspection and revisioned prompt slots. Workspace source is separate from the live checkout. |
+| Codebase Admin | Container file access, search, checked edits/patches, complete change review, shell/Python execution, typed session inspection and revisioned prompt slots. Direct coding starts in the live checkout; seeded workspace source remains available for isolated review. |
 | Code Index | Five bounded scan/coverage/progress/lookup/trace tools over the caller's source snapshot. Hashed physical lines, symbols and static edges are derived metadata. Lookups report stale entries instead of rescanning implicitly. |
 | Git Control | Bounded Git operations, conflict resolution, commit/push and agent-owned HTTPS repository connections. Private transport credentials are trusted worker metadata, never model arguments or tool results. |
 | Terminal Control | Session-owned supervised terminals, bounded read/wait/input and close. Restart does not replay terminal input or adopt another session's process. |

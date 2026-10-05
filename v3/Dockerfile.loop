@@ -10,7 +10,7 @@ COPY v3/plugins/gates ./plugins/gates
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
 ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-RUN cargo test --locked
+RUN cargo test --locked -- --test-threads=1
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251

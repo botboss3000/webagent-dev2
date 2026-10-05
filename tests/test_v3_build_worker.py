@@ -104,8 +104,8 @@ def test_v3_broker_control_socket_can_request_restart(worker, tmp_path, monkeypa
         server.shutdown(); server.server_close(); thread.join()
 
 
-def old_container():
-    return {"Name": "/webagent-dev-v3", "State": {"Running": True},
+def old_container(target=m.TARGET):
+    return {"Name": "/" + target, "State": {"Running": True},
             "Config": {"Image": "old", "Env": ["V3_MESSAGE_API_TOKEN=secret"], "Healthcheck": {"Test": ["CMD", "curl"]}},
             "HostConfig": {"NetworkMode": "bridge", "Memory": 1000, "ReadonlyRootfs": True, "RestartPolicy": {"Name": "unless-stopped"}},
             "Mounts": [{"Type": "bind", "Destination": "/state", "Source": str(ROOT / "v3/data")},
@@ -122,7 +122,7 @@ def test_deploy_preserves_config(worker, monkeypatch):
         calls.append((method, path, body))
         if path.startswith("/images/"): return {"Id": "sha256:new"}
         if method == "GET":
-            return old if path.startswith("/containers/webagent-dev-v3/json") and len(calls) == 2 else {"State": {"Running": True, "Health": {"Status": "healthy"}}}
+            return old_container(path.split("/")[2]) if len(calls) <= 3 else {"State": {"Running": True, "Health": {"Status": "healthy"}}}
         return {}
     monkeypatch.setattr(m, "engine", engine)
     job = deployment(worker); worker.deploy(job)
@@ -132,27 +132,33 @@ def test_deploy_preserves_config(worker, monkeypatch):
     assert payload["Image"] == "sha256:new" and job["readiness"] == "healthy"
     assert all("v2" not in path for _, path, _ in calls)
     assert not any(method == "DELETE" for method, _, _ in calls)
+    payloads = [body for method, path, body in calls if path.startswith("/containers/create")]
+    assert len(payloads) == 2
+    assert payloads[1]["Cmd"] == ["/usr/local/bin/webagent-v3"]
+    assert "V3_PROCESS_ROLE=loop" in payloads[1]["Env"]
+    assert payloads[1]["HostConfig"] == old["HostConfig"]
+    assert job["deployed_targets"] == [m.TARGET, m.TARGET + "-loop"]
 
 def test_failed_readiness_rolls_back(worker, monkeypatch):
     calls = []
     def engine(method, path, body=None):
         calls.append((method, path, body))
         if path.startswith("/images/"): return {"Id": "sha256:new"}
-        if method == "GET": return old_container() if len(calls) == 2 else {"State": {"Running": False}}
+        if method == "GET": return old_container(path.split("/")[2]) if len(calls) <= 3 else {"State": {"Running": False}}
         return {}
     monkeypatch.setattr(m, "engine", engine)
     job = deployment(worker)
     with pytest.raises(RuntimeError, match="healthy"): worker.deploy(job)
     assert job["rollback"] == "restored"
     assert ("DELETE", "/containers/webagent-dev-v3?force=true", None) in calls
-    assert calls[-1][:2] == ("POST", "/containers/webagent-dev-v3/start")
+    assert calls[-1][:2] == ("POST", "/containers/webagent-dev-v3-loop/start")
 
 def test_failed_create_restores_without_deleting_target(worker, monkeypatch):
     calls = []
     def engine(method, path, body=None):
         calls.append((method, path, body))
         if path.startswith("/images/"): return {"Id": "sha256:new"}
-        if method == "GET": return old_container()
+        if method == "GET": return old_container(path.split("/")[2])
         if path.startswith("/containers/create"): raise RuntimeError("create failed")
         return {}
     monkeypatch.setattr(m, "engine", engine)

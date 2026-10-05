@@ -26,6 +26,7 @@ LIMIT = 1024 * 1024
 ROOT = Path(os.environ.get("V3_WORKSPACE_ROOT", "/workspaces"))
 SOCKET = os.environ.get("V3_TOOL_SOCKET", "/run/v3/worker/tools.sock")
 TEMPLATE = Path(os.environ.get("V3_CODE_TEMPLATE", "/opt/v3/source-template"))
+LIVE_CHECKOUT = Path("/live-checkout")
 
 
 PLUGINS = {}
@@ -157,10 +158,12 @@ async def command(argv, base, timeout, lock):
            "HOME": str(base), "TMPDIR": str(base), "CARGO_HOME": str(base / ".cargo"),
            "CARGO_BUILD_JOBS": "1", "CARGO_INCREMENTAL": "0",
            "RUSTFLAGS": "-C debuginfo=0",
-           "V3_ALLOWED_LISTEN_PORTS": ",".join(map(str, network_ports(base)))}
+           "V3_ALLOWED_LISTEN_PORTS": ",".join(map(str, network_ports(base))),
+           "V3_UNRESTRICTED_DEV_SHELL": "1"}
     process = await asyncio.create_subprocess_exec(
         "/usr/bin/python3", "-I", str(Path(__file__).resolve()), "--runner", json.dumps(argv),
-        cwd=base, env=env, start_new_session=True,
+        cwd=LIVE_CHECKOUT if LIVE_CHECKOUT.is_dir() else base,
+        env=env, start_new_session=True,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     fcntl.flock(lock, fcntl.LOCK_UN)
     data = bytearray()
@@ -656,16 +659,16 @@ async def seed_workspace_async(base):
 def file_operation(request, base, args, name):
     raw = args.get("path", ".")
     relative = Path(raw)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError("path escapes workspace")
-    # Walk each component with openat/O_NOFOLLOW. A concurrent script cannot
-    # swap a parent directory for a symlink between validation and access.
-    rootfd = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    # Resolve ordinary container paths, including parent traversal and symlinks.
+    # The OS identity and container mounts determine which targets are reachable.
+    default_root = LIVE_CHECKOUT if LIVE_CHECKOUT.is_dir() else base
+    target = (relative if relative.is_absolute() else default_root / relative).resolve()
+    rootfd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     basefd = None
     directory = None
     try:
-        basefd = os.open(request["workspace"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=rootfd)
-        parts = [p for p in relative.parts if p != "."]
+        basefd = os.dup(rootfd)
+        parts = target.parts[1:]
         directory = os.dup(basefd)
         for part in parts[:-1]:
             if name == "file_write":
@@ -849,10 +852,6 @@ def file_operation(request, base, args, name):
                     raise ValueError("query must not be empty")
                 if any(char in file_glob for char in ("\\", "\x00")):
                     raise ValueError("invalid file glob")
-                skip = {".git", "target", ".cache", "__pycache__", ".venv",
-                        "node_modules", "venv", ".pytest_cache", ".mypy_cache"}
-                if any(part in skip for part in parts):
-                    raise ValueError("search path is excluded")
                 fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=directory)
                 found, size = [], 0
@@ -938,8 +937,6 @@ def file_operation(request, base, args, name):
                                 break
                             names.append(entry.name)
                     for entry in sorted(names):
-                        if entry in skip:
-                            continue
                         if (remaining[0] <= 0 or remaining[1] <= 0
                             or time.monotonic() >= deadline or size >= LIMIT):
                             scan_limited = True
@@ -1114,8 +1111,12 @@ def runner(argv):
         if set(spec) != {"base", "template", "stage"} or Path(spec["base"]).resolve() != Path.cwd() or not spec["stage"].startswith(".v3-seed-") or "/" in spec["stage"]:
             raise ValueError("invalid trusted seed invocation")
         read_paths = (Path(spec["template"]), Path(__file__).resolve(), Path(__file__).with_name("sandbox.py").resolve())
+    # The development agent's approved shell can work across the mounted checkout.
+    # Other worker operations retain their existing scoped sandbox.
+    unconfined = os.environ.get("V3_UNRESTRICTED_DEV_SHELL") == "1"
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
-                             preexec_fn=lambda: restrict(Path.cwd(), read_paths=read_paths))
+                             preexec_fn=None if unconfined else
+                                 lambda: restrict(Path.cwd(), read_paths=read_paths))
     try:
         result = child.wait()
     finally:

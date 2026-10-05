@@ -10,7 +10,7 @@ SOCKET = "/run/v3/worker/tools.sock"
 
 
 class ContainerWorkerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_worker_identity_and_state_isolation(self):
+    async def test_worker_identity_and_live_source_access(self):
         if os.getuid() != 1100:
             self.skipTest("run as application uid 1100 inside v3 container")
         app_pid = next(int(p.name) for p in Path("/proc").iterdir() if p.name.isdigit() and (p / "comm").read_text().strip() == "webagent-v3")
@@ -25,6 +25,7 @@ class ContainerWorkerTests(unittest.IsolatedAsyncioTestCase):
                        "\nexcept PermissionError: result['control_write']=False"
                        f"\ntry: open('/proc/{app_pid}/environ','rb'); result['app_environ_access']=True"
                        "\nexcept PermissionError: result['app_environ_access']=False"
+                       "\nresult['source_access']=os.path.isdir('/live-checkout/app') and os.path.isdir('/live-checkout/v3')"
                        "\nresult['secret_env']=any(k.startswith('V3_ADMIN') for k in os.environ)"
                        "\nprint(json.dumps(result))")},
                    "timeout_seconds": 10}
@@ -35,8 +36,9 @@ class ContainerWorkerTests(unittest.IsolatedAsyncioTestCase):
         await writer.wait_closed()
         self.assertEqual(response["status"], "success", response)
         result = json.loads(response["output"])
-        self.assertEqual(result["uid"], 1101)
+        self.assertEqual(result["uid"], 1000)
         self.assertEqual(result["groups"], [])
+        self.assertTrue(result["source_access"])
         self.assertFalse(result["state_access"])
         self.assertFalse(result["control_write"])
         self.assertFalse(result["secret_env"])
@@ -44,7 +46,7 @@ class ContainerWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_application_peer_rejected(self):
         if os.getuid() == 1100:
-            self.skipTest("run separately as worker uid 1101")
+            self.skipTest("run separately as checkout-owner uid 1000")
         reader, writer = await asyncio.open_unix_connection(SOCKET)
         writer.write((json.dumps({"id":"forbidden","name":"shell",
             "workspace":str(uuid.uuid4()),"arguments":{"command":"printf bypass"}}) + "\n").encode())

@@ -3,7 +3,7 @@
   "kind": "ability",
   "icon": "folder-cog",
   "color": "#bb9af7",
-  "description": "Inspect current-session state and inspect, search, edit, and run code in the isolated v3 workspace.",
+  "description": "Inspect current-session state and work on the live development checkout through approved commands, or use an isolated session workspace.",
   "skill_summary": "Inspect current-session state through typed APIs; work from repository instructions, make scoped changes, and verify results.",
   "migration_note": "Existing v3 isolated workspace adapter; Rust authorization and approval gates remain authoritative.",
   "order": 1,

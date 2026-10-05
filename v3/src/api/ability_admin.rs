@@ -174,15 +174,21 @@ pub(crate) async fn permissions_set(State(app):State<App>,Extension(identity):Ex
     let value=actor_store.set_agent_permissions(&id,body.expected_revision,body.ability_permissions,body.tool_permissions).await.map_err(update_error)?;
     phase3_api::quiesce_agent(&app,&id).await?;Ok(Json(value))
 }
-async fn visibility(app:App,identity:Value,id:String,ability:String,tool:Option<String>,skill:bool,body:AbilityVisibilityBody)->Api {
+async fn visibility(app:App,identity:Value,id:String,ability:String,tool:Option<String>,skill:Option<String>,body:AbilityVisibilityBody)->Api {
     let _guard=app.gate.lock().await;authority(&app,&identity,&id,true).await?;
-    if !app.abilities.known(&ability) || tool.as_ref().is_some_and(|t|!app.abilities.has_tool(&ability,t)) {return Err(bad("Unknown ability or tool"));}
+    if !app.abilities.known(&ability) || tool.as_ref().is_some_and(|t|!app.abilities.has_tool(&ability,t))
+        || skill.as_ref().is_some_and(|name|name!="core" && app.abilities.configuration_skill_asset(&ability,"skill",name).is_none())
+        || (skill.as_deref()==Some("core") && app.abilities.configuration_skill(&ability).is_none()) {return Err(bad("Unknown ability, skill or tool"));}
     if !matches!(body.visibility.as_str(),"off"|"visible"|"discoverable") {return Err(bad("Invalid visibility mode"));}
     let mut scoped=admin_agent_view(&app,&id).await?;
     scoped.store=scoped.store.for_user(identity["_user_id"].as_str().ok_or_else(denied)?).await?;
     let mut value=agent_abilities(&scoped).await?;
     if value["revision"]!=body.expected_revision {return Err(conflict("Agent ability revision changed"));}
-    let (key,name)=match tool {Some(t)=>("tool_modes",t),None=>(if skill {"skill_visibility"} else {"visibility"},ability)};
+    let (key,name)=match tool {Some(t)=>("tool_modes",t),None=>match skill {
+        Some(t) if t!="core"=>("skill_visibility",format!("{ability}:{t}")),
+        Some(_)=>("skill_visibility",ability),
+        None=>("visibility",ability),
+    }};
     let fallback=if key=="visibility" {"discoverable"} else {"visible"};
     if value[key][&name].as_str().unwrap_or(fallback)==body.visibility {return Ok(Json(value));}
     value[key][name]=json!(body.visibility);value["revision"]=json!(body.expected_revision+1);
@@ -190,18 +196,39 @@ async fn visibility(app:App,identity:Value,id:String,ability:String,tool:Option<
     phase3_api::quiesce_agent(&app,&id).await?;Ok(Json(value))
 }
 pub(crate) async fn visibility_set(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability)):Path<(String,String)>,Json(body):Json<AbilityVisibilityBody>)->Api {
-    visibility(app,identity,id,ability,None,false,body).await
+    visibility(app,identity,id,ability,None,None,body).await
 }
 pub(crate) async fn skill_set(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability)):Path<(String,String)>,Json(body):Json<AbilityVisibilityBody>)->Api {
-    visibility(app,identity,id,ability,None,true,body).await
+    visibility(app,identity,id,ability,None,Some("core".into()),body).await
+}
+pub(crate) async fn skill_named_set(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability,skill)):Path<(String,String,String)>,Json(body):Json<AbilityVisibilityBody>)->Api {
+    visibility(app,identity,id,ability,None,Some(skill),body).await
 }
 pub(crate) async fn tool_set(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability,tool)):Path<(String,String,String)>,Json(body):Json<AbilityVisibilityBody>)->Api {
-    visibility(app,identity,id,ability,Some(tool),false,body).await
+    visibility(app,identity,id,ability,Some(tool),None,body).await
+}
+pub(crate) async fn skill_named_content(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability,skill)):Path<(String,String,String)>)->Api {
+    authority(&app,&identity,&id,true).await?;
+    let content=app.abilities.configuration_skill_asset(&ability,"skill",&skill)
+        .ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Skill content unavailable; reload the validated catalog".into()))?;
+    Ok(Json(json!({"content":content,"catalog_version":app.abilities.version()})))
+}
+pub(crate) async fn tool_skill_content(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability,tool)):Path<(String,String,String)>)->Api {
+    authority(&app,&identity,&id,true).await?;
+    let content=app.abilities.configuration_skill_asset(&ability,"tool",&tool)
+        .ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Tool skill unavailable; reload the validated catalog".into()))?;
+    Ok(Json(json!({"content":content,"catalog_version":app.abilities.version()})))
 }
 
 // Prompt configuration belongs to the same selected tenant, not the installation.
 pub(crate) async fn composition(State(app):State<App>,Extension(identity):Extension<Value>,Path(id):Path<String>)->Api {
     authority(&app,&identity,&id,true).await?;agent_context_composition(State(app),Path(id)).await
+}
+pub(crate) async fn skill_content(State(app):State<App>,Extension(identity):Extension<Value>,Path((id,ability)):Path<(String,String)>)->Api {
+    authority(&app,&identity,&id,true).await?;
+    let content=app.abilities.configuration_skill(&ability)
+        .ok_or_else(||ApiError(StatusCode::NOT_FOUND,"Skill content unavailable; reload the validated catalog".into()))?;
+    Ok(Json(json!({"content":content,"catalog_version":app.abilities.version()})))
 }
 pub(crate) async fn slots(State(app):State<App>,Extension(identity):Extension<Value>,Path(id):Path<String>)->Api {
     authority(&app,&identity,&id,true).await?;prompt_slots_api(State(app),Path(id)).await
@@ -232,6 +259,23 @@ mod tests {
         assert!(grant_ceiling(&app,&identity,&json!({}),&json!({}),&json!({"base":"deny"}),&json!({}),true).await.is_err());
         assert!(grant_ceiling(&app,&identity,&json!({"codebase_admin":"auto"}),&json!({}),&json!({}),&json!({}),false).await.is_err());
         assert!(grant_ceiling(&app,&identity,&json!({"codebase_admin":"deny"}),&json!({}),&unchanged,&json!({}),false).await.is_ok());
+    }
+    #[tokio::test]
+    async fn named_skill_save_is_independent_and_authorized() {
+        let (_root,app)=crate::runtime_tests::fixture().await;
+        let identity=json!({"_user_id":app.store.current_user_id()});
+        let before=app.store.agent_abilities().await.unwrap();
+        let revision=before["revision"].as_u64().unwrap();
+        let path=("shared_default".into(),"codebase_admin".into(),"ui_theming".into());
+        skill_named_set(State(app.clone()),Extension(identity.clone()),Path(path.clone()),
+            Json(AbilityVisibilityBody{visibility:"off".into(),expected_revision:revision})).await.unwrap();
+        let saved=app.store.agent_abilities().await.unwrap();
+        assert_eq!(saved["skill_visibility"]["codebase_admin:ui_theming"],"off");
+        assert_eq!(saved["skill_visibility"]["codebase_admin"],before["skill_visibility"]["codebase_admin"]);
+        assert!(skill_named_set(State(app.clone()),Extension(identity.clone()),Path(path.clone()),
+            Json(AbilityVisibilityBody{visibility:"visible".into(),expected_revision:revision})).await.is_err());
+        assert!(skill_named_content(State(app.clone()),Extension(identity),Path(path.clone())).await.is_ok());
+        assert!(skill_named_content(State(app),Extension(json!({"_user_id":"outsider"})),Path(path)).await.is_err());
     }
 }
 

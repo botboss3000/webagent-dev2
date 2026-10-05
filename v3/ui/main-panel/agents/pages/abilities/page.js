@@ -5,6 +5,9 @@ import { buildPromptsGroup } from './prompts.js';
 import { buildGroup, setGroupStatus } from './table.js';
 import { buildPolicyControls, permissionControl, effectiveLabel, readinessLabel } from './policy.js';
 
+import { _buildMoreButton, _buildToolRow, _buildAbilitySettingsList, closeFloatingMenu } from '../../../../shared/ability-row-controls.js';
+import { buildSkillRow } from './rows.js';
+
 const node = (tag, className = '', text = '') => {
   const element = document.createElement(tag);
   element.className = className;
@@ -69,79 +72,120 @@ export async function renderAbilities(host, request, options) {
     try {
       const path = scope + '/abilities/' + encodeURIComponent(ability.id) +
         (kind === 'tool' ? '/tools/' + encodeURIComponent(toolName) + '/mode' :
-          '/' + (kind === 'skill' ? 'skill-visibility' : 'visibility'));
+          kind === 'skill' && toolName && toolName !== 'core'
+            ? '/skills/' + encodeURIComponent(toolName) + '/visibility'
+            : '/' + (kind === 'skill' ? 'skill-visibility' : 'visibility'));
       await request(path, 'PUT', { visibility: mode, expected_revision: data.revision });
       expandedAbility = ability.id;
       await rerender({});
     } catch (error) {
       status.textContent = error.status === 409 ? 'Settings changed. Reload before saving: ' + error.message : error.message;
       control.disabled = false;
+      throw error;
     }
   };
   const modeMenu = (ability, kind, current, toolName = null, anchorOnly = false) => {
-    const holder = node('div', 'v3-mode-holder');
-    const trigger = node('button', 'ac-btn ac-btn-sm v3-mode-trigger' +
-      (anchorOnly ? ' ac-ability-more-anchor' : ''), '⋯');
-    trigger.type = 'button';
-    trigger.disabled = !canManage || !!levelId || !!previewUser;
-    trigger.title = (kind === 'skill' ? 'Skill' : kind === 'tool' ? 'Tool' : 'Ability') + ' options';
-    trigger.setAttribute('aria-label', trigger.title);
-    trigger.setAttribute('aria-expanded', 'false');
-    const menu = node('div', 'v3-mode-menu');
-    menu.hidden = true;
-    menu.append(node('div', 'v3-menu-caption',
-      kind === 'skill' ? 'Skill visibility' : kind === 'tool' ? 'Tool mode' : 'Ability visibility'));
-    for (const mode of modes) {
-      const choice = node('button', 'v3-mode-choice', mode[0].toUpperCase() + mode.slice(1));
-      choice.type = 'button';
-      choice.setAttribute('aria-pressed', String(current === mode));
-      choice.addEventListener('click', event => {
-        event.stopPropagation();
-        void save(ability, kind, mode, choice, toolName);
-      });
-      menu.append(choice);
+    const trigger = _buildMoreButton(() => modes.map(mode => ({
+      icon: mode === 'off' ? 'eye-off' : mode === 'visible' ? 'eye' : 'download',
+      label: mode[0].toUpperCase() + mode.slice(1), checked: current === mode,
+      disabled: !canManage || !!levelId || !!previewUser,
+      action: () => save(ability, kind, mode, trigger, toolName).catch(() => {}),
+    })), { title: 'Choose ' + kind + ' availability' });
+    if (anchorOnly) trigger.classList.add('ac-ability-more-anchor');
+    return trigger;
+  };
+  const openToolSkill = async (ability, tool) => {
+    const dialog = node('dialog', 'v3-tool-skill-dialog');
+    const heading = node('h3', '', tool + '.skill.md');
+    const pre = node('pre', '', 'Loading tool skill…');
+    const close = node('button', 'ac-btn ac-btn-sm', 'Close');
+    close.type = 'button';
+    close.addEventListener('click', () => dialog.close());
+    dialog.append(heading, pre, close);
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    try {
+      const result = await request(scope + '/abilities/' + encodeURIComponent(ability.id) +
+        '/tools/' + encodeURIComponent(tool) + '/skill-content');
+      if (dialog.isConnected) pre.textContent = result.content || 'No skill text.';
+    } catch (error) {
+      if (dialog.isConnected) pre.textContent = error.message || 'Could not load tool skill.';
     }
-    trigger.addEventListener('click', event => {
-      event.stopPropagation();
-      const opening = menu.hidden;
-      page.querySelectorAll('.v3-mode-menu').forEach(item => { item.hidden = true; });
-      page.querySelectorAll('.v3-mode-trigger').forEach(item => item.setAttribute('aria-expanded', 'false'));
-      menu.hidden = !opening;
-      trigger.setAttribute('aria-expanded', String(opening));
-    });
-    holder.append(trigger, menu);
-    return holder;
   };
   const buildAbilityBody = (detail, ability) => {
     if (detail.childElementCount) return;
-    detail.append(node('p', 'ac-hint', ['Declared: ' + !!ability.declared, 'Installed: ' + !!ability.installed,
-      'Configured: ' + !!ability.configured, readinessLabel(ability)].join(' · ')));
-    if (ability.has_skill) {
-      const skill = node('div', 'ac-ability-row ac-row-static v3-ability-skill');
-      const label = node('div', 'ac-ability-label');
-      label.append(node('div', 'ac-ability-name', 'Skill'),
-        node('div', 'ac-ability-desc', ability.skill_summary || 'Ability instructions'));
-      skill.append(label, node('span', 'v3-mode-badge', ability.skill_visibility || 'visible'),
-        modeMenu(ability, 'skill', ability.skill_visibility || 'visible'));
-      detail.append(skill);
+    const tools = _buildAbilitySettingsList();
+    tools.classList.add('v3-ability-tools');
+    const generalSkills = ability.general_skills ||
+      (ability.has_skill ? [{ skill_id: 'core', title: 'Skill',
+        when_to_use: ability.skill_summary || '', mode: ability.skill_visibility || 'visible' }] : []);
+    for (const entry of generalSkills) {
+      const skill = buildSkillRow(entry, {
+        canEdit: canManage && !levelId && !previewUser,
+        menu: modeMenu(ability, 'skill', entry.mode || 'visible', entry.skill_id, true),
+        loadContent: () => request(scope + '/abilities/' + encodeURIComponent(ability.id) +
+          (entry.skill_id === 'core' ? '/skill-content' :
+            '/skills/' + encodeURIComponent(entry.skill_id) + '/content')),
+      });
+      tools.append(skill.row, skill.body);
     }
-    const tools = node('div', 'ac-list v3-ability-tools');
+    const administrator = buildAdministratorControls({ ability, data, repository, request, scope,
+      levelId, previewUser, status, rerender });
+    if (administrator) {
+      for (const setting of administrator.querySelectorAll(':scope > .ac-ability-row')) tools.append(setting);
+    }
     for (const tool of ability.tools || []) {
       const effectiveTool = (projection(ability).tools || []).find(item => item.name === tool.name) || tool;
-      const toolRow = node('div', 'ac-ability-row ac-row-static');
-      const label = node('div', 'ac-ability-label');
-      label.append(node('div', 'ac-ability-name', tool.name),
-        node('div', 'ac-ability-desc', tool.supported ?
-          String(tool.policy).replaceAll('_', ' ') : 'Unavailable in v3'));
-      toolRow.append(label, node('span', 'v3-mode-badge', tool.mode || 'visible'),
-        modeMenu(ability, 'tool', tool.mode || 'visible', tool.name));
-      toolRow.append(permissionControl({ data, request, scope, levelId, previewUser, kind: 'tool', id: tool.name, status, rerender }),
-        node('span', 'ac-hint', effectiveLabel(effectiveTool)));
+      const saveToolPermission = async mode => {
+        const level = data.capability_levels?.levels?.[levelId];
+        const policy = structuredClone(level || data.permissions || {});
+        policy.tool_permissions ||= {};
+        policy.tool_permissions[tool.name] = mode;
+        try {
+          if (level) {
+            await request(scope + '/capability-levels/' + encodeURIComponent(levelId), 'PUT',
+              { expected_revision: data.capability_levels.revision, level: policy });
+          } else {
+            await request(scope + '/ability-permissions', 'PUT', {
+              expected_revision: data.permissions.revision,
+              ability_permissions: policy.ability_permissions || {},
+              tool_permissions: policy.tool_permissions,
+            });
+          }
+          expandedAbility = ability.id;
+          await rerender({});
+        } catch (error) {
+          status.textContent = error.status === 409 ? 'Settings changed. Reload before saving: ' + error.message : error.message;
+          throw error;
+        }
+      };
+      const toolRow = _buildToolRow({
+        ...tool,
+        description: tool.description || '',
+        permMode: tool.mode === 'off' ? 'deny' : effectiveTool.effective?.permission || 'deny',
+      }, {
+        canEdit: canManage && !previewUser && !levelId,
+        showPerm: true,
+        abilityId: ability.id,
+        hasToolSkill: tool.has_tool_skill === true,
+        onOpenToolSkill: name => openToolSkill(ability, name),
+        onPermissionChange: (_, mode) => saveToolPermission(mode),
+        onVisibilityChange: (_, mode) => save(ability, 'tool', mode, toolRow.querySelector('.ac-tri'), tool.name),
+      });
+      toolRow.title = [tool.supported ? '' : 'Unavailable in v3', effectiveLabel(effectiveTool)].filter(Boolean).join(' · ');
       tools.append(toolRow);
     }
     detail.append(tools);
-    const administrator = buildAdministratorControls({ ability, data, repository, request, scope,
-      levelId, previewUser, status, rerender });
+    // V3-specific access layering stays available outside the reference row title.
+    if (canManage) {
+      const access = node('details', 'v3-ability-access');
+      access.append(node('summary', 'ac-hint', 'V3 access policy'));
+      access.append(permissionControl({ data, request, scope, levelId, previewUser,
+        kind: 'ability', id: ability.id, status, rerender }));
+      access.append(node('p', 'ac-hint', [readinessLabel(ability), effectiveLabel(projection(ability))].join(' · ')));
+      detail.append(access);
+    }
     if (administrator) detail.append(administrator);
     if (ability.migration_note) detail.append(node('p', 'v3-ability-note', ability.migration_note));
   };
@@ -179,14 +223,17 @@ export async function renderAbilities(host, request, options) {
       toggle.setAttribute('aria-label',
         ability.name + ' availability: ' + ability.visibility + '. Choose availability.');
       const menu = modeMenu(ability, 'ability', ability.visibility, null, true);
+      menu._floatingMenuOwner = toggleWrap;
       toggle.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        menu.querySelector('.v3-mode-trigger').click();
+        const rect = toggle.getBoundingClientRect();
+        menu._floatingMenuAnchorPoint = { x: event.clientX || rect.right, y: event.clientY || rect.bottom };
+        menu.click();
       });
       toggleWrap.append(toggle, node('span', 'conn-toggle-track'));
-      header.append(chevron, icon, label, availability, toggleWrap, menu,
-        permissionControl({ data, request, scope, levelId, previewUser, kind: 'ability', id: ability.id, status, rerender }));
+      header.append(chevron, icon, label, toggleWrap, menu);
+      header.title = availability.title + ' · ' + availability.textContent;
       const detail = node('div', 'ac-ability-body');
       const open = () => {
         const expanded = row.classList.toggle('expanded');
@@ -238,16 +285,12 @@ export async function renderAbilities(host, request, options) {
         String(value || '').toLowerCase().includes(searchText)));
   };
   search.addEventListener('input', filter);
-  page.addEventListener('click', event => {
-    if (!event.target.closest('.v3-mode-holder, .conn-toggle-wrap')) {
-      page.querySelectorAll('.v3-mode-menu').forEach(item => { item.hidden = true; });
-    }
-  });
   page.append(overview, controls.panel, search, list, status);
   const reload = node('button', 'ac-btn ac-btn-sm', 'Reload abilities');
   reload.type = 'button';
   reload.onclick = () => rerender({ administratorNotice: '' }).catch(error => { status.textContent = error.message; });
   page.append(reload);
+  closeFloatingMenu();
   host.replaceChildren(page);
   window.lucide?.createIcons({ nodes: [...page.querySelectorAll('[data-lucide]:not(.lucide)')] });
   filter();

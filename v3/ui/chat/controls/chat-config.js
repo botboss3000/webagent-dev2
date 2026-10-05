@@ -232,7 +232,17 @@ export function applyChatConfig() {
   panel.style.setProperty('--v3-content-max-width', contentProfile.content_max_width || '100%');
   panel.style.setProperty('--v3-transcript-top',(profile.transcript_padding?.top_px ?? 25)+'px');
   panel.style.setProperty('--v3-transcript-bottom',(profile.transcript_padding?.bottom_px ?? 50)+'px');
-  panel.style.setProperty('--v3-tail-gap', (profile.transcript_tail_clearance?.gap_px ?? 16) + 'px');
+  const tailClearance = profile.transcript_tail_clearance || {};
+  const tailPixels = (value, fallback) => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : fallback;
+  panel.style.setProperty('--v3-tail-gap', tailPixels(tailClearance.gap_px, 24) + 'px');
+  panel.style.setProperty('--v3-tail-min', tailPixels(tailClearance.min_px, 100) + 'px');
+  // Match v2's stationary message-scroller mask; zero top fade avoids a seam.
+  const messages = byId('chat-messages');
+  const top = Math.max(0, Number(profile.fade?.top) || 0);
+  const bottom = Math.max(0, Number(profile.fade?.bottom) || 0);
+  messages?.style.setProperty('--chat-fade-top', top + 'px');
+  messages?.style.setProperty('--chat-fade-top-stops', top > 0 ? `transparent 0, #000 ${top}px` : '#000 0');
+  messages?.style.setProperty('--chat-fade-bottom', bottom + 'px');
   applyHeader(profile);
   applyFooter(profile, mode);
 }

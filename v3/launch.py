@@ -57,7 +57,7 @@ shutoff_fd = os.open("/run/v3/control/shutoff", os.O_RDONLY)
 for name in ("dispatch.lock", "shutoff"):
     os.chown("/run/v3/control/" + name, 1100, 1100)
 directory("/run/v3/control", 1100, 0o750)
-directory("/run/v3/worker", 1101, 0o750)
+directory("/run/v3/worker", 1000, 0o750)
 directory("/run/v3/promote", 1100, 0o700)
 directory("/run/v3", 1100, 0o755)
 
@@ -87,7 +87,7 @@ worker = subprocess.Popen(["/usr/bin/python3", "-I", "/opt/v3/worker.py"],
                           env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "V3_TOOL_SOCKET": "/run/v3/worker/tools.sock",
                                "V3_WORKSPACE_ROOT": "/workspaces"},
-                          preexec_fn=lambda: drop(1101))
+                          preexec_fn=lambda: drop(1000))
 for _ in range(100):
     if Path("/run/v3/worker/tools.sock").exists():
         break

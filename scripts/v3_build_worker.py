@@ -179,47 +179,62 @@ class Worker:
                 raise RuntimeError("Pinned image identity mismatch")
         except Exception as exc:
             raise RuntimeError("Deployment preflight image check failed: " + str(exc)) from exc
-        old = engine("GET", "/containers/" + TARGET + "/json")
-        if old.get("Name") != "/" + TARGET or not old["State"].get("Running"):
-            raise RuntimeError("Expected running v3 development container; initial provisioning is host-only")
-        host = old["HostConfig"]
-        if host.get("Privileged") or host.get("AutoRemove") or host.get("NetworkMode") not in ("default", "bridge"):
-            raise RuntimeError("Unexpected container security/network configuration; host review required")
-        mounts = {m["Destination"]: m.get("Source") for m in old.get("Mounts", []) if m.get("Type") == "bind"}
-        if mounts.get("/state") != str(self.repo / "v3/data") or mounts.get("/workspaces") != str(self.repo / "v3/workspaces"):
-            raise RuntimeError("V3 state/workspace mounts do not match the configured development checkout")
-        if any("docker.sock" in source for source in mounts.values()):
-            raise RuntimeError("Refusing container with Docker socket mount")
-        payload = dict(old["Config"])
-        payload["Image"] = build["image_id"]
-        payload["HostConfig"] = host
-        backup = TARGET + "-rollback-" + job["id"]
-        job["backup_container"] = backup; self.save(job)
-        stopped = renamed = created = False
+        targets = (TARGET, TARGET + "-loop")
+        plans = []
+        for target in targets:
+            old = engine("GET", "/containers/" + target + "/json")
+            if old.get("Name") != "/" + target or not old["State"].get("Running"):
+                raise RuntimeError("Expected running v3 development pair; initial provisioning is host-only")
+            host = old["HostConfig"]
+            if host.get("Privileged") or host.get("AutoRemove") or host.get("NetworkMode") not in ("default", "bridge"):
+                raise RuntimeError("Unexpected container security/network configuration; host review required")
+            mounts = {m["Destination"]: m.get("Source") for m in old.get("Mounts", []) if m.get("Type") == "bind"}
+            if mounts.get("/state") != str(self.repo / "v3/data") or mounts.get("/workspaces") != str(self.repo / "v3/workspaces"):
+                raise RuntimeError("V3 state/workspace mounts do not match the configured development checkout")
+            if any("docker.sock" in source for source in mounts.values()):
+                raise RuntimeError("Refusing container with Docker socket mount")
+            payload = dict(old["Config"])
+            payload["Image"] = build["image_id"]
+            payload["HostConfig"] = host
+            if target.endswith("-loop"):
+                # Same tested executable, retaining loop identity and isolation.
+                payload["Entrypoint"] = ["/usr/bin/tini", "--"]
+                payload["Cmd"] = ["/usr/local/bin/webagent-v3"]
+                payload["Healthcheck"] = {"Test": ["CMD", "env", "V3_PROCESS_ROLE=health", "/usr/local/bin/webagent-v3"], "Interval": 5000000000, "Timeout": 3000000000, "StartPeriod": 20000000000, "Retries": 3}
+                payload["Env"] = [e for e in payload.get("Env", []) if not e.startswith("V3_PROCESS_ROLE=")] + ["V3_PROCESS_ROLE=loop"]
+            plans.append({"target": target, "backup": target + "-rollback-" + job["id"], "payload": payload,
+                          "stopped": False, "renamed": False, "created": False})
+        job["backup_containers"] = {p["target"]: p["backup"] for p in plans}
+        self.save(job)
         stage = "stop"
         try:
-            engine("POST", "/containers/" + TARGET + "/stop?t=15"); stopped = True
-            stage = "rename"
-            engine("POST", "/containers/" + TARGET + "/rename?name=" + backup); renamed = True
-            stage = "create"
-            engine("POST", "/containers/create?name=" + TARGET, payload); created = True
-            stage = "start"
-            engine("POST", "/containers/" + TARGET + "/start")
+            # Stop loop first; start API before loop so its sockets are ready.
+            for p in reversed(plans):
+                engine("POST", "/containers/" + p["target"] + "/stop?t=30"); p["stopped"] = True
+            for p in plans:
+                stage = "rename:" + p["target"]
+                engine("POST", "/containers/" + p["target"] + "/rename?name=" + p["backup"]); p["renamed"] = True
+                stage = "create:" + p["target"]
+                engine("POST", "/containers/create?name=" + p["target"], p["payload"]); p["created"] = True
+                stage = "start:" + p["target"]
+                engine("POST", "/containers/" + p["target"] + "/start")
             stage = "readiness"
-            for _ in range(45):
-                inspect = engine("GET", "/containers/" + TARGET + "/json")
-                if inspect["State"].get("Health", {}).get("Status") == "healthy":
-                    job.update(deployed_image=build["image_id"], readiness="healthy"); return
-                if not inspect["State"].get("Running"): break
+            for _ in range(60):
+                states = [engine("GET", "/containers/" + p["target"] + "/json") for p in plans]
+                if all(s["State"].get("Health", {}).get("Status") == "healthy" for s in states):
+                    job.update(deployed_image=build["image_id"], readiness="healthy", deployed_targets=list(targets)); return
+                if any(not s["State"].get("Running") for s in states): break
                 time.sleep(2)
-            raise RuntimeError("Replacement did not become healthy")
+            raise RuntimeError("Replacement pair did not become healthy")
         except Exception as exc:
             job["failed_stage"] = stage
             try:
-                if created: engine("DELETE", "/containers/" + TARGET + "?force=true")
-                if renamed: engine("POST", "/containers/" + backup + "/rename?name=" + TARGET)
-                if stopped: engine("POST", "/containers/" + TARGET + "/start")
-                job["rollback"] = "restored" if stopped else "not_needed"
+                for p in reversed(plans):
+                    if p["created"]: engine("DELETE", "/containers/" + p["target"] + "?force=true")
+                    if p["renamed"]: engine("POST", "/containers/" + p["backup"] + "/rename?name=" + p["target"])
+                for p in plans:
+                    if p["stopped"]: engine("POST", "/containers/" + p["target"] + "/start")
+                job["rollback"] = "restored"
             except Exception:
                 job["rollback"] = "failed; host intervention required"
             raise RuntimeError("Deployment failed at " + stage + ": " + str(exc)) from exc

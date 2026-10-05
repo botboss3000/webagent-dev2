@@ -3,16 +3,13 @@
   "kind": "ability",
   "icon": "hammer",
   "color": "#7aa2f7",
-  "description": "Check v3 prerequisites, run local Rust tasks, or submit and poll fixed builds/deployments through a dedicated private development worker. Includes trusted-admin browser login to validate the independent v3 app.",
-  "skill_summary": "Use to build/test v3 and authenticate the server browser for v3 app validation.",
+  "description": "Inspect and submit fixed v3 development builds/deployments through the private worker; includes current-caller v3 browser login.",
+  "skill_summary": "Use for v2-to-v3 build operations and current-caller browser validation.",
   "simple": true,
   "placeholder": false,
   "order": 9,
   "tools": [
     "v3_build_status",
-    "v3_build_worker_restart",
-    "v3_cargo_task",
-    "v3_build_image",
     "v3_worker_submit",
     "v3_worker_job",
     "login_as_current_user_v3"
@@ -20,15 +17,6 @@
   "tool_metadata": {
     "v3_build_status": {
       "destructive": false
-    },
-    "v3_build_worker_restart": {
-      "destructive": true
-    },
-    "v3_cargo_task": {
-      "destructive": true
-    },
-    "v3_build_image": {
-      "destructive": true
     },
     "v3_worker_submit": {
       "destructive": true

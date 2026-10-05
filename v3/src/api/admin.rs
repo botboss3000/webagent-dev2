@@ -341,12 +341,13 @@ pub(crate) async fn provider_start_for(app: App, credential_ref: String, connect
     let mut device = app.provider.device_start().await?;
     device["status"] = json!("pending");
     device["connection_id"] = json!(connection_id);
+    let expires_at = device["expires_at"].as_u64().unwrap_or_else(|| now() + 900);
     let answer =
-        json!({"verification_url":device["verification_url"],"user_code":device["user_code"]});
+        json!({"verification_url":device["verification_url"],"user_code":device["user_code"],"expires_at":expires_at});
     *login = Some(device.clone());
     drop(login);
     tokio::spawn(async move {
-        let expires = now() + 900;
+        let expires = expires_at;
         let interval = device["interval"].as_u64().unwrap_or(5).max(5);
         loop {
             tokio::select! {_=app.stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(interval))=>{}}

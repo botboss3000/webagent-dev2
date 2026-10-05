@@ -68,6 +68,24 @@
   tell the other workers the checkout is released and report what command ran,
   which inputs were checked, and whether its result is current.
 
+## Shared V3 build coordination
+
+For a V3 self-update task that uses automatic validation and deployment, Codex
+and WebAgent share the protected host build broker. Codex runs
+`python3 -B /home/ar/webagent-dev2/v3/plugins/abilities/Administrator/v3_build/buildctl.py`
+through SSH on the development server. Use `status` to inspect open work;
+`begin <stable-task-id> <summary>` before editing; `inputs` after source
+review and checks; and `finish <task-id> --expected <inputs_sha256>` when
+the task is ready. The last registered task to finish queues one tested
+build and V3 development deployment. Poll `job <job-id>` for the terminal
+result. An abandoned task can use `abandon <task-id>`; it does not deploy.
+The same broker registry and build lock apply to V3 agent tools and Codex.
+
+Only use `finish` when automatic V3 development deployment is authorized for
+the task. A source digest detects edits outside the registry, but source writers
+must still coordinate before starting a build. The CLI cannot choose a host
+command, container name, image tag, or production target.
+
 ## V3 reducing build and validation time
 
 - Work from narrow checks to expensive builds: run a quick, appropriately

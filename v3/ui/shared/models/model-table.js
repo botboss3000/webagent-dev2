@@ -559,7 +559,13 @@ export function mountModelTable(host, opts = {}) {
   subscriptionConnect.textContent = 'Click to Issue verification code';
   const subscriptionActions = document.createElement('span');
   subscriptionActions.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+  const subscriptionReset = document.createElement('button');
+  subscriptionReset.type = 'button';
+  subscriptionReset.className = 'ac-btn ac-btn-ghost ac-btn-sm';
+  subscriptionReset.textContent = 'Reset connection';
+  subscriptionReset.title = 'Clear this agent’s ChatGPT subscription credentials and cancel pending authorization';
   subscriptionActions.appendChild(subscriptionConnect);
+  subscriptionActions.appendChild(subscriptionReset);
   subscriptionCtrl.append(subscriptionState, subscriptionActions);
   subscriptionRow.appendChild(subscriptionCtrl);
   table.appendChild(subscriptionRow);
@@ -1320,12 +1326,13 @@ export function mountModelTable(host, opts = {}) {
     const verification = activeSubscriptionVerification(row);
     const connected = !!row?.credential_configured;
     const email = row?.credential_email || '';
+    subscriptionReset.style.display = adapter.resetSubscriptionCredentials && !verification ? '' : 'none';
     subscriptionConnect.disabled = false;
     if (verification) {
       subscriptionConnect.style.display = 'none';
       renderSubscriptionAuthorization(subscriptionState, verification, {
         onCheck: () => refreshSubscriptionAccount(row),
-        onReset: () => resetSubscriptionLogin(row),
+        onReset: () => resetSubscriptionCredentials(),
         onExpire: () => resetSubscriptionLogin(row, { expired: true }),
       });
       return;
@@ -1335,11 +1342,11 @@ export function mountModelTable(host, opts = {}) {
     subscriptionConnect.textContent = connected
       ? 'Use other account'
       : 'Retry verification code';
-    if (message) subscriptionState.textContent = message;
-    else if (connected) {
-      subscriptionState.textContent = 'Connected to ' + (email || 'ChatGPT account')
-        + (row.credential_plan_type ? ' (' + row.credential_plan_type + ')' : '');
-    } else subscriptionState.textContent = '';
+    const connectedLabel = connected
+      ? 'Connected to ' + (email || 'ChatGPT account')
+        + (row.credential_plan_type ? ' (' + row.credential_plan_type + ')' : '')
+      : '';
+    subscriptionState.textContent = [connectedLabel, message].filter(Boolean).join(' · ');
   }
   async function refreshSubscriptionAccount(row = matchingSubscriptionRow()) {
     if (subscriptionCheckBusy || subscriptionDestroyed) return;
@@ -1397,6 +1404,30 @@ export function mountModelTable(host, opts = {}) {
       renderSubscriptionAuth(error?.message || 'Could not reset authorization.');
     }
   }
+  async function resetSubscriptionCredentials() {
+    if (!adapter.resetSubscriptionCredentials) return;
+    subscriptionReset.disabled = true;
+    try {
+      const cleared = new Set(await adapter.resetSubscriptionCredentials());
+      for (const row of S.providers) {
+        if (!cleared.has(row.connection_id)) continue;
+        row.credential_configured = false;
+        row.credential_email = '';
+        row.credential_plan_type = '';
+      }
+      pendingSubscriptionRow = null;
+      subscriptionVerification = null;
+      renderSaved();
+      await loadModels();
+      renderSubscriptionAuth('ChatGPT connection reset. Use Retry verification code to reconnect.');
+    } catch (error) {
+      renderSubscriptionAuth(error?.message || 'Could not reset connection.');
+      setModelStatus(error?.message || 'Could not reset connection.');
+    } finally {
+      subscriptionReset.disabled = false;
+    }
+  }
+  subscriptionReset.addEventListener('click', resetSubscriptionCredentials);
   async function startSubscriptionLogin() {
     if (subscriptionLoginBusy || subscriptionDestroyed) return;
     subscriptionLoginBusy = true;

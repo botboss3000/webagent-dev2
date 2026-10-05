@@ -143,6 +143,58 @@ class BuildTests(unittest.TestCase):
         return self.call("v3_worker_submit", {"operation": "deploy", "job_id": source_job["job_id"],
                 "request_id": request_id, "expected_inputs_sha256": source_job["inputs_sha256"]})
 
+    def test_coordinated_work_batches_one_build_and_deployment(self):
+        first = self.call("v3_build_work", {"action": "begin", "task_id": "first-task", "summary": "First change"})
+        second = self.call("v3_build_work", {"action": "begin", "task_id": "second-task", "summary": "Second change"})
+        self.assertEqual(2, second["open_count"])
+        with self.assertRaisesRegex(ValueError, "work remains open"):
+            self.build()
+        digest = host.context_digest(self.runner.snapshot())[0]
+        closed = self.call("v3_build_work", {"action": "finish", "task_id": "first-task",
+                                              "expected_inputs_sha256": digest})
+        self.assertIsNone(closed["job_id"])
+        closed = self.call("v3_build_work", {"action": "finish", "task_id": "second-task",
+                                              "expected_inputs_sha256": digest})
+        self.assertEqual("completed", self.wait({"job_id": closed["job_id"]})["status"])
+        duplicate = self.call("v3_build_work", {"action": "finish", "task_id": "second-task",
+                                                 "expected_inputs_sha256": digest})
+        self.assertEqual(closed["job_id"], duplicate["job_id"])
+        first_duplicate = self.call("v3_build_work", {"action": "finish", "task_id": "first-task",
+                                                       "expected_inputs_sha256": digest})
+        self.assertEqual(closed["job_id"], first_duplicate["job_id"])
+        self.assertEqual(2, len([c for c in self.runner.calls if c[0] == "build"]))
+        self.assertEqual(2, len([c for c in self.runner.calls if c[0] == "stop"]))
+        self.assertEqual(2, len([c for c in self.runner.calls if c[0] == "healthy"]))
+        self.assertEqual(0, self.call("v3_build_work", {"action": "status"})["open_count"])
+
+    def test_coordinated_work_rejects_stale_inputs_without_replacement(self):
+        self.call("v3_build_work", {"action": "begin", "task_id": "stale-task", "summary": "Change"})
+        old = host.context_digest(self.runner.snapshot())[0]
+        self.runner.blob = context("changed")
+        with self.assertRaisesRegex(ValueError, "stale work inputs"):
+            self.call("v3_build_work", {"action": "finish", "task_id": "stale-task",
+                                         "expected_inputs_sha256": old})
+        self.assertEqual(1, self.call("v3_build_work", {"action": "status"})["open_count"])
+        self.assertFalse(any(c[0] == "stop" for c in self.runner.calls))
+
+    def test_coordinated_build_changed_inputs_never_stops_live_containers(self):
+        self.call("v3_build_work", {"action": "begin", "task_id": "moving-task", "summary": "Moving"})
+        self.runner.change_during_build = True
+        digest = host.context_digest(self.runner.snapshot())[0]
+        job = self.call("v3_build_work", {"action": "finish", "task_id": "moving-task",
+                                           "expected_inputs_sha256": digest})
+        result = self.wait({"job_id": job["job_id"]})
+        self.assertEqual("failed", result["status"])
+        self.assertFalse(any(c[0] == "stop" for c in self.runner.calls))
+
+    def test_coordinated_work_survives_broker_restart(self):
+        self.call("v3_build_work", {"action": "begin", "task_id": "saved-task", "summary": "Saved"})
+        self.broker.shutdown()
+        self.broker = host.Broker(self.state, self.runner)
+        self.assertEqual(1, self.call("v3_build_work", {"action": "status"})["open_count"])
+        with self.assertRaisesRegex(ValueError, "work remains open"):
+            self.build()
+
     def test_worker_restart_uses_fixed_local_control_and_refuses_busy_broker(self):
         calls = []
         def control(method, path, body=None):
@@ -276,6 +328,20 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(any(c[0] in ("stop", "rename", "create", "start") for c in self.runner.calls))
         self.assertTrue((self.state / result["job_id"] / "rollback-images.tar").is_file())
 
+    def test_self_replacement_keeps_bounded_commit_lease(self):
+        built = self.wait(self.build())
+        self.runner.stop_entered = threading.Event()
+        self.runner.stop_release = threading.Event()
+        submitted = self.deploy(built, "commit-lease")
+        self.assertTrue(self.runner.stop_entered.wait(5))
+        before = self.broker.jobs[submitted["job_id"]]["lease_until"]
+        self.assertGreater(before - time.time(), 100)
+        self.call("administrator_host_lease", trusted={**self.trusted,
+                  "lease_until": time.time() + 30})
+        self.assertEqual(before, self.broker.jobs[submitted["job_id"]]["lease_until"])
+        self.runner.stop_release.set()
+        self.assertEqual("completed", self.wait(submitted)["status"])
+
     def test_revocation_after_first_stop_is_uncertain_without_further_effects(self):
         built = self.wait(self.build())
         self.runner.stop_entered = threading.Event()
@@ -351,6 +417,63 @@ class BuildTests(unittest.TestCase):
 
 
 class InheritedSocketTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_and_webagent_share_work_registry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = str(Path(temp) / "broker.sock")
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(path)
+            listener.listen(4)
+            broker = host.Broker(Path(temp) / "jobs", FakeRunner())
+            service = asyncio.create_task(host.serve(broker, listener))
+
+            async def local(name, arguments):
+                reader, writer = await asyncio.open_unix_connection(path)
+                writer.write(json.dumps({"id": "local-test", "name": name, "arguments": arguments}).encode() + b"\n")
+                await writer.drain()
+                response = json.loads(await reader.readline())
+                writer.close()
+                await writer.wait_closed()
+                return response
+
+            try:
+                await asyncio.sleep(.02)
+                own_session = str(uuid.uuid4())
+                trusted = {"user_id": "v3-user", "session_id": own_session,
+                           "lease_until": time.time() + 30, "access_fingerprint": "f" * 64}
+                def app(action, task_id, **more):
+                    return broker.handle({"name": "v3_build_work", "workspace": own_session,
+                                          "trusted": trusted, "arguments": {"action": action,
+                                          "task_id": task_id, **more}})
+                self.assertEqual("success", (await local("v3_build_work", {
+                    "action": "begin", "task_id": "codex-task", "summary": "Codex change"}))["status"])
+                app("begin", "webagent-task", summary="WebAgent change")
+                self.assertEqual(2, (await local("v3_build_work", {"action": "status"}))["output"]["open_count"])
+                forbidden = await local("v3_worker_submit", {"operation": "deploy"})
+                self.assertEqual("failed", forbidden["status"])
+                digest = host.context_digest(broker.runner.snapshot())[0]
+                first = await local("v3_build_work", {"action": "finish", "task_id": "codex-task",
+                                                       "expected_inputs_sha256": digest})
+                self.assertIsNone(first["output"]["job_id"])
+                second = app("finish", "webagent-task", expected_inputs_sha256=digest)
+                job_id = second["job_id"]
+                self.assertEqual("success", (await local("v3_worker_job", {"job_id": job_id}))["status"])
+                for _ in range(100):
+                    result = broker.handle({"name": "v3_worker_job", "workspace": own_session,
+                                            "trusted": trusted, "arguments": {"job_id": job_id}})
+                    if result["status"] not in ("queued", "running"):
+                        break
+                    await asyncio.sleep(.01)
+                self.assertEqual("completed", result["status"])
+                self.assertEqual(2, len([c for c in broker.runner.calls if c[0] == "build"]))
+            finally:
+                service.cancel()
+                try:
+                    await service
+                except asyncio.CancelledError:
+                    pass
+                listener.close()
+                broker.shutdown()
+
     async def test_root_fd_address_needs_no_child_path_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = os.open(temp, os.O_RDONLY | os.O_DIRECTORY)

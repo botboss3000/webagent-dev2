@@ -48,20 +48,29 @@ pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->R
     let (policy,revision,visibility,state)=ability_controls(&scoped,sid).await?;
     let mode=session_mode(&scoped,sid).await?;
     let access=scoped.store.live_access(scoped.store.current_user_id(),&agent).await?;
-    if !access.principal.administrator() || !access.admitted() || live_tool_decision(&scoped,&access,name,
+    let work_finish=name=="v3_build_work_finish";
+    let policy_name=if work_finish {"v3_build_work"} else {name};
+    if !access.principal.administrator() || !access.admitted() || live_tool_decision(&scoped,&access,policy_name,
         &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission==access::Permission::Deny {
         bail!("Host build authority revoked");
+    }
+    // The combined job may replace containers without another model tool call.
+    // Require live automatic deployment authority for its whole lease.
+    if work_finish && live_tool_decision(&scoped,&access,"v3_worker_submit",
+        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission!=access::Permission::Auto {
+        bail!("Automatic V3 deployment is not authorized");
     }
     Ok(digest(&json!([scoped.store.current_user_id(),sid,agent,access.context_fingerprint(),
         policy,revision,visibility,state,mode,run["loaded_abilities"],scoped.abilities.live_version()])))
 }
 async fn host(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,cancel:CancellationToken)->Result<Value> {
-    let fingerprint=host_fingerprint(app,sid,run_id,name).await?;
+    let fingerprint_name=if name=="v3_build_work" && args["action"]=="finish" {"v3_build_work_finish"} else {name};
+    let fingerprint=host_fingerprint(app,sid,run_id,fingerprint_name).await?;
     let trusted=json!({"user_id":app.store.current_user_id(),"session_id":sid,
         "lease_until":now()+30,"access_fingerprint":fingerprint});
-    if matches!(name,"v3_build_image"|"v3_worker_submit") {
+    if matches!(name,"v3_build_image"|"v3_worker_submit") || (name=="v3_build_work" && args["action"]=="finish") {
         app.store.put(&format!("administrator_host:{sid}"),&json!({"session_id":sid,
-            "run_id":run_id,"tool_name":name,"access_fingerprint":fingerprint})).await?;
+            "run_id":run_id,"tool_name":fingerprint_name,"access_fingerprint":fingerprint})).await?;
     }
     tools::execute_trusted(name,args,sid,std::path::Path::new("/run/v3/build/build.sock"),Some(trusted),cancel).await
 }
@@ -174,7 +183,7 @@ pub async fn execute(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,pending
             Ok(json!({"status":receipt["status"],"uncertain":receipt["result"]["uncertain"]==true,"output":receipt}))
         },
         "v3_workspace_action"=>receipt_action(app,sid,run_id,args,pending_id,policy_version,cancel).await,
-        "v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"=>host(app,sid,run_id,name,args,cancel).await,
+        "v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"|"v3_build_work"=>host(app,sid,run_id,name,args,cancel).await,
         "git_tool"|"resolve_conflict"|"commit_and_push"=>{
             let trusted=crate::api::repository::transport(app,sid).await?;
             worker(app,sid,name,args,Some(trusted),cancel).await

@@ -137,12 +137,26 @@ export function createModelAdapter(request, agentId, onAssignment) {
     loadCredential:async()=>reject('named credential library'),
     saveCredential:async()=>reject('credential library validation/save'),
     deleteCredential:async()=>reject('credential library deletion'),
+    resetSubscriptionCredentials:async()=>{
+      if(destroyed)throw Error('Models page closed');
+      const result=await request('/models/connections/subscription/reset?agent_id='+encodeURIComponent(agentId),'POST');
+      for(const id of result.connection_ids||[])statuses.set(id,{connected:false});
+      await read();
+      return result.connection_ids||[];
+    },
     subscriptionRequest:async(path,options={})=>{
       // The reference control keeps its V2 paths; only this bridge reaches V3.
       if(destroyed)throw Error('Models page closed');
       const url=new URL(path,location.origin);const entryId=url.searchParams.get('entry_id');
       if(url.pathname.endsWith('/login/start')){
         if(!data.can_manage)throw Error('Read-only agent');
+        const pending=await request('/models/connections/authorization/pending?agent_id='+encodeURIComponent(agentId));
+        if(pending.pending){
+          const id=Object.values(catalog.entries).find(e=>e.connection_id===pending.connection_id)?.id
+            || 'model-'+pending.connection_id;
+          drafts.set(id,pending.connection_id);
+          return response({...pending,entry_id:id});
+        }
         let connectionId=entryId&&(catalog.entries[entryId]?.connection_id||drafts.get(entryId));
         let id=entryId;
         if(!connectionId){

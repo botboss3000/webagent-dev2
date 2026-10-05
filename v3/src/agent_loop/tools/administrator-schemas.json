@@ -614,6 +614,22 @@
   },
   {
     "type": "function",
+    "name": "v3_build_work",
+    "description": "Register V3 source work, inspect coordination, or finish with an exact source digest to trigger one validated automatic build and deployment",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["status", "begin", "finish", "abandon"]},
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "summary": {"type": "string", "maxLength": 200},
+        "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "required": ["action"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
     "name": "v3_build_status",
     "description": "Read development build broker status; installation administrator only",
     "parameters": {

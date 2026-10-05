@@ -246,6 +246,7 @@ function renderAccount(me){
   const guest=me.role==='guest';
   for(const id of ['account-profile-form','account-password-form','account-session-policy-form'])$(id).hidden=guest;
   $('shutoff').hidden=!me.is_admin;
+  $('header-refresh-browser').hidden=!me.is_admin;
   // Agent-scoped Models has its own permission checks and is also useful to members.
   document.querySelector('#agents-grid .agent-card-tabs-wrap').hidden=false;
   $('account-name').textContent=me.display_name||me.user||'Account';
@@ -363,18 +364,23 @@ mobileLayout.addEventListener('change',syncLayout);syncLayout();
 $('chat-toggle-btn').onclick=()=>{if(mobileLayout.matches){showMobileView('chat');}else{desktopChatVisible=!desktopChatVisible;syncLayout();}};
 
 let browserResetInProgress=false;
-async function hardRefresh(){
+async function hardRefresh(signOut=false){
   if(browserResetInProgress)return;
   browserResetInProgress=true;
-  try {
-    const response=await fetch('/api/v3/auth/logout',{method:'POST',credentials:'same-origin',headers:{'x-csrf-token':csrf}});
-    if(!response.ok&&response.status!==401)throw Error('Sign-out failed');
-  } catch (_) {
-    browserResetInProgress=false;
-    $('ptr-indicator').classList.remove('loading');
-    $('ptr-indicator').hidden=true;
-    note('Could not end this sign-in. Browser data was not cleared. Try again.');
-    return;
+  const refreshButton=$('header-refresh-browser');
+  refreshButton.disabled=true;
+  if(signOut){
+    try {
+      const response=await fetch('/api/v3/auth/logout',{method:'POST',credentials:'same-origin',headers:{'x-csrf-token':csrf}});
+      if(!response.ok&&response.status!==401)throw Error('Sign-out failed');
+    } catch (_) {
+      browserResetInProgress=false;
+      refreshButton.disabled=false;
+      $('ptr-indicator').classList.remove('loading');
+      $('ptr-indicator').hidden=true;
+      note('Could not end this sign-in. Browser data was not cleared. Try again.');
+      return;
+    }
   }
   try { await purgeAllBrowserData(); } finally {
     const url=new URL(location.href);
@@ -382,6 +388,7 @@ async function hardRefresh(){
     location.replace(url);
   }
 }
+$('header-refresh-browser').onclick=()=>{void hardRefresh();};
 function setupHeaderPullRefresh(){
   const indicator=$('ptr-indicator'),blue=$('ptr-blue'),red=$('ptr-red'),hint=$('ptr-hint');
   const fullDash=98,normalAt=.5,hardAt=.85,pullZone=50;
@@ -394,7 +401,7 @@ function setupHeaderPullRefresh(){
     indicator.classList.add('loading');
     hint.textContent=action===2?'CLEARING BROWSER DATA':'REFRESHING';hint.classList.add('show');
     if(action===1)setTimeout(()=>location.reload(),120);
-    if(action===2)void hardRefresh();
+    if(action===2)void hardRefresh(true);
   }
   document.addEventListener('touchstart',event=>{
     if(!mobileLayout.matches||window.scrollY>5||indicator.classList.contains('loading')||!event.touches.length)return;

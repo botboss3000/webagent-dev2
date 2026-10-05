@@ -329,6 +329,31 @@ async fn connection_status(State(app): State<App>, Extension(identity): Extensio
     Ok(Json(json!({"id":id,"revoked":connection.revoked,
         "connected":!connection.revoked && app.store.get(&connection.credential_ref).await?.is_some(),"authorization":authorization})))
 }
+// Reattach the owner's pending device code after a page reload. Draft
+// connections have no roster entry yet, so connection status alone cannot
+// recover their verification details.
+async fn pending_subscription_authorization(State(app): State<App>, Extension(identity): Extension<Value>,
+    Query(params): Query<HashMap<String,String>>) -> Api {
+    let caller=principal(&app,&identity).await?;
+    let agent=selected(&params);
+    authority(&app,&identity,agent,true).await?;
+    let login=app.login.read().await;
+    let Some(pending)=login.as_ref().filter(|v|v["status"]=="pending") else {
+        return Ok(Json(json!({"pending":false})));
+    };
+    let Some(id)=pending["connection_id"].as_str() else {
+        return Ok(Json(json!({"pending":false})));
+    };
+    let catalog=app.store.model_catalog().await?;
+    let visible=catalog.connections.get(id).is_some_and(|c|c.owner_id==caller.user_id
+        && c.allowed_agents.contains(agent) && !c.revoked
+        && c.transport==crate::model_selection::Transport::OpenaiSubscription);
+    if !visible { return Ok(Json(json!({"pending":false}))); }
+    Ok(Json(json!({"pending":true,"connection_id":id,
+        "verification_url":pending["verification_url"],"user_code":pending["user_code"],
+        "expires_at":pending["expires_at"]})))
+}
+
 // Subscription discovery is scoped to the selected owned connection.
 async fn subscription_models(State(app): State<App>, Extension(identity): Extension<Value>,
     Path(id): Path<String>, Query(params): Query<HashMap<String,String>>) -> Api {
@@ -361,14 +386,24 @@ async fn connection_authorize(State(app): State<App>, Extension(identity): Exten
     byo_credential_permission(&app,&caller).await?;
     if connection.revoked { return Err(crate::conflict("Connection is revoked")); }
     if connection.transport != crate::model_selection::Transport::OpenaiSubscription { return Err(crate::bad("This provider uses an API key, not device authorization")); }
-    if app.login.read().await.as_ref().is_some_and(|v|v["status"]=="pending") {
-        return Err(crate::conflict("Authorization already pending"));
+    if let Some(pending) = app.login.read().await.as_ref().filter(|v|v["status"]=="pending") {
+        if pending["connection_id"] == id {
+            return Ok(Json(json!({"verification_url":pending["verification_url"],"user_code":pending["user_code"]})));
+        }
+        return Err(crate::conflict("Authorization is pending for another connection. Reset it before retrying"));
     }
-    // Server mints each credential namespace. Reconnect invalidates old pinned refs.
+    // A failed device-start request must not disconnect the credential already
+    // attached to this connection. The gate keeps polling from publishing until
+    // the new reference has been committed.
     let reference=format!("provider_credential:{}",crate::uuid());
-    connection.credential_ref=reference.clone();
-    app.store.save_model_catalog(&catalog,catalog.revision).await?;
-    crate::provider_start_for(app.clone(),reference,Some(id)).await
+    let started=crate::provider_start_for(app.clone(),reference.clone(),Some(id.clone())).await?;
+    catalog.connections.get_mut(&id).expect("connection checked above").credential_ref=reference;
+    if let Err(error)=app.store.save_model_catalog(&catalog,catalog.revision).await {
+        let mut login=app.login.write().await;
+        if login.as_ref().is_some_and(|v|v["connection_id"]==id) { *login=None; }
+        return Err(error.into());
+    }
+    Ok(started)
 }
 
 // The connection owner may cancel a pending device flow without revoking a
@@ -384,6 +419,45 @@ async fn connection_authorization_reset(State(app): State<App>, Extension(identi
         *login=None;
     }
     Ok(Json(json!({"reset":true})))
+}
+
+// The agent's owner may clear every owned subscription credential represented
+// by its roster. Reset also cancels an owned draft flow for this agent, which
+// may no longer have a visible row after a page reload.
+async fn subscription_credentials_reset(State(app): State<App>, Extension(identity): Extension<Value>,
+    Query(params): Query<HashMap<String,String>>) -> Api {
+    let caller=principal(&app,&identity).await?;
+    let agent=selected(&params);
+    authority(&app,&identity,agent,true).await?;
+    let _guard=app.gate.lock().await;
+    let mut catalog=app.store.model_catalog().await?;
+    let mut ids=std::collections::BTreeSet::new();
+    if let Some(roster)=catalog.agent_models.get(agent) {
+        for entry_id in &roster.entry_ids {
+            if let Some(entry)=catalog.entries.get(entry_id) { ids.insert(entry.connection_id.clone()); }
+        }
+    }
+    let pending_id=app.login.read().await.as_ref()
+        .and_then(|v|v["connection_id"].as_str().map(str::to_owned));
+    let cancel_owned_pending=pending_id.as_ref().is_some_and(|id|
+        catalog.connections.get(id).is_some_and(|c|c.owner_id==caller.user_id
+            && c.transport==crate::model_selection::Transport::OpenaiSubscription));
+    if let Some(id)=pending_id.as_ref() {
+        if catalog.connections.get(id).is_some_and(|c|c.allowed_agents.contains(agent)) {
+            ids.insert(id.clone());
+        }
+    }
+    ids.retain(|id|catalog.connections.get(id).is_some_and(|c|
+        c.owner_id==caller.user_id && c.allowed_agents.contains(agent) && !c.revoked
+        && c.transport==crate::model_selection::Transport::OpenaiSubscription));
+    for id in &ids {
+        catalog.connections.get_mut(id).expect("connection checked above").credential_ref=
+            format!("provider_credential:{}",crate::uuid());
+    }
+    if !ids.is_empty() { app.store.save_model_catalog(&catalog,catalog.revision).await?; }
+    let mut login=app.login.write().await;
+    if cancel_owned_pending { *login=None; }
+    Ok(Json(json!({"reset":true,"connection_ids":ids})))
 }
 
 #[derive(serde::Deserialize)]
@@ -499,10 +573,12 @@ pub fn router() -> Router<App> {
         .route("/agents/{id}/identity", get(identity_get).put(identity_put))
         .route("/agents/{id}/members", get(members).put(member_set))
         .route("/connections/{id}", get(connection_status))
+        .route("/connections/authorization/pending", get(pending_subscription_authorization))
         .route("/connections/{id}/models", get(subscription_models))
         .route("/connections/{id}/api-key", axum::routing::put(connection_key))
         .route("/connections/{id}/authorization", axum::routing::post(connection_authorize))
         .route("/connections/{id}/authorization/reset", axum::routing::post(connection_authorization_reset))
+        .route("/connections/subscription/reset", axum::routing::post(subscription_credentials_reset))
 }
 
 #[cfg(test)]
@@ -528,6 +604,52 @@ mod tests {
         connection_authorization_reset(State(app.clone()),Extension(admin),
             Path("one".into())).await.unwrap();
         assert!(app.login.read().await.is_none());
+    }
+    #[tokio::test]
+    async fn pending_authorization_reuses_its_code_without_rotating_credentials() {
+        let (_root,app)=fixture().await;
+        selection_fixture(&app).await;
+        let identity=json!({"_user_id":"admin"});
+        let before=app.store.model_catalog().await.unwrap().connections["one"].credential_ref.clone();
+        *app.login.write().await=Some(json!({"connection_id":"one","status":"pending",
+            "device_auth_id":"fixture","verification_url":"https://example.invalid/verify","user_code":"FIXTURE"}));
+        let Json(reused)=connection_authorize(State(app.clone()),Extension(identity.clone()),Path("one".into())).await.unwrap();
+        assert_eq!(reused["user_code"],"FIXTURE");
+        let Json(pending)=pending_subscription_authorization(State(app.clone()),Extension(identity.clone()),
+            Query(HashMap::new())).await.unwrap();
+        assert_eq!(pending["pending"],true);
+        assert_eq!(pending["connection_id"],"one");
+        assert_eq!(pending["user_code"],"FIXTURE");
+        assert_eq!(app.store.model_catalog().await.unwrap().connections["one"].credential_ref,before);
+        app.login.write().await.as_mut().unwrap()["connection_id"]=json!("two");
+        assert_eq!(connection_authorize(State(app.clone()),Extension(identity),Path("one".into()))
+            .await.unwrap_err().0,StatusCode::CONFLICT);
+        assert_eq!(app.store.model_catalog().await.unwrap().connections["one"].credential_ref,before);
+    }
+    #[tokio::test]
+    async fn subscription_reset_detaches_agent_credentials_and_cancels_own_pending_flow() {
+        let (_root,app)=fixture().await;
+        selection_fixture(&app).await;
+        let admin=json!({"_user_id":"admin"});
+        let other=json!({"_user_id":"other"});
+        let before=app.store.model_catalog().await.unwrap();
+        *app.login.write().await=Some(json!({"connection_id":"two","status":"pending","device_auth_id":"fixture"}));
+        assert!(subscription_credentials_reset(State(app.clone()),Extension(other),
+            Query(HashMap::new())).await.is_err());
+        assert_eq!(app.store.model_catalog().await.unwrap().connections["one"].credential_ref,
+            before.connections["one"].credential_ref);
+        let Json(result)=subscription_credentials_reset(State(app.clone()),Extension(admin.clone()),
+            Query(HashMap::new())).await.unwrap();
+        assert_eq!(result["connection_ids"],json!(["one","two"]));
+        let after=app.store.model_catalog().await.unwrap();
+        for id in ["one","two"] {
+            assert_ne!(after.connections[id].credential_ref,before.connections[id].credential_ref);
+            let Json(status)=connection_status(State(app.clone()),Extension(admin.clone()),
+                Path(id.into()),Query(HashMap::new())).await.unwrap();
+            assert_eq!(status["connected"],false);
+        }
+        assert!(app.login.read().await.is_none());
+        assert_eq!(after.agent_models["shared_default"].entry_ids,before.agent_models["shared_default"].entry_ids);
     }
     #[tokio::test]
     async fn visibility_preferences_preserve_fixed_protocol_and_revision_fence() {

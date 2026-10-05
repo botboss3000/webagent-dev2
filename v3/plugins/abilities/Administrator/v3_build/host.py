@@ -30,7 +30,7 @@ SOURCE = Path("/home/ar/webagent-dev2")
 STATE = SOURCE / "v3/build-jobs"
 SOCKET = SOURCE / "v3/runtime/build/build.sock"
 CONTEXT = (
-    "v3/Dockerfile", "v3/Dockerfile.loop", "v3/Cargo.toml", "v3/Cargo.lock", "v3/.gitignore",
+    "v3/Dockerfile", "v3/Dockerfile.loop", "v3/Cargo.toml", "v3/Cargo.lock", "v3/build.rs", "v3/.gitignore",
     "v3/src", "v3/ui", "v3/plugins/abilities", "v3/plugins/gates", "v3/worker.py",
     "v3/sandbox.py", "v3/launch.py", "v3/promote.py", "v3/ui-baseline.json", "v3/tests",
     "v3/README.md", "v3/docs", "v3/deploy.sh", "v3/config",
@@ -41,6 +41,7 @@ CONTEXT = (
     "ui/main-panel/agents/agents.html", "ui/main-panel/agents/agents.css",
     "ui/vendor/fonts", "ui/vendor/lucide", "ui/favicon.svg")
 TARGETS = ("webagent-dev-v3", "webagent-dev-v3-loop")
+LOCAL_WORKSPACE = "71440aad-a6ba-4ba8-adc8-1fcf66250be6"
 WORKER_CONTROL = Path("/var/lib/webagent-v3-build-worker/control.sock")
 MAX_LOG = 1024 * 1024
 PUBLIC_LOG = 16 * 1024
@@ -360,6 +361,16 @@ class Broker:
         self.requests = {}
         self.active = None
         self.stopping = False
+        self.work_dir = self.state / "coordination"
+        if self.work_dir.is_symlink():
+            raise ValueError("symlink coordination state forbidden")
+        self.work_dir.mkdir(mode=0o700, exist_ok=True)
+        self.work_path = self.work_dir / "items.json"
+        if self.work_path.is_symlink():
+            raise ValueError("symlink coordination receipt forbidden")
+        self.work = json.loads(self.work_path.read_text()) if self.work_path.exists() else {}
+        if not isinstance(self.work, dict) or len(self.work) > 1000:
+            raise ValueError("invalid coordination registry")
         for path in sorted(self.state.glob("*.json")):
             if path.is_symlink():
                 raise ValueError("symlink receipt forbidden")
@@ -372,9 +383,9 @@ class Broker:
             for job in self.jobs.values():
                 if job["status"] in ("queued", "running"):
                     # A restart never repeats a build or external mutation.
-                    job["status"] = "uncertain" if job["operation"] == "deploy" else "interrupted"
+                    job["status"] = "uncertain" if job["operation"] == "deploy" or job.get("effects_started") else "interrupted"
                     job["reason"] = "broker restarted; no automatic replay"
-                    if job["operation"] == "deploy" and self._reconcile(job):
+                    if job["status"] == "uncertain" and self._reconcile(job):
                         job["status"] = "completed"
                         job["reason"] = "recovered matching healthy deployment"
                     self._save(job)
@@ -394,6 +405,36 @@ class Broker:
         finally:
             os.close(directory)
 
+    def _save_work(self):
+        temporary = self.work_dir / "items.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(canonical(self.work))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, self.work_path)
+        directory = os.open(self.work_dir, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    def _open_work(self):
+        return [item for item in self.work.values() if item["status"] == "open"]
+
+    def _auto_schedule(self, item, trusted, workspace):
+        if item.get("job_id") or self._open_work() or self.active is not None:
+            return item.get("job_id")
+        pending = sorted(key for key, value in self.work.items() if value["status"] == "closed" and not value.get("job_id"))
+        request_id = "auto-" + hashlib.sha256(canonical(pending)).hexdigest()
+        job = self.handle({"name": "administrator_auto_build_deploy", "arguments": {
+            "request_id": request_id, "expected_inputs_sha256": item["inputs_sha256"]},
+            "workspace": workspace, "trusted": trusted})
+        for key in pending:
+            self.work[key]["job_id"] = job["job_id"]
+        self._save_work()
+        return job["job_id"]
+
     def _view(self, job):
         raw = scrub(job.get("log", ""), self.runner.secrets).encode("utf-8")
         tail = raw[-PUBLIC_LOG:].decode("utf-8", "replace")
@@ -412,7 +453,8 @@ class Broker:
 
     def _incoming_lease(self, trusted):
         deadline, fingerprint = trusted.get("lease_until"), trusted.get("access_fingerprint")
-        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not time.time() < deadline <= time.time() + 35:
+        max_lease = 4 * 3600 if trusted.get("local_caller") is True else 35
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not time.time() < deadline <= time.time() + max_lease:
             raise ValueError("current bounded host authorization lease required")
         if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise ValueError("host access fingerprint required")
@@ -442,7 +484,7 @@ class Broker:
         if not isinstance(request, dict) or set(request) - {"id", "name", "arguments", "workspace", "timeout_seconds", "trusted"}:
             raise ValueError("invalid broker request")
         trusted, workspace, args = request.get("trusted"), request.get("workspace"), request.get("arguments", {})
-        if not isinstance(trusted, dict) or not {"user_id", "session_id"} <= set(trusted) or set(trusted) - {"user_id", "session_id", "lease_until", "access_fingerprint"}:
+        if not isinstance(trusted, dict) or not {"user_id", "session_id"} <= set(trusted) or set(trusted) - {"user_id", "session_id", "lease_until", "access_fingerprint", "local_caller"}:
             raise ValueError("trusted caller required")
         if not isinstance(trusted["user_id"], str) or not 1 <= len(trusted["user_id"]) <= 128 or "\0" in trusted["user_id"]:
             raise ValueError("invalid caller")
@@ -475,7 +517,9 @@ class Broker:
                         # Expired authorization cannot be revived by renewal.
                         if job.get("lease_until", 0) <= time.time():
                             continue
-                        job["lease_until"] = deadline
+                        # A deployment already replacing this API keeps its bounded
+                        # commit lease while still accepting live revocation.
+                        job["lease_until"] = max(job["lease_until"], deadline) if job.get("effects_started") else deadline
                     else:
                         job["revoked"] = True
                     self._save(job)
@@ -501,6 +545,73 @@ class Broker:
                         return {"status": "ok", "service": "v3-build-worker.service",
                                 "active": True, "interrupted_job": None}
                 raise RuntimeError("Restart requested but fresh worker readiness was not confirmed; inspect host before retry")
+            if name == "v3_build_work":
+                if set(args) - {"action", "task_id", "summary", "expected_inputs_sha256"}:
+                    raise ValueError("unsupported work argument")
+                action = args.get("action")
+                if action == "status":
+                    if set(args) != {"action"}:
+                        raise ValueError("status takes no work arguments")
+                    own = [dict(task_id=i["task_id"], status=i["status"], summary=i["summary"],
+                                inputs_sha256=i.get("inputs_sha256"), job_id=i.get("job_id"))
+                           for i in self.work.values() if self._owned(i, trusted, workspace)]
+                    return {"open_count": len(self._open_work()), "own": own[-20:],
+                            "busy": self.active is not None}
+                if action not in ("begin", "finish", "abandon"):
+                    raise ValueError("unsupported work action")
+                task_id = args.get("task_id")
+                if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id):
+                    raise ValueError("bounded stable task_id required")
+                key = hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest()
+                item = self.work.get(key)
+                if action == "begin":
+                    if set(args) != {"action", "task_id", "summary"}:
+                        raise ValueError("begin requires task_id and summary")
+                    summary = args["summary"]
+                    if not isinstance(summary, str) or not 1 <= len(summary) <= 200 or any(ord(c) < 32 for c in summary):
+                        raise ValueError("bounded summary required")
+                    if item:
+                        if item["summary"] != summary:
+                            raise ValueError("task_id reused with changed summary")
+                        return {"task_id": task_id, "status": item["status"], "open_count": len(self._open_work())}
+                    if self.active is not None:
+                        raise ValueError("build or deployment active; wait before beginning new work")
+                    if len(self.work) >= 1000:
+                        raise ValueError("coordination registry full; administrator maintenance required")
+                    self.work[key] = {"task_id": task_id, "user_id": trusted["user_id"],
+                                      "workspace": workspace, "summary": summary, "status": "open",
+                                      "created_at": time.time()}
+                    self._save_work()
+                    return {"task_id": task_id, "status": "open", "open_count": len(self._open_work())}
+                if action == "abandon":
+                    if set(args) != {"action", "task_id"} or not item or item["status"] != "open":
+                        raise ValueError("only an open task in this session may be abandoned")
+                    item.update(status="abandoned", finished_at=time.time())
+                    self._save_work()
+                    return {"task_id": task_id, "status": "abandoned", "open_count": len(self._open_work())}
+                if set(args) != {"action", "task_id", "expected_inputs_sha256"}:
+                    raise ValueError("finish requires task_id and expected_inputs_sha256")
+                expected = args["expected_inputs_sha256"]
+                if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                    raise ValueError("expected_inputs_sha256 required")
+                if not item:
+                    raise ValueError("task_id not registered in this session")
+                if item["status"] == "closed":
+                    if item["inputs_sha256"] != expected:
+                        raise ValueError("closed task digest cannot change")
+                    job_id = self._auto_schedule(item, trusted, workspace)
+                    return {"task_id": task_id, "status": "closed", "job_id": job_id,
+                            "open_count": len(self._open_work())}
+                if self.active is not None:
+                    raise ValueError("build or deployment active; close after it finishes")
+                current, _ = context_digest(self.runner.snapshot())
+                if current != expected:
+                    raise ValueError("stale work inputs")
+                item.update(status="closed", inputs_sha256=current, finished_at=time.time())
+                self._save_work()
+                job_id = self._auto_schedule(item, trusted, workspace)
+                return {"task_id": task_id, "status": "closed", "open_count": len(self._open_work()),
+                        "job_id": job_id, "inputs_sha256": current}
             if name == "v3_build_status":
                 if args:
                     raise ValueError("status takes no arguments")
@@ -518,12 +629,17 @@ class Broker:
                 if set(args) != {"job_id"}:
                     raise ValueError("job_id required")
                 job = self.jobs.get(args["job_id"])
-                if not job or not self._owned(job, trusted, workspace):
+                participant = any(self._owned(item, trusted, workspace) and item.get("job_id") == args["job_id"]
+                                  for item in self.work.values())
+                if not job or not (self._owned(job, trusted, workspace) or participant):
                     raise ValueError("job not available to this session")
                 return self._view(job)
-            operation = "build" if name == "v3_build_image" else args.get("operation")
+            operation = ("build_deploy" if name == "administrator_auto_build_deploy"
+                         else "build" if name == "v3_build_image" else args.get("operation"))
             allowed = {"request_id", "expected_inputs_sha256"} | ({"operation", "job_id"} if name == "v3_worker_submit" else set())
-            if name not in ("v3_build_image", "v3_worker_submit") or set(args) - allowed or operation not in ("build", "deploy"):
+            if name not in ("v3_build_image", "v3_worker_submit", "administrator_auto_build_deploy") or set(args) - allowed or operation not in ("build", "deploy", "build_deploy"):
+                raise ValueError("unsupported fixed build operation")
+            if name == "v3_worker_submit" and operation == "build_deploy":
                 raise ValueError("unsupported fixed build operation")
             if self.stopping:
                 raise PermissionError("host broker is stopping")
@@ -542,6 +658,8 @@ class Broker:
                 return self._view(job)
             if self.active is not None:
                 raise ValueError("shared V3 build target busy; coordinate writers before retry")
+            if self._open_work():
+                raise ValueError("registered V3 source work remains open")
             if len(self.jobs) >= 1000:
                 raise ValueError("durable job limit reached; administrator maintenance required")
             blob = self.runner.snapshot()
@@ -585,7 +703,7 @@ class Broker:
                 self._lease(job)
                 job["status"] = "running"
                 self._save(job)
-            if job["operation"] == "build":
+            if job["operation"] in ("build", "build_deploy"):
                 # Capture current environment values privately solely to scrub
                 # any accidental occurrence in compiler output.
                 for target in TARGETS:
@@ -600,7 +718,7 @@ class Broker:
                         job["images"][role] = image
                         job["log"] = scrub(job["log"] + log, self.runner.secrets)
                         self._save(job)
-            else:
+            if job["operation"] in ("deploy", "build_deploy"):
                 self._phase(job, "capturing_rollback")
                 previous = {role: self.runner.inspect(name) for role, name in zip(("api", "loop"), TARGETS)}
                 private = self.state / job["job_id"]
@@ -614,12 +732,21 @@ class Broker:
                 self.runner.export([previous[r]["Image"] for r in ("api", "loop")], private / "rollback-images.tar")
                 if context_digest(self.runner.snapshot())[0] != job["inputs_sha256"]:
                     raise ValueError("build inputs changed before deployment")
+                if self._open_work():
+                    raise ValueError("registered V3 source work reopened before deployment")
                 with self.lock:
                     job["rollback"] = {"api": TARGETS[0] + "-pre-build-" + job["job_id"], "loop": TARGETS[1] + "-pre-build-" + job["job_id"]}
                     self._save(job)
                 # Record intent before each externally visible mutation. On a
                 # crash the next broker only reconciles, never retries it.
                 self._phase(job, "stopping_loop")
+                with self.lock:
+                    self._lease(job)
+                    # The API cannot renew while it replaces itself. A bounded
+                    # commit lease covers container health and keeps revocation live.
+                    job["lease_until"] = max(job["lease_until"], time.time() + 180)
+                    job["effects_started"] = True
+                    self._save(job)
                 mutated = True
                 self.runner.stop(TARGETS[1])
                 self._phase(job, "stopping_api")
@@ -677,12 +804,22 @@ async def serve(broker, listener):
         try:
             sock = writer.get_extra_info("socket")
             _, uid, _ = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid != 1100:
+            if uid not in (1000, 1100):
                 raise ValueError("broker caller identity denied")
             raw = await asyncio.wait_for(reader.readline(), 5)
             if len(raw) > 65536 or not raw.endswith(b"\n"):
                 raise ValueError("bounded request required")
             request = json.loads(raw)
+            if uid == 1000:
+                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job"):
+                    raise ValueError("local caller operation denied")
+                request["workspace"] = LOCAL_WORKSPACE
+                request["trusted"] = {"user_id": "codex-local", "session_id": LOCAL_WORKSPACE,
+                    "lease_until": time.time() + 4 * 3600,
+                    "access_fingerprint": hashlib.sha256(b"local-codex-build").hexdigest(),
+                    "local_caller": True}
+            elif request.get("trusted", {}).get("local_caller") is not None:
+                raise ValueError("local caller authority cannot be supplied by the app")
             result = await asyncio.to_thread(broker.handle, request)
             response = {"id": request.get("id"), "status": "success", "output": result}
         except Exception as error:

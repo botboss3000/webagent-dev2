@@ -281,6 +281,16 @@ build inputs.
 The app and worker do not receive host Docker privileges. Fixed development jobs
 are caller-owned, idempotent and revision fenced. Revocation cancels a pending job;
 after uncertain effects it retains receipts and rollback material for reconciliation.
+V3 Build's work tool records per-session source claims in the protected broker's
+durable coordination registry. A final close with the current full-context digest
+submits one combined build/test/deploy job; other open claims block submission and
+the broker checks the digest and claims again before stopping a container. Rust
+checks live installation and tool authority and renews the job's short lease.
+The broker also accepts the development checkout owner over the same Unix socket
+for only work coordination and read-only status/job polling. It derives Codex's
+identity from the Unix peer, never a client-supplied V3 user or credential.
+An unregistered external editor is outside the registry, so the digest remains
+the final source-race fence.
 Computer Control and Program Screenshot remain excluded and unavailable. The
 eight selected Administrator abilities passed authenticated API acceptance: real
 workspace editing, Code Index, Git push and conflict handling, supervised

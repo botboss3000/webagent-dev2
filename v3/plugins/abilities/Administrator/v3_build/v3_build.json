@@ -1,9 +1,10 @@
 {
   "display_name": "V3 Build",
   "kind": "ability",
-  "description": "Run bounded V3 workspace Rust checks and installation-admin development image jobs through a private host broker. Builds use frozen allowlisted inputs; deployments retain rollback material.",
+  "description": "Coordinate V3 source work, run bounded Rust checks, and build/test/deploy frozen development images through a private host broker.",
   "tools": [
     "v3_build_status",
+    "v3_build_work",
     "v3_build_worker_restart",
     "v3_cargo_task",
     "v3_build_image",

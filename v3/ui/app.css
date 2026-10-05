@@ -65,6 +65,10 @@ body {
 #main-header{position:relative;display:flex;align-items:center;flex-shrink:0;min-height:56px;padding:0 14px}
 #main-tabs-wrap{display:block;position:relative;flex:1 1 auto;min-width:0}
 #main-tabs{display:flex;align-items:center;gap:4px}
+#header-refresh-browser{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px;border:0;border-radius:50%;background:transparent;color:var(--fg-2);cursor:pointer;flex:none}
+#header-refresh-browser:hover{background:rgba(var(--brand-rgb),.08);color:var(--fg-1)}
+#header-refresh-browser:active{background:rgba(var(--brand-rgb),.12);color:var(--accent)}
+#header-refresh-browser:disabled{opacity:.6;cursor:default}
 #top-user-id{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;padding:7px;border:1px solid transparent;border-radius:50%;background:transparent;color:var(--fg-2)}
 #top-user-id[aria-expanded=true]{background:rgba(var(--brand-rgb),.12);color:var(--accent)}
 #status-right{margin-left:auto}

@@ -102,7 +102,7 @@ fn mask_guidance(source: &mut [Value]) {
 }
 fn segment_page(record: &Value, entry: &Value, sid: &str, args: &Args) -> Result<Value> {
     let id = args.segment_id.as_deref().context("Segment ID required")?;
-    if record["schema_version"] != 1 || record["session_id"] != sid
+    if !matches!(record["schema_version"].as_u64(),Some(1|2)) || record["session_id"] != sid
         || record["segment_id"] != id || record["source_digest"] != entry["source_digest"] {
         bail!("Compacted segment provenance conflict");
     }

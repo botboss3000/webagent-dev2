@@ -171,7 +171,9 @@ async fn run_diagnostics_api(
     if run["session_id"] != sid {
         return Err(ApiError(StatusCode::NOT_FOUND, "Run not found".into()));
     }
-    Ok(Json(run_diagnostics(&run)))
+    let mut diagnostic=run_diagnostics(&run);
+    diagnostic["reasoning_cleanup_logical_bytes_removed"]=json!(app.store.reasoning_cleanup_total(&sid).await?);
+    Ok(Json(diagnostic))
 }
 // Session access is checked again against the durable run before projecting
 // progress. The projection contains no model, tool, or user message content.

@@ -6,6 +6,7 @@ pub(crate) mod search;
 pub(crate) mod own_skills;
 pub(crate) mod base_task;
 mod activity;
+mod reasoning_cleanup;
 
 use crate::access;
 use crate::cache::{Cache, ContextCache};
@@ -220,6 +221,8 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
         // Recovery input is encrypted item-by-item, separate from small run
         // metadata. Both are committed atomically; interactions remain untouched.
         sqlx::query("CREATE TABLE IF NOT EXISTS recovery_input(run_id TEXT NOT NULL,ordinal INTEGER NOT NULL,item BLOB NOT NULL,PRIMARY KEY(run_id,ordinal))")
+            .execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS reasoning_cleanup(segment_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,payload BLOB NOT NULL)")
             .execute(&pool).await?;
         let columns = sqlx::query("PRAGMA table_info(run_index)").fetch_all(&pool).await?;
         if !columns.iter().any(|r| r.get::<String,_>("name") == "enqueue_seq") {
@@ -1582,10 +1585,15 @@ impl Store {
         self.write_document(&mut tx,&format!("run:{rid}"),&persisted).await?;
         // Large model and tool outputs live in interactions and the run checkpoint.
         if kind != "model_output" && kind != "tool_result" {
+            let event_payload = if kind == "context_compacted" {
+                json!({"run_id":rid,"segment_id":payload["segment_id"],
+                    "source_digest":payload["source_digest"],
+                    "dropped_items":payload["dropped_items"]})
+            } else { payload.clone() };
             sqlx::query("INSERT INTO events(session_id,kind,payload) VALUES(?,?,?)")
                 .bind(run["session_id"].as_str().unwrap())
                 .bind(kind)
-                .bind(self.encode_user_record(payload)?)
+                .bind(self.encode_user_record(&event_payload)?)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -1687,15 +1695,35 @@ impl Store {
                 return Err(anyhow!("Invalid compaction segment provenance"));
             }
             let created_at=crate::now();
-            let segment=json!({"schema_version":1,"session_id":sid,"segment_id":segment_id,
-                "source_digest":source_digest,"source":source,"created_at":created_at});
+            // The discarded prefix is kept only in memory. Recall and events
+            // persist no reasoning; a durable hash-only job cleans older copies.
+            let clean=crate::context_compaction::recall_source(source);
+            let clean_digest=crate::digest(&clean);
+            let hashes=reasoning_cleanup::hashes(source)?;
+            let segment_bytes_avoided=source_bytes.len().saturating_sub(serde_json::to_vec(&clean)?.len());
+            let event_bytes_avoided=serde_json::to_vec(payload)?.len().saturating_sub(
+                serde_json::to_vec(&json!({"run_id":rid,"segment_id":segment_id,
+                    "source_digest":source_digest,"dropped_items":source.len()}))?.len());
+            let segment=json!({"schema_version":2,"session_id":sid,"segment_id":segment_id,
+                "source_digest":clean_digest,"original_source_digest":source_digest,
+                "source":clean,"created_at":created_at});
             sqlx::query("INSERT INTO docs(key,value) VALUES(?,?)")
                 .bind(format!("compaction_segment:{sid}:{segment_id}"))
                 .bind(self.encode_user_record(&segment)?).execute(&mut *tx).await?;
+            if !hashes.is_empty() {
+                let job=json!({"session_id":sid,"segment_id":segment_id,
+                    "source_digest":source_digest,"hashes":hashes,
+                    "dropped_items":source.len(),
+                    "segment_bytes_avoided":segment_bytes_avoided,
+                    "event_bytes_avoided":event_bytes_avoided});
+                sqlx::query("INSERT INTO reasoning_cleanup(segment_id,session_id,payload) VALUES(?,?,?)")
+                    .bind(segment_id).bind(sid).bind(self.encode_user_record(&job)?)
+                    .execute(&mut *tx).await?;
+            }
             let mut entries=session["compaction_segments"].as_array().cloned().unwrap_or_default();
             if entries.len()>=32 {entries.remove(0);}
-            entries.push(json!({"segment_id":segment_id,"source_digest":source_digest,
-                "item_count":source.len(),"created_at":created_at}));
+            entries.push(json!({"segment_id":segment_id,"source_digest":clean_digest,
+                "item_count":clean.len(),"created_at":created_at}));
             session["compaction_segments"]=json!(entries);
             sqlx::query("UPDATE docs SET value=? WHERE key=?")
                 .bind(self.encode_user_record(&session)?)

@@ -213,8 +213,9 @@ records what it checked and decided.
 The final-reply size guard is the only installed Python gate module.
 The context planner can now summarize a completed tool exchange during one
 long task when earlier-turn compaction cannot make room. Rust persists the
-validated summary before calling the model again; the original run history
-remains durable. Small inline text attachments are accepted and stored in the
+validated summary before calling the model again; the public chat and tool history remain durable. A background user-store job
+removes reasoning from the aged private interaction and completed-run recovery
+records after the checkpoint commits. Small inline text attachments are accepted and stored in the
 user plane with the message; their text enters context as untrusted source data.
 A completed run can supply the source for an explicit session memory note.
 The authenticated API saves the bounded note in the user plane. At the next
@@ -249,8 +250,9 @@ loading one never grants execution.
 
 Base's cross-session search reads only caller-owned sessions and rechecks agent
 admission. Similarity is lexical. Manual compaction runs only at the next safe
-model boundary; the source segment and checkpoint save atomically in encrypted
-user storage. Recall pages that source after masking revocable guidance. Task
+model boundary; the reasoning-filtered source segment and checkpoint save atomically in encrypted
+user storage. A hash-only cleanup marker lets the loop retire older reasoning
+in a separate atomic transaction. Recall pages that source after masking revocable guidance. Task
 checkpoints and declarative components use run-generation fences and revisions.
 The session snapshot projects components as display-only data; the chat panel
 renders them as text on reload. A model-generated choice, form or approval

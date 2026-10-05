@@ -716,8 +716,10 @@ and 2,000-token summary prompt target, using four characters per estimated token
 Estimates count serialized history characters, including the previous checkpoint, not instructions
 or tool schemas. The independent full-request byte ceiling remains in loop-runtime.json and
 can trigger compaction earlier. Safe complete boundaries may retain less than the tail target.
-Each fold replaces the previous checkpoint plus aged history with one summary; original
-interactions remain intact. Summary generation uses the run's separately pinned System role and its own
+Each fold replaces the previous checkpoint plus aged history with one summary. Public
+chat and tool history remain intact. A durable, hash-only background job removes
+reasoning from the aged private interactions and completed-run recovery snapshots;
+the recent verbatim tail is unchanged. Summary generation uses the run's separately pinned System role and its own
 backup chain. It never falls back to Standard. The summary token target is a prompt allowance, not exact tokenizer
 measurement; configured reserve and validation limits remain hard byte constraints.
 
@@ -725,16 +727,19 @@ Loop-runtime schema 2 removes the duplicate summary reserve. Schema 1 data is mi
 with a backup; legacy workflow storage imports discard the redundant reserve. Workflow API
 writes reject compaction settings: use the compaction JSON instead. Cached per-item byte and
 Unicode character measurements feed compaction planning without reserializing unchanged history.
-No settings UI, recall tools, or failure-policy changes are added. Rust changes require rebuilding;
+No settings UI or failure-policy changes are added. New recall segments omit reasoning;
+legacy segments remain readable and continue to withhold it. Rust changes require rebuilding;
 data JSON edits apply at the next call boundary without restart. Back up configuration and state
-before rollout. Original interactions and checkpoint representation remain compatible.
+before rollout. Checkpoint representation remains compatible; aged reasoning in
+private interactions is replaced with a content-free tombstone after cleanup.
 
 ## Recovery input deltas and shared retained-cache limits
 
 Run metadata now references a version-1 item set in the user database's encrypted
 `recovery_input` table. Saves compare the working input with existing items and encrypt/write
-only new or changed items. Truncation and compaction replace the affected recovery items;
-original `interactions` rows remain untouched. Metadata, item updates, revision/lease fences,
+only new or changed items. Truncation and compaction replace the affected recovery items. After compaction,
+the cleanup worker redacts matching reasoning in older interaction and terminal-run
+recovery records while preserving item order and recovery manifests. Metadata, item updates, revision/lease fences,
 events and publication receipts commit in the same transaction. Readers reconstruct the
 complete run in one transaction and reject missing ordinals, unsupported versions and failed
 authentication. Existing inline-input run documents remain readable and upgrade on write.

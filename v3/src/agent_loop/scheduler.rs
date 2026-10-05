@@ -1,8 +1,26 @@
 //! Claim queued runs and renew their leases while the loop is alive.
 use super::*;
+// Retire compacted reasoning outside the run loop. Each user-store job commits
+// atomically and remains queued after a failed attempt or process restart.
+async fn reasoning_cleanup_worker(app: App) {
+    loop {
+        if app.stop.is_cancelled() { break; }
+        match user_apps(&app).await {
+            Ok(users) => for user in users {
+                if app.stop.is_cancelled() { break; }
+                if let Err(error)=user.store.cleanup_one_reasoning().await {
+                    tracing::warn!("Reasoning cleanup deferred: {error}");
+                }
+            },
+            Err(error) => tracing::warn!("Reasoning cleanup user scan deferred: {error}"),
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
 // This is the loop container's dispatcher: announce that it is alive, notice
 // queued work, claim a lease, and start at most the configured number of runs.
 pub(crate) async fn scheduler(app: App) {
+    let cleanup=tokio::spawn(reasoning_cleanup_worker(app.clone()));
     let owner = uuid();
     let mut last_heartbeat = 0;
     let mut last_recovery = 0;
@@ -105,4 +123,5 @@ pub(crate) async fn scheduler(app: App) {
         drop(_guard);
         tokio::time::sleep(Duration::from_millis(app.runtime.read().await.scheduler.poll_interval_ms)).await;
     }
+    cleanup.abort();
 }

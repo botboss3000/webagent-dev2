@@ -137,6 +137,27 @@ pub struct Plan {
     config: Config,
 }
 
+/// A compacted prefix is retained for recall without provider reasoning.
+/// The same projection is used when removing copies from private history.
+pub(crate) fn without_reasoning(item: &Value) -> Option<Value> {
+    if item["type"] == "reasoning" {
+        return None;
+    }
+    let mut clean = item.clone();
+    if let Some(object) = clean.as_object_mut() {
+        object.remove("deepseek_reasoning");
+    }
+    Some(clean)
+}
+
+pub(crate) fn has_reasoning(item: &Value) -> bool {
+    item["type"] == "reasoning" || item.get("deepseek_reasoning").is_some()
+}
+
+pub(crate) fn recall_source(source: &[Value]) -> Vec<Value> {
+    source.iter().filter_map(without_reasoning).collect()
+}
+
 fn encoded_len(value: &Value) -> Result<usize> {
     Ok(serde_json::to_vec(value)?.len())
 }
@@ -321,6 +342,19 @@ pub fn apply_summary(input: &[Value], plan: &Plan, summary: &str) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_projection_is_idempotent_and_keeps_visible_content() {
+        let source=vec![json!({"type":"reasoning","encrypted_content":"opaque"}),
+            json!({"type":"message","role":"assistant","content":"answer",
+                "deepseek_reasoning":"hidden"}),json!({"role":"user","content":"next"})];
+        let once=recall_source(&source);
+        assert_eq!(once.len(),2);
+        assert_eq!(once[0]["content"],"answer");
+        assert!(once[0].get("deepseek_reasoning").is_none());
+        assert_eq!(recall_source(&once),once);
+        assert_eq!(source[0]["encrypted_content"],"opaque");
+    }
 
     fn user(text: &str) -> Value {
         json!({"role":"user","content":text})

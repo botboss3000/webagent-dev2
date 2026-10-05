@@ -4036,7 +4036,8 @@ async fn diagnostics_route_is_authenticated_session_bound_and_redacted() {
     assert_eq!(body["context_summary"]["envelope_bytes"], 8192);
     assert_eq!(body["context_summary"]["accounting"], "serialized_json_bytes_not_provider_tokens");
     assert_eq!(body["context_summary"].as_object().unwrap().len(), 8);
-    assert_eq!(body.as_object().unwrap().len(), 6);
+    assert_eq!(body["reasoning_cleanup_logical_bytes_removed"],0);
+    assert_eq!(body.as_object().unwrap().len(), 7);
 }
 
 #[tokio::test]

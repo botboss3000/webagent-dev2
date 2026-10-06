@@ -489,6 +489,24 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
         with self.assertRaisesRegex(ValueError, "directory search"):
             await self.run_tool("file_search", {"path": "src", "comments_only": True})
 
+    async def test_file_search_reads_live_context_limits(self):
+        import json
+        base = worker.workspace_path(self.session)
+        (base / "many.rs").write_text(("hit " + "x" * 300 + "\n") * 400)
+        config_path = Path(self.tmp.name) / "context-compaction.json"
+        with mock.patch.object(worker, "CONTEXT_CONFIG_PATH", config_path):
+            config_path.write_text(json.dumps({"search_output_bytes": 4096,
+                                               "search_line_bytes": 128}))
+            small = await self.run_tool("file_search", {"query": "hit"})
+            self.assertTrue(small["truncated"])
+            self.assertLessEqual(len(small["output"].encode()), 4096)
+            self.assertIn("[line clipped]", small["output"])
+            config_path.write_text(json.dumps({"search_output_bytes": 8192,
+                                               "search_line_bytes": 256}))
+            large = await self.run_tool("file_search", {"query": "hit"})
+            self.assertGreater(len(large["output"].encode()), len(small["output"].encode()))
+            self.assertLessEqual(len(large["output"].encode()), 8192)
+
     async def test_file_search_reports_output_truncation(self):
         base = worker.workspace_path(self.session)
         (base / "many.rs").write_text("hit\n" * 200000)

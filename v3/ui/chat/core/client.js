@@ -29,6 +29,8 @@ export function createChatClient({request, note, EventSourceClass = EventSource}
   return {
     open, disconnect,
     usage:id=>request("/sessions/"+encodeURIComponent(id)+"/usage"),
+    contextConfig:()=>request("/admin/context-compaction"),
+    saveContextConfig:body=>request("/admin/context-compaction","PUT",body),
     snapshot:id=>request('/sessions/'+encodeURIComponent(id)),
     upload:(id,body)=>request('/sessions/'+encodeURIComponent(id)+'/attachments','POST',body),
     describeUpload:(id,aid)=>request('/sessions/'+encodeURIComponent(id)+'/attachments/'+encodeURIComponent(aid)+'/describe','POST',{}),

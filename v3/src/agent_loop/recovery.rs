@@ -1,5 +1,6 @@
 //! Reopen unfinished runs after interruption; hold uncertain writes for review.
 use super::*;
+use anyhow::bail;
 pub(crate) fn reconcile_late_tool_result(run: &mut Value, result: Result<Value>) -> Result<bool> {
     if run["uncertain"] != true { return Ok(false); }
     let value = match result {
@@ -28,6 +29,74 @@ pub(crate) async fn user_apps(app:&App) -> Result<Vec<App>> {
     }
     Ok(views)
 }
+fn pending_build_finish(run:&Value)->bool {
+    run["pending"]["name"]=="v3_build_work"
+        && run["pending"]["arguments"]["action"]=="finish"
+        && run["pending"]["state"]=="executing"
+}
+pub(crate) fn attach_external_build_result(run:&mut Value,result:&Value)->Result<()> {
+    if status(run)!="waiting_external" || !pending_build_finish(run)
+        || run["pending"]["external_job"]["kind"]!="v3_build" {
+        bail!("No pending external build result");
+    }
+    append_tool(run,result)?;
+    run["status"]=json!("queued");
+    run["error"]=Value::Null;
+    Ok(())
+}
+async fn build_result(app:&App,run:&Value)->Result<Option<Value>> {
+    let sid=run["session_id"].as_str().ok_or_else(||anyhow!("Missing session"))?;
+    let rid=run["id"].as_str().ok_or_else(||anyhow!("Missing run"))?;
+    let task=run["pending"]["arguments"]["task_id"].as_str()
+        .ok_or_else(||anyhow!("Missing build task"))?;
+    let fingerprint=tools::administrator::host_fingerprint(app,sid,rid,"v3_build_work_finish").await?;
+    let trusted=json!({"user_id":app.store.current_user_id(),"session_id":sid,
+        "lease_until":now()+30,"access_fingerprint":fingerprint});
+    let socket=std::path::Path::new("/run/v3/build/build.sock");
+    let mut job_id=run["pending"]["external_job"]["job_id"].as_str().map(str::to_owned);
+    if job_id.is_none() {
+        // The broker may have admitted finish just before the loop stopped.
+        // Resolve its task receipt; never submit another finish.
+        let status=tools::execute_trusted("v3_build_work",&json!({"action":"status","task_id":task}),sid,
+            socket,Some(trusted.clone()),CancellationToken::new()).await?;
+        if status["status"]!="success" {bail!("Build task receipt unavailable");}
+        let item=status["output"]["own"].as_array().and_then(|items|items.iter()
+            .find(|item|item["task_id"]==task));
+        let Some(item)=item else {
+            return Ok(Some(json!({"status":"error","output":{
+                "task_id":task,"status":"not_submitted","reason":"Task receipt unavailable; no build was submitted"}})));
+        };
+        if item["inputs_sha256"]!=run["pending"]["arguments"]["expected_inputs_sha256"]
+            && item["status"]=="closed" {bail!("Build task digest changed");}
+        job_id=item["job_id"].as_str().map(str::to_owned);
+        if job_id.is_none() && item["status"]=="open" {
+            return Ok(Some(json!({"status":"error","output":{
+                "task_id":task,"status":"not_submitted","reason":"Task remains open; no build was submitted"}})));
+        }
+        if job_id.is_none() {return Ok(None);}
+    }
+    let job_id=job_id.unwrap();
+    let response=tools::execute_trusted("v3_worker_job",&json!({"job_id":job_id}),sid,
+        socket,Some(trusted.clone()),CancellationToken::new()).await?;
+    if response["status"]!="success" {bail!("Build job receipt unavailable");}
+    let job=&response["output"];
+    let state=job["status"].as_str().unwrap_or("");
+    if !matches!(state,"completed"|"failed"|"stale"|"cancelled"|"uncertain"|"interrupted") {
+        return Ok(None);
+    }
+    let mut output=json!({"task_id":task,"job_id":job_id,"status":state,
+        "phase":job["phase"],"reason":job["reason"],"log":job["log"]});
+    if state=="completed" {
+        let health=tools::execute_trusted("v3_build_status",&json!({}),sid,
+            socket,Some(trusted),CancellationToken::new()).await?;
+        if health["status"]!="success" {return Ok(None);}
+        let containers=&health["output"]["containers"];
+        output["containers"]=containers.clone();
+        output["verified_healthy"]=json!(["api","loop"].iter().all(|role|
+            containers[*role]["state"]=="running" && containers[*role]["health"]=="healthy"));
+    }
+    Ok(Some(json!({"status":"success","output":output})))
+}
 // After a restart, put safe unfinished work back in the queue. An interrupted
 // external write is held for review because its effect may already have happened.
 pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
@@ -46,10 +115,41 @@ pub(crate) async fn recover(app: &App, startup: bool) -> Result<()> {
     for user_app in user_apps(app).await? {
     for view in user_app.store.active_runs().await? {
         let id = view["id"].as_str().unwrap();
-        if status(&view) != "running" || (!startup && app.active.lock().await.contains_key(id)) {
+        if !matches!(status(&view),"running"|"waiting_external")
+            || (!startup && app.active.lock().await.contains_key(id)) {
             continue;
         }
         let mut run = user_app.run(id).await?;
+        if status(&run)=="waiting_external" || (status(&run)=="running" && pending_build_finish(&run)) {
+            if status(&run)=="running" {
+                run["pending"]["external_job"]=json!({"kind":"v3_build",
+                    "task_id":run["pending"]["arguments"]["task_id"],
+                    "expected_inputs_sha256":run["pending"]["arguments"]["expected_inputs_sha256"],
+                    "submitted_at":now()});
+                run["status"]=json!("waiting_external");
+                run["error"]=Value::Null;
+                user_app.save_override(&mut run).await?;
+            }
+            if !resume || app.shutoff().await? || !user_app.run_model_authorized(&run).await {
+                run["status"]=json!("stopped");
+                run["error"]=json!("Build result awaits authorized resume");
+                user_app.save_override(&mut run).await?;
+                continue;
+            }
+            match tokio::time::timeout(Duration::from_secs(3),build_result(&user_app,&run)).await {
+                Ok(Ok(Some(result)))=>{
+                    attach_external_build_result(&mut run,&result)?;
+                    user_app.store.save_run_override(&mut run,"tool_result",
+                        &json!({"run_id":id,"name":"v3_build_work","result":result})).await?;
+                },
+                Ok(Err(error))=>{
+                    tracing::warn!(run_id=%id,"Build receipt reconciliation deferred: {error}");
+                },
+                _=>{},
+            }
+            continue;
+        }
+        if status(&run)!="running" {continue;}
         if (run["pending"]["state"] == "executing"
             && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
             || parallel_batch::executing_write(&run)

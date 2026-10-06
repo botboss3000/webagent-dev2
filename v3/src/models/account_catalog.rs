@@ -106,7 +106,7 @@ impl crate::store::Store {
                         if let Some(snapshot)=roster.published() {
                             for entry in snapshot.entries.values().filter(|e|policy.allowed_entry_ids.contains(&e.id)) {
                                 platform.push(json!({"id":platform_id(id,&entry.id),"origin":"platform",
-                                    "display_name":entry.display_name,"capabilities":entry.capabilities,
+                                    "display_name":entry.display_name,"transport":entry.transport,"capabilities":entry.capabilities,
                                     "publication_revision":snapshot.revision,
                                     "configured":self.platform_credential_configured(id,entry).await?}));
                             }

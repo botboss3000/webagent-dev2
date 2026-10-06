@@ -16,6 +16,7 @@ mod administrator;
 mod model_catalog;
 mod account_models;
 mod file_manager;
+mod build_dashboard;
 pub(crate) mod repository;
 pub(crate) use auth::*;
 pub(crate) use admin::*;
@@ -25,6 +26,30 @@ pub(crate) use chat::*;
 pub(crate) use chat_controls::*;
 pub(crate) use voice::*;
 pub(crate) use uploads::{upload,upload_delete,upload_content,upload_describe};
+// CONTEXT-CONFIG AUTHORITY: one validated data-root JSON serves seeded defaults
+// and live updates. Model boundaries reread it; existing runs keep their history.
+async fn context_config_get(State(app): State<App>) -> Api {
+    let config=crate::context_compaction::Config::read(&app.compaction_config_path)?;
+    let value=serde_json::to_value(config).map_err(anyhow::Error::from)?;
+    Ok(Json(json!({"config":value,"digest":crate::digest(&value)})))
+}
+async fn context_config_put(State(app): State<App>, Json(body): Json<Value>) -> Api {
+    let expected=body["expected_digest"].as_str()
+        .filter(|s|s.len()==64 && s.bytes().all(|b|b.is_ascii_hexdigit()))
+        .ok_or_else(||bad("Expected context configuration digest required"))?;
+    let config:crate::context_compaction::Config=serde_json::from_value(body["config"].clone())
+        .map_err(|_|bad("Invalid context configuration"))?;
+    config.validate().map_err(|_|bad("Invalid context configuration"))?;
+    let _guard=app.gate.lock().await;
+    let current=crate::context_compaction::Config::read(&app.compaction_config_path)?;
+    if crate::digest(&serde_json::to_value(current).map_err(anyhow::Error::from)?)!=expected {
+        return Err(conflict("Context configuration changed; reload before saving"));
+    }
+    config.persist(&app.compaction_config_path)?;
+    let value=serde_json::to_value(config).map_err(anyhow::Error::from)?;
+    Ok(Json(json!({"config":value,"digest":crate::digest(&value)})))
+}
+
 pub(super) fn router(app: App) -> Router {
     let messaging = user_api::messaging_router()
         .route_layer(middleware::from_fn_with_state(app.clone(), message_api_auth));
@@ -32,6 +57,7 @@ pub(super) fn router(app: App) -> Router {
         .merge(diagnostics::router())
         .route("/status", get(overview))
         .route("/settings", put(settings))
+        .route("/admin/context-compaction", get(context_config_get).put(context_config_put))
         .nest("/admin/access", phase3_api::router())
         .nest("/admin/services", service_admin::router())
         .nest("/admin/models/rosters", model_catalog::router())
@@ -44,6 +70,7 @@ pub(super) fn router(app: App) -> Router {
         .route("/provider/logout", post(provider_logout))
         .route("/control", put(control))
         .route("/file-manager", post(file_manager::action))
+        .route("/admin/builds", get(build_dashboard::list))
         .route_layer(middleware::from_fn_with_state(app.clone(), admin_auth));
     // Model handlers enforce tenant authority themselves; all retain browser auth and CSRF.
     let api = Router::new()

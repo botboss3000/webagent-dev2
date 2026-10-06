@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 mod deepseek;
+mod capabilities;
 mod media;
 
 const ISSUER: &str = "https://auth.openai.com";
@@ -35,6 +36,7 @@ pub enum ProviderId {
     Xai,
     Perplexity,
     Deepinfra,
+    Typesafe,
 }
 
 
@@ -42,7 +44,7 @@ impl ProviderId {
     /// Installation-owned endpoints only. Client catalog payloads cannot override these.
     pub fn chat_endpoint(self) -> Option<&'static str> {
         match self {
-            Self::OpenaiSubscription => None,
+            Self::OpenaiSubscription | Self::Typesafe => None,
             Self::Deepseek => Some("https://api.deepseek.com/chat/completions"),
             Self::OpenaiApi => Some("https://api.openai.com/v1/chat/completions"),
             Self::Openrouter => Some("https://openrouter.ai/api/v1/chat/completions"),
@@ -254,7 +256,11 @@ fn subscription_model_list(value: &Value) -> Result<Value> {
             return None;
         }
         let name = model["display_name"].as_str().filter(|s| !s.is_empty()).unwrap_or(id);
-        Some(json!({"id":id,"name":name,"display_name":name,"text_capable":true}))
+        // Subscription chat models retain the v2 Vision fallback when upstream omits modalities.
+        let mut row = model.clone();
+        row["name"] = json!(name);
+        let fallback = json!({"input_modalities":["text","image"],"output_modalities":["text"]});
+        Some(capabilities::normalize(id,&row,&fallback))
     }).collect();
     Ok(json!({"models":visible}))
 }
@@ -264,9 +270,12 @@ fn subscription_model_list(value: &Value) -> Result<Value> {
 fn subscription_catalog_only_lists_visible_models_in_server_order() {
     let catalog=json!({"models":[{"slug":"new-gpt","display_name":"New GPT","visibility":"list"},
         {"slug":"hidden-gpt","visibility":"hide"},{"slug":"older-gpt","visibility":"list"}]});
-    assert_eq!(subscription_model_list(&catalog).unwrap(),json!({"models":[
-        {"id":"new-gpt","name":"New GPT","display_name":"New GPT","text_capable":true},
-        {"id":"older-gpt","name":"older-gpt","display_name":"older-gpt","text_capable":true}]}));
+    let result = subscription_model_list(&catalog).unwrap();
+    assert_eq!(result["models"][0]["id"],"new-gpt");
+    assert_eq!(result["models"][1]["id"],"older-gpt");
+    assert_eq!(result["models"].as_array().unwrap().len(),2);
+    assert_eq!(result["models"][0]["image_capable"],true);
+    assert_eq!(result["models"][0]["image_out_capable"],false);
     assert!(subscription_model_list(&json!({})).is_err());
 }
 

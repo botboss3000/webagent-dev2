@@ -79,7 +79,7 @@ async fn response(app: &App, identity: &Value, agent: &str, catalog: &Catalog) -
     let adoptions=app.store.agent_model_adoptions(&caller.user_id,agent).await?;
     Ok(Json(json!({"adoptions":adoptions,"catalog":view,"caller_id":caller.user_id,"can_manage":rights["can_manage"],
         "can_create_agent":caller.role != crate::access::Role::Guest,"agent_owner_id":rights["owner_id"],
-        "available_entries":available,"supported_transports":["openai_subscription","deepseek","openai_api","openrouter","abacus","gemini","groq","together","mistral","fireworks","xai","perplexity","deepinfra"]})))
+        "available_entries":available,"supported_transports":["typesafe","openai_subscription","deepseek","openai_api","openrouter","abacus","gemini","groq","together","mistral","fireworks","xai","perplexity","deepinfra"]})))
 }
 // MODEL-READ: the catalog projection excludes other tenants and private credentials.
 async fn read(State(app): State<App>, Extension(identity): Extension<Value>,
@@ -214,7 +214,7 @@ async fn identity_get(State(app): State<App>, Extension(identity): Extension<Val
     let closing=crate::gate_controls::agent_closing(&store,&id).await?;
     let closing_protocol=crate::gate_registry::closing_config()?;
     let fixed=crate::gate_registry::visibility_config()?.guidance;
-    Ok(Json(json!({"closing_message":closing,"closing_protocol":{"flags":closing_protocol.flags,"notification_max_words":closing_protocol.notification_max_words},"message_visibility":{"enabled":settings.enabled,"guidance":settings.guidance,"format":settings.format,"fixed_protocol":fixed},"execution_modes":config["execution_modes"],"default_execution_mode":config["default_execution_mode"],"id":id,"name":row.get::<String,_>("name"),
+    Ok(Json(json!({"closing_message":closing,"closing_protocol":{"flags":closing_protocol.flags,"notification_max_words":closing_protocol.notification_max_words},"message_visibility":{"mode":settings.mode,"guidance":settings.guidance,"fixed_protocol":fixed},"execution_modes":config["execution_modes"],"default_execution_mode":config["default_execution_mode"],"id":id,"name":row.get::<String,_>("name"),
         "description":row.get::<String,_>("description"),"revision":row.get::<i64,_>("revision"),
         "can_manage":rights["can_manage"]})))
 }
@@ -558,7 +558,8 @@ async fn discover(State(app):State<App>,Extension(identity):Extension<Value>,Jso
     } else {
         let provider=input.provider.ok_or_else(||crate::bad("Provider required"))?;
         let key=input.api_key.ok_or_else(||crate::bad("API key required"))?;
-        if !key.bytes().all(|b|b.is_ascii_graphic())||!(8..=512).contains(&key.len())||provider.chat_endpoint().is_none(){return Err(crate::bad("Invalid discovery credential or provider"));}
+        if !key.bytes().all(|b|b.is_ascii_graphic())||!(8..=512).contains(&key.len())
+            ||(provider.chat_endpoint().is_none()&&provider!=crate::provider::ProviderId::Typesafe){return Err(crate::bad("Invalid discovery credential or provider"));}
         (provider,json!({"api_key":key}))
     };
     Ok(Json(app.provider.discover_models(provider,&tokens,tokio_util::sync::CancellationToken::new()).await
@@ -655,14 +656,14 @@ mod tests {
     async fn visibility_preferences_preserve_fixed_protocol_and_revision_fence() {
         let (_root,app)=fixture().await;let identity=json!({"_user_id":"admin"});
         let Json(before)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();
-        assert_eq!(before["message_visibility"]["enabled"],true);
-        let patch=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,execution_modes:None,default_execution_mode:None,message_visibility:Some(crate::gate_controls::AgentVisibility{enabled:false,guidance:guidance.into(),format:"Use short lines".into()}),closing_message:None};
+        assert_eq!(before["message_visibility"]["mode"],"manual");
+        let patch=|revision,guidance:&str|IdentityUpdate{revision,name:None,description:None,execution_modes:None,default_execution_mode:None,message_visibility:Some(crate::gate_controls::AgentVisibility{mode:crate::gate_controls::PromotionMode::None,guidance:guidance.into()}),closing_message:None};
         let revision=before["revision"].as_i64().unwrap();
         let Json(saved)=identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"Keep progress concise"))).await.unwrap();
         assert_eq!(saved["message_visibility"]["fixed_protocol"],before["message_visibility"]["fixed_protocol"]);
-        assert_eq!(saved["message_visibility"]["format"],"Use short lines");
-        assert_eq!(saved["message_visibility"]["enabled"],false);
-        let settings=crate::gate_controls::agent_visibility(&app.store,"shared_default").await.unwrap();assert!(!settings.enabled);assert_eq!(settings.guidance,"Keep progress concise");assert_eq!(settings.format,"Use short lines");
+        assert_eq!(saved["message_visibility"]["mode"],"none");
+        assert!(saved["message_visibility"].get("format").is_none());
+        let settings=crate::gate_controls::agent_visibility(&app.store,"shared_default").await.unwrap();assert_eq!(settings.mode,crate::gate_controls::PromotionMode::None);assert_eq!(settings.guidance,"Keep progress concise");
         let Json(reloaded)=identity_get(State(app.clone()),Extension(identity.clone()),Path("shared_default".into())).await.unwrap();assert_eq!(reloaded,saved);
         assert_eq!(identity_put(State(app.clone()),Extension(identity.clone()),Path("shared_default".into()),Json(patch(revision,"stale"))).await.unwrap_err().0,StatusCode::CONFLICT);
         let outsider=tenant_user(&app,"visibility-outsider").await;
@@ -790,6 +791,19 @@ mod tests {
             provider:None,api_key:None,connection_id:Some("not-owned".into())})).await.is_err());
         assert!(discover(State(app),Extension(identity),Json(Discovery{
             provider:Some(crate::provider::ProviderId::Openrouter),api_key:Some("secret-key".into()),connection_id:Some("ambiguous".into())})).await.is_err());
+    }
+    #[tokio::test]
+    async fn typesafe_discovery_accepts_decision_model_without_chat_endpoint() {
+        let (_root,app)=fixture().await;
+        let identity=json!({"_user_id":"admin"});
+        let Json(result)=discover(State(app),Extension(identity),Json(Discovery{
+            provider:Some(crate::provider::ProviderId::Typesafe),
+            api_key:Some("test-key-no-network".into()),connection_id:None,
+        })).await.unwrap();
+        let model=&result["models"][0];
+        assert_eq!(model["id"],"jev-latest");
+        assert_eq!(model["decision_capable"],true);
+        assert_eq!(model["text_capable"],false);
     }
     #[tokio::test]
     async fn new_agent_uses_account_default_without_reseeding_existing_rosters() {

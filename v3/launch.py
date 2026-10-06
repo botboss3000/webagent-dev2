@@ -83,10 +83,12 @@ if broker.poll() is not None:
     raise RuntimeError("promotion broker failed")
 os.setgroups([])
 os.setgid(1100)
+# Workspace seeds follow the frozen UI release served by the API container.
 worker = subprocess.Popen(["/usr/bin/python3", "-I", "/opt/v3/worker.py"],
                           env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "V3_TOOL_SOCKET": "/run/v3/worker/tools.sock",
-                               "V3_WORKSPACE_ROOT": "/workspaces"},
+                               "V3_WORKSPACE_ROOT": "/workspaces",
+                               "V3_CODE_TEMPLATE": "/opt/v3/assets/current/v3"},
                           preexec_fn=lambda: drop(1000, groups=(1001,)))
 for _ in range(100):
     if Path("/run/v3/worker/tools.sock").exists():

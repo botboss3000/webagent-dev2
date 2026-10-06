@@ -463,7 +463,12 @@ impl App {
             .unwrap_or(true))
     }
     async fn save(&self, run: &mut Value) -> Result<()> {
-        run["updated_at"] = json!(now());
+        // Terminal documents are immutable in storage. Preserve their last
+        // timestamp so an idempotent save remains identical across seconds.
+        if !matches!(run["status"].as_str(), Some("completed" | "cancelled" | "failed"))
+            || run["updated_at"].is_null() {
+            run["updated_at"] = json!(now());
+        }
         let public=public_run(run);
         self.store
             .save_run(run, "run_status", &public)

@@ -152,7 +152,7 @@ const chat = await mountChatPanel({request:api, guard, note, keyId, forgetKey:ke
 await loadMainPages();
 
 // Agent pages resolve tenant authority independently; members see effective read-only abilities.
-async function showAgentView(view){
+async function showAgentView(view,routeMode='push'){
   const pages=[{id:'config',panelId:'config-page'},...agentPages];
   const selected=accountMe&&!accountMe.is_admin&&!['model','abilities','identity'].includes(view)?'model':pages.some(page=>page.id===view)?view:'config';
   for(const page of pages){
@@ -166,7 +166,7 @@ async function showAgentView(view){
   }
   const route=new URL(location.href);
   route.searchParams.set('agentView',selected);
-  history.replaceState({},'',route);
+  if(route.href!==location.href)history[routeMode==='replace'?'replaceState':'pushState']({},'',route);
   if(selected==='identity')await renderIdentity($('identity-page'),api,{agentId,onSaved:agent=>{document.querySelector('.agent-card-name').textContent=agent.name;}});
   if(selected==='abilities')await renderAbilities($('abilities-page'),api,{agentId});
 }
@@ -201,7 +201,66 @@ $('guest-login').onclick=async()=>{const btn=$('guest-login');btn.disabled=true;
 function out(){availableModelsDispose?.();availableModelsDispose=null;window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';chat.disconnect();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
 async function refresh(){if(accountMe&&!accountMe.is_admin){state=await api('/user/status');$('shutoff').hidden=true;chat.runs(state.runs||[]);return;}state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}chat.runs(state.runs||[]);}
 // Explicit role administration replaces the legacy default-model form for every agent.
-async function boot(){const me=await api('/auth/me');csrf=me.csrf_token;await initChatConfig().catch(() => {});renderAccount(me);window.dispatchEvent(new Event('v3-identity-changed'));privateVisible(false);$('app').hidden=false;await refresh();selectionTable?.destroy();$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;try{selectionTable=await mountSelectionTable($('selection-model-table'),{request:api,agentId,onAgent:async id=>{agentId=id;const route=new URL(location.href);route.searchParams.set('agent',id);history.replaceState({},'',route);await showAgentView(route.searchParams.get('agentView')||'model');},onAssignment:async(id,assignment)=>{explicitAssignment=!!assignment?.roles?.standard;$('model-page').querySelector('.ac-model-table').hidden=true;$('settings').hidden=true;document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;}});}catch(error){if(error.status===401)throw error;selectionTable=null;const warning=document.createElement('p');warning.className='ac-hint';warning.setAttribute('role','status');warning.textContent=error.status===404?'Model role management requires a backend update.':'Model assignment management unavailable: '+error.message;$('selection-model-table').replaceChildren(warning);if(agentId!=='shared_default')throw Error('This agent requires model-management support; update the backend before chatting.');}await showAgentView(new URL(location.href).searchParams.get('agentView')||(me.is_admin?'config':'model'));const items=await chat.sessions(),route=new URL(location.href).searchParams.get('session_id');if(route||items.length)await chat.open(route||items[0].id);if(initialTab==='account')showAccountPanel();window.__boot?.appReady();clearInterval(poll);poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);}
+async function boot(){
+  const me=await api('/auth/me');
+  csrf=me.csrf_token;
+  await initChatConfig().catch(() => {});
+  renderAccount(me);
+  window.dispatchEvent(new Event('v3-identity-changed'));
+  privateVisible(false);
+  $('app').hidden=false;
+  await refresh();
+  selectionTable?.destroy();
+  $('model-page').querySelector('.ac-model-table').hidden=true;
+  $('settings').hidden=true;
+  const mountModels=()=>mountSelectionTable($('selection-model-table'),{
+    request:api,agentId,
+    onAgent:async id=>{
+      agentId=id;
+      const route=new URL(location.href);
+      route.searchParams.set('agent',id);
+      if(route.href!==location.href)history.pushState({},'',route);
+      await showAgentView(route.searchParams.get('agentView')||'model','replace');
+    },
+    onAssignment:async(id,assignment)=>{
+      explicitAssignment=!!assignment?.roles?.standard;
+      $('model-page').querySelector('.ac-model-table').hidden=true;
+      $('settings').hidden=true;
+      document.querySelector('.agent-card-name').textContent=id==='shared_default'?'WebAgent':id;
+    }
+  });
+  try{
+    selectionTable=await mountModels();
+  }catch(error){
+    if(error.status===401)throw error;
+    if(agentId!=='shared_default'&&[403,404].includes(error.status)){
+      agentId='shared_default';
+      const route=new URL(location.href);
+      route.searchParams.set('agent',agentId);
+      history.replaceState({},'',route);
+      document.querySelector('.agent-card-name').textContent='WebAgent';
+      try{selectionTable=await mountModels();}
+      catch(fallbackError){error=fallbackError;selectionTable=null;}
+    }
+    if(!selectionTable){
+      const warning=document.createElement('p');
+      warning.className='ac-hint';
+      warning.setAttribute('role','status');
+      warning.textContent=error.status===404?'Model role management requires a backend update.':'Model assignment management unavailable: '+error.message;
+      $('selection-model-table').replaceChildren(warning);
+    }
+  }
+  await showAgentView(new URL(location.href).searchParams.get('agentView')||(me.is_admin?'config':'model'),'replace');
+  const items=await chat.sessions();
+  const requested=new URL(location.href).searchParams.get('session_id');
+  const selected=items.find(item=>item.id===requested)||items[0];
+  if(selected)await chat.open(selected.id,'replace');
+  else if(requested){const route=new URL(location.href);route.searchParams.delete('session_id');history.replaceState({},'',route);}
+  if(initialTab==='account')showAccountPanel('replace');
+  window.__boot?.appReady();
+  clearInterval(poll);
+  poll=setInterval(()=>refresh().catch(error=>note(error.message)),3000);
+}
 // Registration mirrors V2's mode switch; V3 retains independent cookie authentication.
 let registerMode=false;
 $('register-toggle').onclick=()=>{
@@ -256,8 +315,8 @@ function renderAccount(me){
   $('account-display-name').value=me.display_name||me.user||'';
   $('top-user-id').title=me.user||'Manage account';
 }
-function showAccountPanel(){showMainPage('account');}
-function showMainPage(id){
+function showAccountPanel(routeMode='push'){showMainPage('account',routeMode);}
+function showMainPage(id,routeMode='push'){
   if(!mainPages.some(page=>page.id===id))return;
   closeMobileNav();
   activeMainPage=id;
@@ -266,7 +325,7 @@ function showMainPage(id){
   const route=new URL(location.href);
   route.searchParams.set('tab',id);
   if(id==='agents')route.searchParams.set('agent',agentId);
-  history.replaceState({},'',route);
+  if(route.href!==location.href)history[routeMode==='replace'?'replaceState':'pushState']({},'',route);
   if(mobileLayout.matches)showMobileView('main');
   updateMobileNavigation();
 }
@@ -302,7 +361,7 @@ async function loadAccountControls(){
       const revoke=document.createElement('button');revoke.type='button';
       revoke.textContent=entry.current?'Sign out':'Revoke';revoke.onclick=async()=>{
         await api('/auth/sessions/'+encodeURIComponent(entry.id),'DELETE');
-        if(entry.current){out();note('Signed out.');}else await loadAccountControls();
+        if(entry.current){out();}else await loadAccountControls();
       };
       revoke.className='account-btn';row.append(details,revoke);list.append(row);
     }
@@ -361,6 +420,7 @@ $('mobile-nav-signout').onclick=guard(async()=>{await api('/auth/logout','POST',
 document.addEventListener('click',event=>{if(!mobileNav.hidden&&!event.target.closest('#mobile-nav-menu, #mobile-nav-toggle'))closeMobileNav();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMobileNav();});
 mobileLayout.addEventListener('change',syncLayout);syncLayout();
+window.addEventListener('popstate',()=>location.reload());
 $('chat-toggle-btn').onclick=()=>{if(mobileLayout.matches){showMobileView('chat');}else{desktopChatVisible=!desktopChatVisible;syncLayout();}};
 
 let browserResetInProgress=false;

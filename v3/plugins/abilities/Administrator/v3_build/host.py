@@ -27,6 +27,7 @@ import tarfile
 import threading
 import time
 import uuid
+from urllib.parse import quote
 
 SOURCE = Path("/home/ar/webagent-dev2")
 STATE = SOURCE / "v3/build-jobs"
@@ -44,14 +45,17 @@ CONTEXT = (
     "ui/shared/css/design-system.css", "ui/shared/css/index.css",
     "ui/main-panel/agents/agents.html", "ui/main-panel/agents/agents.css",
     "ui/vendor/fonts", "ui/vendor/lucide", "ui/favicon.svg")
+UI_SOURCE_PREFIX = "v3/ui/"
+RUST_UI_FIXTURES = {"v3/ui/chat/chat_ui.json"}
+ASSET_ROOT = STATE / "ui-assets"
 TARGETS = ("webagent-dev-v3", "webagent-dev-v3-loop")
 LOCAL_WORKSPACE = "71440aad-a6ba-4ba8-adc8-1fcf66250be6"
 WORKER_CONTROL = Path("/var/lib/webagent-v3-build-worker/control.sock")
 MAX_LOG = 1024 * 1024
 PUBLIC_LOG = 16 * 1024
 MAX_CONTEXT = 128 * 1024 * 1024
-MIN_BUILD_FREE = 12 * 1024 * 1024 * 1024
 MIN_DEPLOY_FREE = 8 * 1024 * 1024 * 1024
+MIN_SEQUENCE_FREE = 16 * 1024 * 1024 * 1024
 
 _release_file = (SOURCE / "v3/host-build-service/release.py"
                  if str(__file__).startswith("/proc/self/fd/") else Path(__file__).with_name("release.py"))
@@ -130,6 +134,9 @@ def source_git(root, arguments, patch):
                "-c", "diff.external=", *arguments]
     result = subprocess.run(command, cwd=cwd, env=env, input=patch, capture_output=True, timeout=30)
     if result.returncode or len(result.stdout) > 65536:
+        detail = scrub(result.stderr.decode("utf-8", "replace"))[-500:]
+        if arguments[0] == "apply" and "--check" in arguments and detail:
+            raise ValueError("checked source patch rejected: " + detail)
         raise ValueError("checked source patch rejected")
     return result.stdout
 
@@ -363,6 +370,61 @@ class Runner:
     def promote_checkout(self, before, after, changed):
         return release.promote_checkout(self.source, before, after, changed, context_digest)
 
+    def checkout_matches(self, blob, changed):
+        return release.checkout_matches(self.source, blob, changed, context_digest)
+
+    def stage_assets(self, blob, job_id):
+        return release.stage_assets(ASSET_ROOT, job_id, blob, context_digest)
+
+    def validate_ui(self, job_id, changed):
+        root = ASSET_ROOT / "releases" / job_id
+        for name in changed:
+            if not name.startswith(UI_SOURCE_PREFIX):
+                continue
+            path = root / name
+            if not path.is_file():
+                continue
+            if name.endswith(".json"):
+                json.loads(path.read_text(encoding="utf-8"))
+            elif name.endswith(".js"):
+                self.command(["node", "--check", str(path)], timeout=10)
+
+    def current_asset_id(self):
+        return release.current_asset_id(ASSET_ROOT)
+
+    def activate_assets(self, job_id):
+        return release.activate_assets(ASSET_ROOT, job_id)
+
+    def ui_hot_swappable(self):
+        api = self.inspect(TARGETS[0])
+        mounts = api.get("Mounts") or []
+        env = api.get("Config", {}).get("Env") or []
+        return (any(item.get("Destination") == "/opt/v3/assets" and
+                    item.get("Source") == str(ASSET_ROOT) and not item.get("RW")
+                    for item in mounts) and
+                "V3_UI_ROOT=/opt/v3/assets/current/v3/ui" in env)
+
+    def verify_ui(self, changed=()):
+        # Static routes are public and must serve the exact selected bytes.
+        paths = [("v3/ui/index.html", "/app")]
+        paths.extend((name, "/v3-ui/" + name[len(UI_SOURCE_PREFIX):])
+                     for name in changed if name.startswith(UI_SOURCE_PREFIX) and
+                     name != "v3/ui/index.html")
+        for name, route in paths[:17]:
+            expected_path = ASSET_ROOT / "current" / name
+            expected = expected_path.read_bytes() if expected_path.is_file() else None
+            connection = http.client.HTTPConnection("100.112.23.15", 8081, timeout=10)
+            try:
+                connection.request("GET", quote(route, safe="/"))
+                response = connection.getresponse()
+                body = response.read(16 * 1024 * 1024 + 1)
+                if expected is None and response.status == 404:
+                    continue
+                if response.status != 200 or body != expected:
+                    raise RuntimeError("served UI does not match frozen asset release: " + name)
+            finally:
+                connection.close()
+
     def inspect(self, name):
         if name not in TARGETS and not re.fullmatch(r"webagent-dev-v3(?:-loop)?-pre-build-[0-9a-f-]{36}", name):
             raise ValueError("container outside development target")
@@ -375,6 +437,23 @@ class Runner:
         if free < minimum:
             raise ValueError(f"development build needs {minimum // (1024 ** 3)} GiB free; {free // (1024 ** 3)} GiB available")
         return free
+
+    def prepare_build_space(self):
+        # Require room for both images before compiling or changing containers.
+        return self.check_space(MIN_SEQUENCE_FREE)
+
+    def cargo_task(self, source, check_dir, task, timeout):
+        # Match the pinned Dockerfile toolchain and keep Cargo output outside
+        # the task source snapshot. No caller-controlled argv or image.
+        image = "rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f"
+        command = ["cargo", "check", "--locked"] if task == "check" else ["cargo", "test", "--locked", "--", "--test-threads=1"]
+        check_dir.mkdir(parents=True, exist_ok=True)
+        return self.command(["docker", "run", "--rm", "--user", "1000:1000",
+                             "--mount", "type=bind,src=" + str(source) + ",dst=/build,readonly",
+                             "--mount", "type=bind,src=" + str(check_dir) + ",dst=/check",
+                             "-e", "CARGO_HOME=/check/cargo", "-e", "CARGO_TARGET_DIR=/check/target",
+                             "-e", "CARGO_BUILD_JOBS=2", "-w", "/build/v3", image, *command],
+                            timeout=timeout)
 
     def build(self, blob, job_id, role):
         tag = "webagent-dev-v3" + ("-loop" if role == "loop" else "") + ":job-" + job_id
@@ -427,7 +506,13 @@ class Runner:
         config["Image"] = image
         host = dict(previous["HostConfig"])
         if release_root is not None:
-            host = release.release_mounts(host, Path(release_root))
+            host = release.release_mounts(host, Path(release_root), ASSET_ROOT)
+            if name == TARGETS[0]:
+                env = [value for value in config.get("Env", [])
+                       if not value.startswith(("V3_UI_ROOT=", "V3_SHARED_UI_ROOT="))]
+                env.extend(("V3_UI_ROOT=/opt/v3/assets/current/v3/ui",
+                            "V3_SHARED_UI_ROOT=/opt/v3/assets/current/ui"))
+                config["Env"] = env
         # Container-id-derived values must not be reused. Preserve configured
         # mounts, network, limits, ports, restart policy and security options.
         host.pop("ContainerIDFile", None)
@@ -480,6 +565,9 @@ class Broker:
         self.runner = runner or Runner()
         self.lock = threading.RLock()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.ui_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.deploy_lock = threading.Lock()
+        self.active_ui = None
         self.jobs = {}
         self.requests = {}
         self.active = None
@@ -503,6 +591,18 @@ class Broker:
             self.jobs[job["job_id"]] = job
             self.requests[job["request_key"]] = job["job_id"]
         if recover:
+            adopted = sorted((job for job in self.jobs.values()
+                              if job.get("operator_adopted_at")),
+                             key=lambda row: row.get("finished_at", 0))
+            if adopted:
+                latest = adopted[-1]
+                superseded = any(job["status"] == "completed" and job.get("effects_started")
+                                 and job.get("finished_at", 0) > latest.get("finished_at", 0)
+                                 for job in self.jobs.values())
+                if not superseded and not self._runtime_release_matches(latest):
+                    latest.pop("operator_adopted_at", None)
+                    self._save(latest)
+        if recover:
             for job in self.jobs.values():
                 if job["status"] in ("queued", "running") and not (
                         job.get("isolated") and job["status"] == "queued"):
@@ -514,6 +614,9 @@ class Broker:
                         job["reason"] = "recovered matching healthy deployment"
                     self._save(job)
         if recover:
+            for job in self.jobs.values():
+                if job.get("batch_members") and job["status"] not in ("queued", "running"):
+                    self._mirror_batch(job)
             self._start_next()
 
     def _save(self, job):
@@ -549,7 +652,7 @@ class Broker:
         return [item for item in self.work.values() if item["status"] == "open"]
 
     def _auto_schedule(self, item, trusted, workspace):
-        if item.get("job_id") or self._open_work() or self.active is not None:
+        if item.get("job_id") or self._open_work() or (self.active is not None or self.active_ui is not None):
             return item.get("job_id")
         pending = sorted(key for key, value in self.work.items() if value["status"] == "closed" and not value.get("job_id"))
         request_id = "auto-" + hashlib.sha256(canonical(pending)).hexdigest()
@@ -563,8 +666,9 @@ class Broker:
 
     def _current_release_blob(self):
         completed = sorted((job for job in self.jobs.values()
-                            if job.get("isolated") and job["status"] == "completed"),
-                           key=lambda job: job["created_at"])
+                            if job.get("isolated") and (job["status"] == "completed"
+                            or job.get("operator_adopted_at"))),
+                           key=lambda job: (job.get("finished_at", job["created_at"]), job["job_id"]))
         if completed:
             job = completed[-1]
             blob = (self.state / job["job_id"] / "candidate.tar").read_bytes()
@@ -573,10 +677,72 @@ class Broker:
             return blob
         return self.runner.snapshot()
 
-    def _start_next(self):
-        if self.active is not None or self.stopping:
+    def _can_start_parallel_ui(self):
+        if self.active_ui is not None or self.active is None or self.stopping:
+            return False
+        active = self.jobs[self.active]
+        return (active.get("isolated") and active["operation"] == "build_deploy" and
+                active["status"] in ("queued", "running") and
+                not active.get("effects_started") and
+                active.get("phase") in ("admitted", "building_api", "building_loop") and
+                self.runner.ui_hot_swappable())
+
+    def _start_parallel_ui(self, job):
+        try:
+            self._lease(job)
+            folder = self.state / job["job_id"]
+            base = (folder / "base.tar").read_bytes()
+            task = (folder / "task.tar").read_bytes()
+            live = self._current_release_blob()
+            candidate, changed = release.candidate(base, task, live, context_digest)
+            if not all(path.startswith(UI_SOURCE_PREFIX) for path in changed):
+                raise ValueError("parallel UI release contains non-UI source")
+            digest, _ = context_digest(candidate)
+            release_root = folder / "release"
+            (folder / "candidate.tar").write_bytes(candidate)
+            release.extract(release_root, candidate, context_digest)
+            job.update(inputs_sha256=digest, base_inputs_sha256=context_digest(live)[0],
+                       changed_paths=changed, release_root=str(release_root),
+                       parallel_ui=True, phase="admitted")
+            self._save(job)
+            self.active_ui = job["job_id"]
+            self.ui_pool.submit(self._run, job, candidate)
+        except Exception as error:
+            job.update(status="failed", phase="admission_failed",
+                       reason=scrub(str(error), self.runner.secrets),
+                       finished_at=time.time())
+            self._save(job)
+
+    def _maybe_start_parallel_ui(self):
+        if not self._can_start_parallel_ui():
             return
         for job in sorted(self.jobs.values(), key=lambda value: value["created_at"]):
+            if job.get("isolated") and job["status"] == "queued" and job["operation"] == "ui_deploy":
+                self._start_parallel_ui(job)
+                return
+
+    def _has_unresolved_release(self, current=None):
+        completed = [job.get("finished_at", 0) for job in self.jobs.values()
+                     if job.get("isolated") and (job["status"] == "completed"
+                     or job.get("operator_adopted_at"))
+                     and job["operation"] in ("deploy", "build_deploy", "ui_deploy")
+                     and job.get("effects_started")]
+        latest = max(completed, default=0)
+        return any(job["status"] == "uncertain"
+                   and not job.get("operator_adopted_at")
+                   and job.get("effects_started")
+                   and job.get("finished_at", job["created_at"]) >= latest
+                   and job["job_id"] != current
+                   for job in self.jobs.values())
+
+    def _start_next(self):
+        if (self.active is not None or self.active_ui is not None or self.stopping or
+                self._has_unresolved_release()):
+            return
+        # UI releases pass queued image builds, but never an active release.
+        pending = sorted(self.jobs.values(), key=lambda value: (
+            value.get("operation") != "ui_deploy", value["created_at"]))
+        for job in pending:
             if not job.get("isolated") or job["status"] != "queued":
                 continue
             try:
@@ -586,6 +752,35 @@ class Broker:
                 task = (folder / "task.tar").read_bytes()
                 live = self._current_release_blob()
                 candidate, changed = release.candidate(base, task, live, context_digest)
+                members = []
+                if job["operation"] == "build_deploy":
+                    # Merge compatible queued work from the same caller before
+                    # compiling. Each task retains its own durable job receipt.
+                    for follower in pending:
+                        if (follower["job_id"] == job["job_id"] or
+                                follower["status"] != "queued" or
+                                follower.get("operation") != "build_deploy"):
+                            continue
+                        if (follower.get("user_id") != job["user_id"] or
+                                follower.get("workspace") != job["workspace"] or
+                                follower.get("access_fingerprint") != job.get("access_fingerprint")):
+                            break
+                        if len(members) >= 7:
+                            break
+                        try:
+                            self._lease(follower)
+                            peer = self.state / follower["job_id"]
+                            peer_base = (peer / "base.tar").read_bytes()
+                            peer_task = (peer / "task.tar").read_bytes()
+                            candidate, peer_changed = release.candidate(
+                                peer_base, peer_task, candidate, context_digest)
+                            changed = sorted(set(changed) | set(peer_changed))
+                            members.append(follower)
+                        except Exception as error:
+                            follower.update(status="failed", phase="admission_failed",
+                                reason=scrub(str(error), self.runner.secrets),
+                                finished_at=time.time())
+                            self._save(follower)
                 digest, _ = context_digest(candidate)
                 release_root = folder / "release"
                 (folder / "candidate.tar").write_bytes(candidate)
@@ -596,14 +791,23 @@ class Broker:
                     release.extract(release_root, candidate, context_digest)
                 job.update(inputs_sha256=digest, base_inputs_sha256=context_digest(live)[0],
                            changed_paths=changed, release_root=str(release_root),
+                           batch_members=[member["job_id"] for member in members],
                            phase="admitted")
+                for member in members:
+                    peer = self.state / member["job_id"]
+                    (peer / "candidate.tar").write_bytes(candidate)
+                    member.update(inputs_sha256=digest, base_inputs_sha256=job["base_inputs_sha256"],
+                                  batch_parent=job["job_id"], status="running",
+                                  phase="batched_waiting")
+                    self._save(member)
                 self._save(job)
                 self.active = job["job_id"]
                 self.pool.submit(self._run, job, candidate)
                 return
             except Exception as error:
                 job.update(status="failed", phase="admission_failed",
-                           reason=scrub(str(error), self.runner.secrets))
+                           reason=scrub(str(error), self.runner.secrets),
+                           finished_at=time.time())
                 self._save(job)
 
     def _view(self, job):
@@ -613,14 +817,30 @@ class Broker:
         # the public byte limit. Storage can retain a larger bounded log.
         while len(tail.encode("utf-8")) > PUBLIC_LOG:
             tail = tail[1:]
-        view = {key: job[key] for key in ("job_id", "operation", "status", "phase", "inputs_sha256", "created_at", "images", "rollback", "tool_name", "access_fingerprint", "isolated") if key in job}
+        view = {key: job[key] for key in ("job_id", "operation", "status", "phase", "inputs_sha256", "created_at", "images", "rollback", "tool_name", "access_fingerprint", "isolated", "batch_parent", "batch_members") if key in job}
         if "reason" in job:
-            view["reason"] = scrub(job["reason"], self.runner.secrets).encode("utf-8")[:4096].decode("utf-8", "ignore")
+            # Compiler failures are at the end of a bounded build transcript.
+            view["reason"] = scrub(job["reason"], self.runner.secrets).encode("utf-8")[-4096:].decode("utf-8", "ignore")
         return view | {"log": tail, "log_truncated": len(raw) > PUBLIC_LOG, "log_bytes": len(raw)}
 
     def _lease(self, job):
         if job.get("revoked") or job.get("lease_until", 0) <= time.time():
             raise PermissionError("host job authorization expired or revoked; no automatic replay")
+
+    def _batch_lease(self, job):
+        self._lease(job)
+        for member_id in job.get("batch_members", []):
+            self._lease(self.jobs[member_id])
+
+    def _mirror_batch(self, job):
+        for member_id in job.get("batch_members", []):
+            member = self.jobs[member_id]
+            for key in ("status", "phase", "reason", "started_at", "finished_at",
+                        "images", "rollback", "rust_tests", "log", "phase_history",
+                        "effects_started"):
+                if key in job:
+                    member[key] = job[key]
+            self._save(member)
 
     def _incoming_lease(self, trusted):
         deadline, fingerprint = trusted.get("lease_until"), trusted.get("access_fingerprint")
@@ -637,16 +857,65 @@ class Broker:
     def _reconcile(self, job):
         try:
             images = job.get("images", {})
+            if set(images) != {"api", "loop"}:
+                return False
+            if job.get("isolated"):
+                candidate = (self.state / job["job_id"] / "candidate.tar").read_bytes()
+                if context_digest(candidate)[0] != job["inputs_sha256"]:
+                    return False
+                if not self.runner.checkout_matches(candidate, job.get("changed_paths", ())):
+                    return False
+            if "asset_previous" in job:
+                if self.runner.current_asset_id() != job["job_id"]:
+                    return False
+                self.runner.verify_ui(job.get("changed_paths", ()))
+            for role, name in zip(("api", "loop"), TARGETS):
+                if not self.runner.healthy(name, images[role]):
+                    return False
+            if job["operation"] == "ui_deploy" and job.get("hot_assets"):
+                return True
             rollback = job.get("rollback", {})
-            if set(images) != {"api", "loop"} or set(rollback) != {"api", "loop"}:
+            if set(rollback) != {"api", "loop"}:
                 return False
             archive = self.state / job["job_id"] / "rollback-images.tar"
             if not archive.is_file() or not archive.stat().st_size:
                 return False
             for role, name in zip(("api", "loop"), TARGETS):
-                previous = self.runner.inspect(rollback[role])
-                if previous["State"]["Status"] != "exited" or not self.runner.healthy(name, images[role]):
+                if self.runner.inspect(rollback[role])["State"]["Status"] != "exited":
                     return False
+            return True
+        except Exception:
+            return False
+
+    def _runtime_release_matches(self, job):
+        # An operator may accept a healthy deployed image while checkout
+        # promotion remains conflicted; never replay its external effects.
+        try:
+            if (not job.get("isolated") or job["status"] != "uncertain" or
+                    job.get("phase") != "promoting_checkout" or not job.get("effects_started")):
+                return False
+            candidate = (self.state / job["job_id"] / "candidate.tar").read_bytes()
+            if context_digest(candidate)[0] != job["inputs_sha256"]:
+                return False
+            # Hot UI switches keep the containers; accept only the exact active
+            # asset snapshot with both original images healthy and bytes served.
+            if job.get("hot_assets"):
+                if job["operation"] != "ui_deploy" or self.runner.current_asset_id() != job["job_id"]:
+                    return False
+                for role, name in zip(("api", "loop"), TARGETS):
+                    if not self.runner.healthy(name, job["images"][role]):
+                        return False
+                self.runner.verify_ui(job.get("changed_paths", ()))
+                return True
+            archive = self.state / job["job_id"] / "rollback-images.tar"
+            if not archive.is_file() or not archive.stat().st_size:
+                return False
+            for role, name in zip(("api", "loop"), TARGETS):
+                if (not self.runner.healthy(name, job["images"][role]) or
+                        self.runner.inspect(job["rollback"][role])["State"]["Status"] != "exited"):
+                    return False
+            if "asset_previous" in job and self.runner.current_asset_id() != job["job_id"]:
+                return False
             return True
         except Exception:
             return False
@@ -668,6 +937,70 @@ class Broker:
             raise ValueError("arguments must be an object")
         name = request.get("name")
         with self.lock:
+            if name == "v3_build_adopt_release":
+                if (not trusted.get("local_caller") or trusted["user_id"] != "codex-local"
+                        or workspace != LOCAL_WORKSPACE or set(args) != {"job_id"}):
+                    raise PermissionError("local release reconciliation required")
+                job = self.jobs.get(args["job_id"])
+                if self.active is not None or self.active_ui is not None or not job:
+                    raise ValueError("release queue must be idle")
+                if any(other["status"] == "uncertain" and other.get("effects_started")
+                       and other.get("finished_at", 0) > job.get("finished_at", 0)
+                       for other in self.jobs.values()):
+                    raise ValueError("newer uncertain release requires review")
+                if not self._runtime_release_matches(job):
+                    raise ValueError("uncertain release does not match healthy runtime")
+                job["operator_adopted_at"] = time.time()
+                job["reason"] = ("healthy deployed images accepted as queue base; "
+                                 "checkout promotion conflict remains")
+                self._save(job)
+                self._start_next()
+                return {"job_id": job["job_id"], "status": job["status"],
+                        "operator_adopted": True, "checkout_promotion": "conflicted"}
+            if name == "v3_build_dashboard":
+                if args or trusted["user_id"] != "admin" or workspace != "00000000-0000-0000-0000-000000000000":
+                    raise PermissionError("administrator build dashboard denied")
+                self._incoming_lease(trusted)
+                tasks = {item.get("job_id"): item for item in self.work.values() if item.get("job_id")}
+                jobs = []
+                for job in sorted(self.jobs.values(), key=lambda row: row["created_at"], reverse=True)[:20]:
+                    view = self._view(job)
+                    view.pop("access_fingerprint", None)
+                    view["log"] = view["log"][-2048:]
+                    view["task_id"] = tasks.get(job["job_id"], {}).get("task_id")
+                    summary = tasks.get(job["job_id"], {}).get("summary")
+                    if job["operation"] == "ui_deploy":
+                        summary = "UI release · " + (summary or job["job_id"])
+                    elif job.get("batch_parent") or job.get("batch_members"):
+                        summary = "Shared build · " + (summary or job["job_id"])
+                    view["summary"] = summary
+                    view["origin"] = ("v2" if job["user_id"] == "python-v2-admin" else
+                                      "codex" if job["user_id"] == "codex-local" else "v3")
+                    view["started_at"] = job.get("started_at")
+                    view["finished_at"] = job.get("finished_at")
+                    view["phase_history"] = job.get("phase_history", [])[-32:]
+                    if job["operation"] == "ui_deploy":
+                        legacy_tests = {"status": "not_required",
+                            "summary": "UI assets only; no Rust build or tests required"}
+                    elif job["status"] == "completed" and job.get("images", {}).get("api"):
+                        legacy_tests = {"status": "passed",
+                            "summary": "Confirmed by successful tested API image; detailed test output was not retained"}
+                    elif job["status"] in ("queued", "running"):
+                        legacy_tests = {"status": "not_started"}
+                    else:
+                        legacy_tests = {"status": "unavailable",
+                            "summary": "Structured test result was not recorded; inspect the failure reason"}
+                    view["rust_tests"] = job.get("rust_tests") or legacy_tests
+                    jobs.append(view)
+                containers = {}
+                for role, target in zip(("api", "loop"), TARGETS):
+                    try:
+                        state = self.runner.inspect(target)["State"]
+                        containers[role] = {"state": state["Status"],
+                                            "health": state.get("Health", {}).get("Status", "unknown")}
+                    except Exception:
+                        containers[role] = {"state": "unavailable", "health": "unknown"}
+                return {"jobs": jobs, "busy": self.active is not None or self.active_ui is not None, "containers": containers}
             if name in ("administrator_host_lease", "administrator_host_revoke"):
                 if args:
                     raise ValueError("internal lease control takes no arguments")
@@ -700,7 +1033,7 @@ class Broker:
                 if set(args) != {"request_id"} or not isinstance(args["request_id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", args["request_id"]):
                     raise ValueError("stable restart request_id required")
                 self._incoming_lease(trusted)
-                if self.active is not None:
+                if self.active is not None or self.active_ui is not None:
                     raise ValueError("shared V3 build target busy")
                 response = worker_control("POST", "/v1/restart", {"request_id": args["request_id"]})
                 previous_pid = response.get("previous_pid")
@@ -716,6 +1049,86 @@ class Broker:
                         return {"status": "ok", "service": "v3-build-worker.service",
                                 "active": True, "interrupted_job": None}
                 raise RuntimeError("Restart requested but fresh worker readiness was not confirmed; inspect host before retry")
+            if name == "v3_cargo_task":
+                if set(args) - {"task_id", "task", "expected_inputs_sha256", "timeout_seconds"} or not {
+                        "task_id", "task", "expected_inputs_sha256"} <= set(args):
+                    raise ValueError("task-scoped Cargo check arguments required")
+                task_id, task = args["task_id"], args["task"]
+                timeout = args.get("timeout_seconds", 600)
+                expected = args["expected_inputs_sha256"]
+                if (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id)
+                        or task not in ("check", "test")
+                        or not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)
+                        or type(timeout) is not int or not 1 <= timeout <= 600):
+                    raise ValueError("bounded task Cargo request required")
+                key = hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest()
+                item = self.work.get(key)
+                if not item or item.get("mode") != "isolated" or item["status"] != "open":
+                    raise ValueError("open isolated task required")
+                root = self.work_dir / "trees" / key
+                before = context_digest(release.snapshot(root, CONTEXT, context_digest))[0]
+                if before != expected:
+                    raise ValueError("stale task source inputs")
+                try:
+                    log = self.runner.cargo_task(root, self.state / "checks" / key, task, timeout)
+                    status = "completed"
+                except (RuntimeError, TimeoutError, ValueError) as error:
+                    log = scrub(str(error))
+                    status = "failed"
+                after = context_digest(release.snapshot(root, CONTEXT, context_digest))[0]
+                if after != before:
+                    status = "stale"
+                return {"task_id": task_id, "task": task, "status": status,
+                        "inputs_sha256": after, "log_excerpt": scrub(log)[-4096:]}
+            if name == "v3_source_read_batch":
+                if set(args) != {"task_id", "requests"} or not isinstance(args["requests"], list) or not 1 <= len(args["requests"]) <= 4:
+                    raise ValueError("one to four task source reads required")
+                results = []
+                for part in args["requests"]:
+                    if not isinstance(part, dict):
+                        raise ValueError("source read request must be an object")
+                    nested = {"name": "v3_source_read", "arguments": {"task_id": args["task_id"], **part},
+                              "trusted": trusted, "workspace": workspace}
+                    results.append(self.handle(nested))
+                if len(canonical(results)) > 48000:
+                    raise ValueError("batch source read exceeds result bound")
+                return {"task_id": args["task_id"], "results": results}
+            if name == "v3_source_search":
+                if set(args) - {"task_id", "query", "limit"} or not {"task_id", "query"} <= set(args):
+                    raise ValueError("task_id and literal query required")
+                task_id, query = args["task_id"], args["query"]
+                limit = args.get("limit", 30)
+                if (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id)
+                        or not isinstance(query, str) or not 1 <= len(query) <= 120
+                        or any(ord(char) < 32 for char in query)
+                        or type(limit) is not int or not 1 <= limit <= 50):
+                    raise ValueError("bounded task search required")
+                key = hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest()
+                item = self.work.get(key)
+                if not item or item.get("mode") != "isolated" or item["status"] != "open":
+                    raise ValueError("open isolated task required")
+                root = self.work_dir / "trees" / key
+                source = root / "v3"
+                matches = []
+                scanned = 0
+                for folder in ("src", "plugins", "tests", "ui", "docs", "config"):
+                    for path in sorted((source / folder).rglob("*")):
+                        if path.is_symlink() or not path.is_file() or path.suffix not in {
+                                ".rs", ".py", ".json", ".md", ".html", ".js", ".css", ".toml", ".sh"}:
+                            continue
+                        scanned += 1
+                        if scanned > 3000:
+                            raise ValueError("task source search exceeds file bound")
+                        data = path.read_bytes()
+                        if len(data) > 1024 * 1024 or b"\0" in data:
+                            continue
+                        for line_no, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+                            if query in line:
+                                matches.append({"path": path.relative_to(source).as_posix(),
+                                                "line": line_no, "text": line[:200]})
+                                if len(matches) >= limit:
+                                    return {"task_id": task_id, "matches": matches, "truncated": True}
+                return {"task_id": task_id, "matches": matches, "truncated": False}
             if name == "v3_source_read":
                 if set(args) - {"task_id", "path", "offset", "limit"} or not {"task_id", "path"} <= set(args):
                     raise ValueError("source read requires task_id and path")
@@ -777,7 +1190,7 @@ class Broker:
                         raise ValueError("request_id reused with changed source apply")
                     return dict(receipt)
                 isolated = item.get("mode") == "isolated"
-                if self.active is not None and not isolated:
+                if (self.active is not None or self.active_ui is not None) and not isolated:
                     raise ValueError("build active; source apply denied")
                 tree = self.work_dir / "trees" / item["key"] if isolated else self.runner.source
                 current, _ = context_digest(
@@ -804,17 +1217,21 @@ class Broker:
                     raise ValueError("unsupported work argument")
                 action = args.get("action")
                 if action == "status":
-                    if set(args) != {"action"}:
-                        raise ValueError("status takes no work arguments")
+                    if set(args) not in ({"action"}, {"action", "task_id"}):
+                        raise ValueError("status accepts only an optional task_id")
+                    selected = args.get("task_id")
+                    if selected is not None and (not isinstance(selected, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", selected)):
+                        raise ValueError("bounded task_id required")
                     own = [dict(task_id=i["task_id"], status=i["status"], summary=i["summary"],
                                 inputs_sha256=i.get("inputs_sha256"), job_id=i.get("job_id"),
                                 mode=i.get("mode", "shared"), workspace_path=i.get("workspace_path"),
                                 workspace_inputs_sha256=(context_digest(release.snapshot(
                                     self.work_dir / "trees" / i["key"], CONTEXT, context_digest))[0]
                                     if i.get("mode") == "isolated" and i["status"] == "open" else None))
-                           for i in self.work.values() if self._owned(i, trusted, workspace)]
-                    return {"open_count": len(self._open_work()), "own": own[-20:],
-                            "busy": self.active is not None}
+                           for i in self.work.values() if self._owned(i, trusted, workspace)
+                           and (selected is None or i["task_id"] == selected)]
+                    return {"open_count": len(self._open_work()), "own": own if selected else own[-20:],
+                            "busy": self.active is not None or self.active_ui is not None}
                 if action not in ("begin", "finish", "abandon"):
                     raise ValueError("unsupported work action")
                 task_id = args.get("task_id")
@@ -843,7 +1260,7 @@ class Broker:
                         return {"task_id": task_id, "status": item["status"],
                                 "open_count": len(self._open_work()),
                                 "workspace_path": item.get("workspace_path")}
-                    if mode == "shared" and self.active is not None:
+                    if mode == "shared" and (self.active is not None or self.active_ui is not None):
                         raise ValueError("build or deployment active; wait before beginning new work")
                     if len(self.work) >= 1000:
                         raise ValueError("coordination registry full; administrator maintenance required")
@@ -889,7 +1306,8 @@ class Broker:
                     if current != expected:
                         raise ValueError("stale work inputs")
                     base_blob = (folder / "baseline.tar").read_bytes()
-                    release.candidate(base_blob, task_blob, base_blob, context_digest)
+                    _, changed = release.candidate(base_blob, task_blob, base_blob, context_digest)
+                    ui_only = all(path.startswith(UI_SOURCE_PREFIX) for path in changed)
                     lease_until, fingerprint = self._incoming_lease(trusted)
                     job_id = str(uuid.uuid4())
                     private = self.state / job_id
@@ -899,21 +1317,27 @@ class Broker:
                     job = {"job_id": job_id, "request_key": "task-" + key,
                            "body_digest": hashlib.sha256(canonical([task_id, current])).hexdigest(),
                            "user_id": trusted["user_id"], "workspace": workspace,
-                           "operation": "build_deploy", "isolated": True, "inputs_sha256": current,
+                           "operation": "ui_deploy" if ui_only else "build_deploy", "isolated": True, "inputs_sha256": current,
                            "created_at": time.time(), "status": "queued", "phase": "waiting",
                            "images": {}, "log": "", "tool_name": "v3_build_work",
                            "lease_until": max(lease_until, time.time() + 4 * 3600),
                            "access_fingerprint": fingerprint, "revoked": False}
+                    if ui_only:
+                        job["rust_tests"] = {"status": "not_required",
+                            "summary": "UI assets only; no Rust build or tests required"}
                     self._save(job)
                     self.jobs[job_id] = job
                     item.update(status="closed", inputs_sha256=current, job_id=job_id,
                                 finished_at=time.time())
                     self._save_work()
-                    self._start_next()
+                    if ui_only and self._can_start_parallel_ui():
+                        self._start_parallel_ui(job)
+                    else:
+                        self._start_next()
                     return {"task_id": task_id, "status": "closed",
                             "open_count": len(self._open_work()), "job_id": job_id,
                             "inputs_sha256": current}
-                if self.active is not None:
+                if self.active is not None or self.active_ui is not None:
                     raise ValueError("build or deployment active; close after it finishes")
                 current, _ = context_digest(self.runner.snapshot())
                 if current != expected:
@@ -935,7 +1359,7 @@ class Broker:
                     except Exception:
                         containers[role] = {"state": "unavailable"}
                 jobs = [self._view(j) for j in sorted(self.jobs.values(), key=lambda j: j["created_at"], reverse=True) if self._owned(j, trusted, workspace)][:3]
-                return {"inputs_sha256": digest, "input_files": count, "containers": containers, "jobs": jobs, "busy": self.active is not None}
+                return {"inputs_sha256": digest, "input_files": count, "containers": containers, "jobs": jobs, "busy": self.active is not None or self.active_ui is not None}
             if name == "v3_worker_job":
                 if set(args) != {"job_id"}:
                     raise ValueError("job_id required")
@@ -967,7 +1391,7 @@ class Broker:
                 if job["body_digest"] != body_digest:
                     raise ValueError("request_id reused with changed body")
                 return self._view(job)
-            if self.active is not None:
+            if self.active is not None or self.active_ui is not None:
                 raise ValueError("shared V3 build target busy; coordinate writers before retry")
             if self._open_work():
                 raise ValueError("registered V3 source work remains open")
@@ -1003,19 +1427,121 @@ class Broker:
 
     def _phase(self, job, phase):
         with self.lock:
-            self._lease(job)
+            self._batch_lease(job)
             job["phase"] = phase
+            job.setdefault("phase_history", []).append({"phase": phase, "at": time.time()})
+            job["phase_history"] = job["phase_history"][-32:]
+            self._save(job)
+
+    def _rebase_after_ui(self, job, blob, tested_runtime=False):
+        live = self._current_release_blob()
+        live_digest = context_digest(live)[0]
+        if live_digest == job["base_inputs_sha256"]:
+            return blob
+        folder = self.state / job["job_id"]
+        merged = live
+        changed = set()
+        for part in (job, *(self.jobs[key] for key in job.get("batch_members", []))):
+            part_dir = self.state / part["job_id"]
+            merged, paths = release.candidate(
+                (part_dir / "base.tar").read_bytes(),
+                (part_dir / "task.tar").read_bytes(), merged, context_digest)
+            changed.update(paths)
+        if tested_runtime:
+            before = {name: item for name, item in release.entries(blob, context_digest).items()
+                      if not name.startswith(UI_SOURCE_PREFIX)}
+            after = {name: item for name, item in release.entries(merged, context_digest).items()
+                     if not name.startswith(UI_SOURCE_PREFIX)}
+            if before != after:
+                raise ValueError("runtime build inputs changed during UI release")
+            old_ui = release.entries(blob, context_digest)
+            new_ui = release.entries(merged, context_digest)
+            if any(old_ui.get(name) != new_ui.get(name) for name in RUST_UI_FIXTURES):
+                raise ValueError("Rust test fixture changed during image build")
+            job["built_inputs_sha256"] = job["inputs_sha256"]
+            job["rust_tests"] = {"status": "passed",
+                "summary": "Runtime inputs tested before UI asset rebase; UI assets validated separately"}
+        elif not all(path.startswith(UI_SOURCE_PREFIX) for path in changed):
+            raise ValueError("parallel UI release changed runtime inputs")
+        digest = context_digest(merged)[0]
+        release_root = folder / ("release-rebased-" + digest[:16])
+        if release_root.exists():
+            prepared = release.snapshot(release_root, CONTEXT, context_digest)
+            if context_digest(prepared)[0] != digest:
+                raise ValueError("rebased release snapshot changed")
+        else:
+            release.extract(release_root, merged, context_digest)
+        (folder / "candidate.tar").write_bytes(merged)
+        job.update(inputs_sha256=digest, base_inputs_sha256=live_digest,
+                   changed_paths=sorted(changed), release_root=str(release_root))
+        for member_id in job.get("batch_members", []):
+            member = self.jobs[member_id]
+            (self.state / member_id / "candidate.tar").write_bytes(merged)
+            member.update(inputs_sha256=digest, base_inputs_sha256=live_digest)
+            self._save(member)
+        self._save(job)
+        return merged
+
+    def _run_ui_hot(self, job, blob):
+        with self.deploy_lock:
+            self._run_ui_hot_locked(job, blob)
+
+    def _run_ui_hot_locked(self, job, blob):
+        if self._has_unresolved_release(job["job_id"]):
+            raise ValueError("uncertain release must be reconciled before UI switch")
+        blob = self._rebase_after_ui(job, blob)
+        with self.lock:
+            job["hot_assets"] = True
+            self._save(job)
+        self._phase(job, "staging_ui")
+        self.runner.stage_assets(blob, job["job_id"])
+        self.runner.validate_ui(job["job_id"], job["changed_paths"])
+        prepared = release.snapshot(Path(job["release_root"]), CONTEXT, context_digest)
+        if context_digest(prepared)[0] != job["inputs_sha256"]:
+            raise ValueError("frozen UI release changed")
+        if context_digest(self._current_release_blob())[0] != job["base_inputs_sha256"]:
+            raise ValueError("release base changed before UI switch")
+        previous = {role: self.runner.inspect(name)
+                    for role, name in zip(("api", "loop"), TARGETS)}
+        with self.lock:
+            job["images"] = {role: previous[role]["Image"] for role in ("api", "loop")}
+            job["asset_previous"] = self.runner.current_asset_id()
+            self._save(job)
+        self._phase(job, "switching_ui")
+        with self.lock:
+            self._batch_lease(job)
+            job["effects_started"] = True
+            self._save(job)
+        self.runner.activate_assets(job["job_id"])
+        self._phase(job, "checking_ui")
+        self.runner.verify_ui(job["changed_paths"])
+        for role, name in zip(("api", "loop"), TARGETS):
+            if not self.runner.healthy(name, job["images"][role]):
+                raise RuntimeError("V3 " + role + " unhealthy after UI switch")
+        self._phase(job, "promoting_checkout")
+        self.runner.promote_checkout(self._current_release_blob(), blob, job["changed_paths"])
+        with self.lock:
+            self._batch_lease(job)
+            job.update(status="completed", phase="finished", reason="UI assets served from frozen release",
+                       finished_at=time.time())
+            job.setdefault("phase_history", []).append(
+                {"phase": "finished", "at": job["finished_at"]})
             self._save(job)
 
     def _run(self, job, blob):
         mutated = False
+        deploy_locked = False
         try:
             with self.lock:
-                self._lease(job)
+                self._batch_lease(job)
                 job["status"] = "running"
+                job["started_at"] = time.time()
                 self._save(job)
+            if job["operation"] == "ui_deploy" and self.runner.ui_hot_swappable():
+                self._run_ui_hot(job, blob)
+                return
             if job["operation"] in ("build", "build_deploy"):
-                self.runner.check_space(MIN_BUILD_FREE)
+                self.runner.prepare_build_space()
                 # Capture current environment values privately solely to scrub
                 # any accidental occurrence in compiler output.
                 for target in TARGETS:
@@ -1024,16 +1550,38 @@ class Broker:
                     except Exception:
                         pass
                 for role in ("api", "loop"):
+                    self.runner.check_space(MIN_DEPLOY_FREE)
                     self._phase(job, "building_" + role)
+                    if role == "api":
+                        with self.lock:
+                            job["rust_tests"] = {"status": "running"}
+                            self._save(job)
                     image, log = self.runner.build(blob, job["job_id"], role)
                     with self.lock:
                         job["images"][role] = image
+                        if role == "api":
+                            job["rust_tests"] = {"status": "passed",
+                                "summary": "Locked Rust tests passed in the tested image build"}
                         job["log"] = scrub(job["log"] + log, self.runner.secrets)
                         self._save(job)
                 self.runner.check_space(MIN_DEPLOY_FREE)
-            if job["operation"] in ("deploy", "build_deploy"):
+            if job["operation"] in ("deploy", "build_deploy", "ui_deploy"):
+                self.deploy_lock.acquire()
+                deploy_locked = True
+                if self._has_unresolved_release(job["job_id"]):
+                    raise ValueError("uncertain release must be reconciled before deployment")
+                if job.get("isolated") and job["operation"] == "build_deploy":
+                    blob = self._rebase_after_ui(job, blob, tested_runtime=True)
+                self._phase(job, "staging_ui")
+                self.runner.stage_assets(blob, job["job_id"])
+                self.runner.validate_ui(job["job_id"], job.get("changed_paths", ()))
+                with self.lock:
+                    job["asset_previous"] = self.runner.current_asset_id()
+                    self._save(job)
                 self._phase(job, "capturing_rollback")
                 previous = {role: self.runner.inspect(name) for role, name in zip(("api", "loop"), TARGETS)}
+                if job["operation"] == "ui_deploy":
+                    job["images"] = {role: previous[role]["Image"] for role in ("api", "loop")}
                 private = self.state / job["job_id"]
                 private.mkdir(mode=0o700, exist_ok=bool(job.get("isolated")))
                 # Credentials remain in protected host state, never tool output.
@@ -1060,16 +1608,22 @@ class Broker:
                 # crash the next broker only reconciles, never retries it.
                 self._phase(job, "stopping_loop")
                 with self.lock:
-                    self._lease(job)
+                    self._batch_lease(job)
                     # The API cannot renew while it replaces itself. A bounded
                     # commit lease covers container health and keeps revocation live.
                     job["lease_until"] = max(job["lease_until"], time.time() + 180)
+                    for member_id in job.get("batch_members", []):
+                        member = self.jobs[member_id]
+                        member["lease_until"] = max(member["lease_until"], job["lease_until"])
+                        self._save(member)
                     job["effects_started"] = True
                     self._save(job)
                 mutated = True
                 self.runner.stop(TARGETS[1])
                 self._phase(job, "stopping_api")
                 self.runner.stop(TARGETS[0])
+                self._phase(job, "switching_ui")
+                self.runner.activate_assets(job["job_id"])
                 for role, name in zip(("api", "loop"), TARGETS):
                     self._phase(job, "renaming_" + role)
                     self.runner.rename(name, job["rollback"][role])
@@ -1088,6 +1642,9 @@ class Broker:
                     self._phase(job, "checking_" + role)
                     if not self.runner.healthy(name, job["images"][role]):
                         raise RuntimeError("replacement V3 " + role + " not healthy; rollback material retained")
+                if self.runner.ui_hot_swappable():
+                    self._phase(job, "checking_ui")
+                    self.runner.verify_ui(job.get("changed_paths", ()))
             if job.get("isolated"):
                 self._phase(job, "promoting_checkout")
                 self.runner.promote_checkout(self._current_release_blob(), blob, job["changed_paths"])
@@ -1095,19 +1652,33 @@ class Broker:
                 release.snapshot(Path(job["release_root"]), CONTEXT, context_digest)
                 if job.get("isolated") else self.runner.snapshot())
             with self.lock:
-                self._lease(job)
+                self._batch_lease(job)
                 job["status"] = "completed" if after == job["inputs_sha256"] else ("uncertain" if mutated else "stale")
                 job["reason"] = "inputs unchanged" if after == job["inputs_sha256"] else "build inputs changed; artifact cannot be used for deployment"
                 job["phase"] = "finished"
+                job["finished_at"] = time.time()
+                job.setdefault("phase_history", []).append({"phase": "finished", "at": job["finished_at"]})
                 self._save(job)
         except Exception as error:
             with self.lock:
-                job["status"] = "uncertain" if mutated else ("cancelled" if isinstance(error, PermissionError) else "failed")
+                job["status"] = "uncertain" if mutated or job.get("effects_started") else ("cancelled" if isinstance(error, PermissionError) else "failed")
                 job["reason"] = scrub(str(error), self.runner.secrets)
+                job["finished_at"] = time.time()
+                if job.get("rust_tests", {}).get("status") == "running":
+                    job["rust_tests"] = {"status": "unconfirmed",
+                        "summary": "Image build stopped before Rust test success was confirmed"}
                 self._save(job)
         finally:
+            if deploy_locked:
+                self.deploy_lock.release()
             with self.lock:
-                self.active = None
+                self._mirror_batch(job)
+                if job.get("parallel_ui"):
+                    self.active_ui = None
+                    if job["status"] not in ("uncertain", "interrupted"):
+                        self._maybe_start_parallel_ui()
+                else:
+                    self.active = None
                 if job["status"] not in ("uncertain", "interrupted"):
                     self._start_next()
 
@@ -1123,6 +1694,7 @@ class Broker:
 
     def shutdown(self):
         self.pool.shutdown(wait=True)
+        self.ui_pool.shutdown(wait=True)
         if self.lease is not None:
             os.close(self.lease)
             self.lease = None
@@ -1141,7 +1713,7 @@ async def serve(broker, listener, bridge_listener=None):
                 raise ValueError("bounded request required")
             request = json.loads(raw)
             if bridge:
-                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"):
+                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read", "v3_source_read_batch", "v3_source_search", "v3_cargo_task"):
                     raise ValueError("bridge operation denied")
                 request["workspace"] = BRIDGE_WORKSPACE
                 request["trusted"] = {"user_id": "python-v2-admin", "session_id": BRIDGE_WORKSPACE,
@@ -1149,7 +1721,7 @@ async def serve(broker, listener, bridge_listener=None):
                     "access_fingerprint": hashlib.sha256(b"python-v2-build-bridge").hexdigest(),
                     "bridge_caller": True}
             elif uid == 1000:
-                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"):
+                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read", "v3_source_read_batch", "v3_source_search", "v3_cargo_task", "v3_build_adopt_release"):
                     raise ValueError("local caller operation denied")
                 request["workspace"] = LOCAL_WORKSPACE
                 request["trusted"] = {"user_id": "codex-local", "session_id": LOCAL_WORKSPACE,

@@ -290,12 +290,13 @@ impl crate::store::Store {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Transport { OpenaiSubscription, Deepseek, OpenaiApi, Openrouter, Abacus, Gemini, Groq, Together, Mistral, Fireworks, Xai, Perplexity, Deepinfra }
+pub enum Transport { OpenaiSubscription, Typesafe, Deepseek, OpenaiApi, Openrouter, Abacus, Gemini, Groq, Together, Mistral, Fireworks, Xai, Perplexity, Deepinfra }
 
 impl Transport {
-    pub fn uses_api_key(&self) -> bool { self.provider_id().chat_endpoint().is_some() }
+    pub fn uses_api_key(&self) -> bool { matches!(self, Self::Typesafe) || self.provider_id().chat_endpoint().is_some() }
     pub fn provider_id(&self) -> crate::provider::ProviderId {
         match self { Self::OpenaiSubscription => crate::provider::ProviderId::OpenaiSubscription,
+            Self::Typesafe => crate::provider::ProviderId::Typesafe,
             Self::Deepseek => crate::provider::ProviderId::Deepseek,
             Self::OpenaiApi => crate::provider::ProviderId::OpenaiApi,
             Self::Openrouter => crate::provider::ProviderId::Openrouter,

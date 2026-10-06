@@ -22,6 +22,26 @@ fn event(row: &SqliteRow, store: &Store, sid: &str) -> Result<Value> {
         "created_at":row.get::<i64,_>("created_at")*1000,"boundary_quality":if row.get::<Option<String>,_>("boundary_item_id").is_some(){"recorded"}else{"legacy_unverified"}}))
 }
 impl Store {
+    /// Exact encrypted interaction lookup for bounded current-run result recall.
+    pub async fn tool_result(&self, sid:&str, rid:&str, call_id:&str) -> Result<Option<Value>> {
+        let row:Option<Vec<u8>>=sqlx::query_scalar(
+            "SELECT item FROM interactions WHERE session_id=? AND run_id=? AND step=? ORDER BY seq DESC LIMIT 1")
+            .bind(sid).bind(rid).bind(format!("tool:{call_id}"))
+            .fetch_optional(&self.pool).await?;
+        row.map(|bytes| self.unseal(&bytes)).transpose()
+    }
+    pub async fn tool_call_name(&self, sid:&str, rid:&str, call_id:&str) -> Result<Option<String>> {
+        let rows:Vec<Vec<u8>>=sqlx::query_scalar(
+            "SELECT item FROM interactions WHERE session_id=? AND run_id=? AND step LIKE 'model:%' ORDER BY seq DESC LIMIT 2048")
+            .bind(sid).bind(rid).fetch_all(&self.pool).await?;
+        for bytes in rows {
+            let item=self.unseal(&bytes)?;
+            if item["type"]=="function_call" && item["call_id"]==call_id {
+                return Ok(item["name"].as_str().map(str::to_owned));
+            }
+        }
+        Ok(None)
+    }
     pub async fn private_activity(&self,sid:&str,after:i64)->Result<Value> {
         let mut tx=self.pool.begin().await?;
         let rows=sqlx::query("SELECT i.seq,i.run_id,i.item,i.created_at,b.boundary_item_id FROM interactions i LEFT JOIN activity_boundaries b ON b.interaction_seq=i.seq WHERE i.session_id=? AND i.seq>? ORDER BY i.seq LIMIT 201")

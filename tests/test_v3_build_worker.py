@@ -18,6 +18,30 @@ def worker(tmp_path):
     yield w
     w.lockfile.close()
 
+def test_coordinator_forwards_only_fixed_task_inspection_names(worker):
+    from io import BytesIO
+    payloads = []
+    timeouts = []
+    class Connection:
+        def __init__(self, *unused): pass
+        def __enter__(self): return self
+        def __exit__(self, *unused): return False
+        def settimeout(self, timeout): timeouts.append(timeout)
+        def connect(self, path): assert path == str(m.COORDINATOR_SOCKET)
+        def sendall(self, payload): payloads.append(json.loads(payload))
+        def makefile(self, mode):
+            assert mode == "rb"
+            return BytesIO(b'{"id":"fixed-id","status":"success","output":{"status":"ok"}}\n')
+    with patch.object(m.uuid, "uuid4", return_value="fixed-id"), patch.object(m.socket, "socket", side_effect=Connection):
+        for name in ("v3_source_search", "v3_source_read_batch", "v3_cargo_task"):
+            assert worker.coordinator(name, {}) == {"status": "ok"}
+        with pytest.raises(ValueError, match="Unsupported"):
+            worker.coordinator("host_shell", {})
+    assert [item["name"] for item in payloads] == [
+        "v3_source_search", "v3_source_read_batch", "v3_cargo_task"]
+    assert timeouts == [75, 75, 660]
+
+
 def test_idempotency_and_conflict(worker):
     with patch.object(m.threading.Thread, "start"):
         request = {"operation": "build", "request_id": "build-1"}

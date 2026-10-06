@@ -259,6 +259,7 @@ function guardCapToggle(cb, { writeFlag, save, afterChange }) {
      capKey      — the same capability inside a free-catalog `capabilities` object
      onByDefault — used when neither shape reports the capability */
 export const CAPABILITY_FLAGS = [
+  ['D', 'Decision', 'Decision — structured decisions', 'decision_capable', 'decision', false],
   ['T', 'Text', 'Text — chat', 'text_capable', 'text', true],
   ['V', 'Vision', 'Vision — read images', 'image_capable', 'vision', false],
   ['I', 'Image', 'Image — generate images', 'image_out_capable', 'image_out', false],
@@ -606,6 +607,7 @@ export function mountModelTable(host, opts = {}) {
   // Premium / System), so those role names are neither chips nor result badges
   // here. Selecting several chips narrows the catalog to models that have ALL.
   const MODEL_CAPABILITY_FILTERS = [
+    { key: 'decision', label: 'Decision', matches: (m) => !!m.decision_capable },
     { key: 'text',   label: 'Text',   matches: (m) => m.text_capable !== false },
     { key: 'vision', label: 'Vision', matches: (m) => !!m.image_capable },
     { key: 'image',  label: 'Image',  matches: (m) => !!m.image_out_capable },
@@ -867,6 +869,7 @@ export function mountModelTable(host, opts = {}) {
     // Detected CAPABILITIES only — never roster roles. One text model can serve
     // several roles, so no Standard/Premium/System badge belongs in this strip.
     const caps = [
+      ['Decision', !!m.decision_capable],
       ['Text', m.text_capable !== false],
       ['Vision', !!m.image_capable],
       ['Image', !!m.image_out_capable],
@@ -972,6 +975,7 @@ export function mountModelTable(host, opts = {}) {
         : m.id;
       const secondaryModelName = isPlatformCatalogModel ? '' : (m.name || '');
       const capBadges = [
+        ['Decision', !!m.decision_capable],
         ['Text', m.text_capable !== false],
         ['Vision', !!m.image_capable],
         ['Image', !!m.image_out_capable],
@@ -1039,7 +1043,7 @@ export function mountModelTable(host, opts = {}) {
           catalogAddBusy = true;
           modelDd.querySelectorAll('.ac-model-row-selector').forEach(control => { control.disabled = true; });
           S.selectedModel = m.id;
-          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable };
+          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable, video: !!m.video_capable };
           (async () => {
             try {
               const saved = await addModel();
@@ -1056,7 +1060,7 @@ export function mountModelTable(host, opts = {}) {
       } else {
         item.addEventListener('click', () => {
           S.selectedModel = m.id; modelSearch.value = isPlatformCatalogModel ? visibleModelName : (m.name || visibleModelName);
-          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable };
+          S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable, video: !!m.video_capable };
           renderDetectedCaps(m);
           setModelStatus(`Selected: ${visibleModelName}`, true);
           autosaveSingle(modelCheck);
@@ -1499,7 +1503,7 @@ export function mountModelTable(host, opts = {}) {
         : isSubscriptionProvider() ? 'No models available for this ChatGPT account.' : 'No models available.');
       if (S.selectedModel) {
         const sel = S.allModels.find(m => m.id === S.selectedModel);
-        if (sel) { S.selCaps = { text: sel.text_capable !== false, image: !!sel.image_capable, imageOut: !!sel.image_out_capable, voice: !!sel.voice_capable }; renderDetectedCaps(sel); }
+        if (sel) { S.selCaps = { text: sel.text_capable !== false, image: !!sel.image_capable, imageOut: !!sel.image_out_capable, voice: !!sel.voice_capable, video: !!sel.video_capable }; renderDetectedCaps(sel); }
       }
       renderModelDropdown(modelSearch.value.toLowerCase());
     } catch (error) {
@@ -2066,6 +2070,7 @@ export function mountModelTable(host, opts = {}) {
     // here. The on/off meaning stays: a supported capability is a bright value,
     // an unsupported one drops to the muted label tone.
     const capHtml = [
+      ['Decision', !!p.decision_capable],
       ['Text', p.text_capable !== false],
       ['Vision', !!p.image_capable],
       ['Image', !!p.image_out_capable],
@@ -2516,7 +2521,7 @@ export function mountModelTable(host, opts = {}) {
     standard:  { symbol: 'S',  label: 'Standard', hint: 'Injected into the system prompt when the session runs on the Standard (default) brain.' },
     premium:   { symbol: 'P',  label: 'Premium',  hint: 'Injected when the session runs on the Premium brain. An agent-authored "Model Upgrade Directive" slot wins over this text when set.' },
     image_in:  { symbol: '👁', label: 'Vision',   hint: 'Injected into the system prompt when the session runs on the Vision brain (reads attached images).' },
-    image_out: { symbol: '🖼', label: 'Image',    hint: 'Prepended to every generated-image prompt (Image-out role).' },
+    image_out: { symbol: '🖼', label: 'Image',    hint: 'Prepended to every generated-image prompt (Image role).' },
     system:    { symbol: '⚙', label: 'System',   hint: 'Prepended to app misc-LLM task prompts (session naming, context management).' },
     voice:     { symbol: '🎤', label: 'Voice',    hint: 'Reserved — LLM voice transcription is audio→text, so there is no prompt-injection point yet.' },
   };
@@ -3130,7 +3135,7 @@ export function mountModelTable(host, opts = {}) {
     // The first agent-roster model claims Standard so the app has an explicit chat
     // model. Catalog-only mounts have no roles, and subscription entries already
     // carry a server-reserved ID before they can be added.
-    const becomesStandard = !catalogOnly && !subscription && !S.providers.length;
+    const becomesStandard = !catalogOnly && !subscription && capText && !S.providers.length;
     // Platform entries already have server-owned IDs. Picking one already in
     // this roster links that connection rather than submitting a duplicate ID.
     // MODEL-ADD-GUARD keeps the alias-only self-link validation from firing on
@@ -3146,6 +3151,8 @@ export function mountModelTable(host, opts = {}) {
       // Persisted IDs are owned by the server. `_uid` is the only client-side row
       // identity; adapters hydrate `entry_id` into this same object after save.
       const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), connection_id: subscriptionConnection?.connection_id || '', catalog_source_id: platformCatalog ? S.selectedModel : '', display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!subscriptionConnection?.credential_configured : true, credential_email: subscription ? (subscriptionConnection?.credential_email || '') : '', credential_plan_type: subscription ? (subscriptionConnection?.credential_plan_type || '') : '', _uid: ++S.uid };
+      newP.video_capable = free ? false : !!chosen.video_capable;
+      newP.decision_capable = !!chosen.decision_capable;
       const previousRoles = { ...S.roleAssignments };
       const parentModel = aliasTarget;
       const previousGroups = S.providers.map(row => [row, row.alias_group_id]);
@@ -3389,9 +3396,9 @@ export function mountModelTable(host, opts = {}) {
         // account roster write lane (the adapter retains it for display only).
         catalog_entry_source: p.catalog_entry_source || '',
         provider: p.provider || 'openrouter', auth_mode: p.auth_mode || (p.provider === 'openai_subscription' ? 'chatgpt' : 'api_key'), base_url: p.base_url || '', api_key: p.api_key || '', model: p.model || '',
-        text_capable: p.text_capable !== false, image_capable: !!p.image_capable,
+        decision_capable: !!p.decision_capable, text_capable: p.text_capable !== false, image_capable: !!p.image_capable,
         image_out_capable: !!p.image_out_capable,
-        high_effort_capable: !!p.high_effort_capable, voice_capable: !!p.voice_capable,
+        high_effort_capable: !!p.high_effort_capable, voice_capable: !!p.voice_capable, video_capable: !!p.video_capable,
         routing_mode: p.routing_mode || '',
         credential_scope: p.credential_scope || (p.provider === 'openai_subscription' ? subscriptionScope : ''),
         credential_configured: !!p.credential_configured,

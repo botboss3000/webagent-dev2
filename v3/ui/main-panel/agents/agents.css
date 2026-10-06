@@ -5,4 +5,7 @@
 .agent-message-visibility-route > .ac-ability-row::before { display: none; }
 .agent-message-visibility-route > .ac-ability-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .agent-message-visibility-route > .ac-ability-body[hidden] { display: none; }
+.agent-promotion-mode-wrap { margin-left: auto; max-width: 100%; display: flex; align-items: center; gap: 6px; }
+.agent-promotion-mode { width: auto; max-width: 100%; }
+.agent-promotion-mode-status { color: var(--fg-3); font-size: 11px; }
 .agent-message-visibility-route .ac-btn.is-saved { color: var(--success); border-color: var(--success); background: var(--success-soft); box-shadow: 0 0 12px rgba(var(--success-rgb), .35); }

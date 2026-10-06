@@ -6,6 +6,8 @@ const providers={deepseek:'DeepSeek',openai_api:'OpenAI API',openrouter:'OpenRou
 const bases={deepseek:'https://api.deepseek.com',openai_api:'https://api.openai.com/v1',openrouter:'https://openrouter.ai/api/v1',abacus:'https://routellm.abacus.ai/v1',gemini:'https://generativelanguage.googleapis.com/v1beta/openai',groq:'https://api.groq.com/openai/v1',together:'https://api.together.xyz/v1',mistral:'https://api.mistral.ai/v1',fireworks:'https://api.fireworks.ai/inference/v1',xai:'https://api.x.ai/v1',perplexity:'https://api.perplexity.ai',deepinfra:'https://api.deepinfra.com/v1/openai'};
 const unavailable=async()=>new Response(JSON.stringify({error:MISSING}),{status:501,headers:{'Content-Type':'application/json'}});
 
+providers.typesafe='TypeSafe AI';
+bases.typesafe='https://api.typesafe.ai';
 // Actual reference template + renderer. Draft staging never changes publication or agent roles.
 export async function mountAppModels(host) {
   const controller=new AbortController();let disposed=false,table,analytics,observer;
@@ -14,7 +16,7 @@ export async function mountAppModels(host) {
   const live=()=>!disposed;
   async function request(path,method='GET',body) {
     const auth=await fetch('/api/v3/auth/me',{credentials:'same-origin',cache:'no-store',signal});
-    if(!auth.ok)throw Error('Sign in required');const me=await auth.json();
+    if(!auth.ok)throw Error('');const me=await auth.json();
     if(!me.is_admin)throw Error('Administrator access required');
     const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',cache:'no-store',signal,
       headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':me.csrf_token})},
@@ -41,7 +43,7 @@ export async function mountAppModels(host) {
   create.onclick=()=>action(async()=>{
     if(dirty&&!confirm('Discard unsaved draft changes?'))return;
     const name=prompt('Name for the new app catalog');if(!name?.trim())return;
-    const id='catalog-'+crypto.randomUUID();
+    const id='catalog_'+crypto.randomUUID().replaceAll('-','');
     await request('/admin/models/rosters/'+id,'PUT',{expected_revision:0,name:name.trim(),entries:{}});
     const option=document.createElement('option');option.value=id;option.textContent=name.trim();scope.append(option);scope.value=id;await load();
   });
@@ -56,7 +58,7 @@ export async function mountAppModels(host) {
   function display(data) {result.hidden=false;result.replaceChildren();const pre=document.createElement('pre');pre.textContent=JSON.stringify(data,null,2);result.append(pre);}
   function error(e) {if(live()&&e.name!=='AbortError'){ready=false;update();status.textContent=e.message;display({error:e.message});}}
   function rows(entries) {return Object.values(entries).map(e=>({entry_id:e.id,provider:e.transport,model:e.upstream_model,display_name:e.display_name,
-    api_key:'',text_capable:e.capabilities.includes('text'),image_capable:e.capabilities.includes('image_in'),image_out_capable:e.capabilities.includes('image_out'),voice_capable:e.capabilities.includes('voice'),video_capable:e.capabilities.includes('video'),catalog_origin:'platform'}));}
+    api_key:'',decision_capable:e.capabilities.includes('decision'),text_capable:e.capabilities.includes('text'),image_capable:e.capabilities.includes('image_in'),image_out_capable:e.capabilities.includes('image_out'),voice_capable:e.capabilities.includes('voice'),video_capable:e.capabilities.includes('video'),catalog_origin:'platform'}));}
   const adapter={
     loadConfig:async()=>({provider:'deepseek',roster:structuredClone(staged),role_assignments:{}}),
     loadPresets:async()=>Object.fromEntries(Object.entries(providers).map(([id,name])=>[id,{name,base_url:bases[id]}])),
@@ -66,7 +68,7 @@ export async function mountAppModels(host) {
         if(!providers[row.provider])throw Error('Unsupported platform provider');
         if(typeof row.model!=='string'||row.model.length<1||row.model.length>200||!/^[!-~]+$/.test(row.model))throw Error('Invalid upstream model ID');
         if(row.alias_group_id||row.reference_cost_input!=null||row.reference_cost_output!=null)throw Error(MISSING+': alias groups and pricing');
-        row.entry_id||='model-'+crypto.randomUUID();
+        row.entry_id||='model_'+crypto.randomUUID().replaceAll('-','');
       }
       staged=structuredClone(next);dirty=true;update();return{providers:next};
     },
@@ -92,7 +94,7 @@ export async function mountAppModels(host) {
   async function load() {
     const generation=++scopeGeneration;table?.destroy();table=null;dirty=false;
     status.textContent='Loading…';result.hidden=true;
-    const {rosters}=await request('/admin/models/rosters/');ready=true;
+    const {rosters}=await request('/admin/models/rosters');ready=true;
     if(!live()||generation!==scopeGeneration)return;
     const selected=scope.value||'base';scope.replaceChildren();
     const all=[{id:'base',name:'Base — Admin only'},...rosters.filter(r=>r.id!=='base')];
@@ -107,7 +109,7 @@ export async function mountAppModels(host) {
   async function action(work) {if(busy)return;busy=true;update();try{await work();}catch(e){error(e);}finally{busy=false;update();}}
   save.onclick=()=>action(async()=>{
     const entries=Object.fromEntries(staged.map(row=>[row.entry_id,{id:row.entry_id,display_name:row.display_name||row.model,upstream_model:row.model,transport:row.provider,
-      capabilities:[...(row.text_capable?['text']:[]),...(row.image_capable?['image_in']:[]),...(row.image_out_capable?['image_out']:[]),...(row.voice_capable?['voice']:[]),...(row.video_capable?['video']:[])]}]));
+      capabilities:[...(row.decision_capable?['decision']:[]),...(row.text_capable?['text']:[]),...(row.image_capable?['image_in']:[]),...(row.image_out_capable?['image_out']:[]),...(row.voice_capable?['voice']:[]),...(row.video_capable?['video']:[])]}]));
     roster=(await request(path(),'PUT',{expected_revision:roster.revision,name:roster.name,entries})).roster;
     // Metadata first; every key write uses the newly returned fence. Keys never enter history.
     for(const row of staged)if(row.api_key){

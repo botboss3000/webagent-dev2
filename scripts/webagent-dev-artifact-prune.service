@@ -1,0 +1,13 @@
+[Unit]
+Description=Prune completed WebAgent development build artifacts
+After=docker.service
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=ar
+ExecStart=/usr/bin/python3 -B /home/ar/webagent-dev2/scripts/dev_artifact_prune.py
+ExecStartPost=+/usr/bin/find /home/ar/webagent-dev2/v3/rollback/administrator -mindepth 2 -maxdepth 2 -type f -name rollback-images.tar -mmin +60 -delete
+Nice=19
+IOSchedulingClass=idle

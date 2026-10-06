@@ -24,7 +24,9 @@ import uuid
 TARGET = "webagent-dev-v3"
 ID = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 COORDINATOR_SOCKET = Path("/home/ar/webagent-dev2/v3/runtime/build/python.sock")
-COORDINATOR_NAMES = {"v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"}
+COORDINATOR_NAMES = {"v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply",
+                     "v3_source_receipt", "v3_source_read", "v3_source_read_batch",
+                     "v3_source_search", "v3_cargo_task"}
 
 def load_build(repo):
     spec = importlib.util.spec_from_file_location("v3_build_host", repo / "plugins/abilities/Administrator/v3_build/v3_build.py")
@@ -90,7 +92,9 @@ class Worker:
         if len(payload) > 2 * 1024 * 1024:
             raise ValueError("Coordinator request too large")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-            connection.settimeout(75)
+            # The broker permits up to 600 seconds for a pinned Cargo check.
+            # Leave time for source digesting and response serialization.
+            connection.settimeout(660 if name == "v3_cargo_task" else 75)
             connection.connect(str(COORDINATOR_SOCKET))
             connection.sendall(payload)
             with connection.makefile("rb") as stream:

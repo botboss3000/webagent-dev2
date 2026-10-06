@@ -9,6 +9,14 @@
       "order": 10
     },
     {
+      "id": "builds",
+      "title": "Builds",
+      "description": "Follow development build, test, and deployment progress.",
+      "panelId": "app-builds-page",
+      "admin": true,
+      "order": 15
+    },
+    {
       "id": "users",
       "title": "Users",
       "description": "Manage registered and anonymous accounts.",

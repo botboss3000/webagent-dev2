@@ -12,20 +12,27 @@ const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 pub fn owns(name: &str) -> bool { name == "recall_compacted" }
 pub fn schemas() -> Vec<Value> {
     vec![json!({"type":"function","name":"recall_compacted",
-        "description":"List recent compacted source segments for this session, or read a bounded page of one segment's original history. Reasoning and revocable guidance are withheld.",
+        "description":"List compacted sources, page one segment, or page a current-run file result by call ID. Reasoning and revocable guidance are withheld.",
         "parameters":{"type":"object","properties":{
             "segment_id":{"type":"string","minLength":1,"maxLength":128},
             "offset_items":{"type":"integer","minimum":0,"maximum":4096},
-            "limit_items":{"type":"integer","minimum":1,"maximum":20}},
+            "limit_items":{"type":"integer","minimum":1,"maximum":20},
+            "tool_call_id":{"type":"string","minLength":1,"maxLength":128},
+            "offset_chars":{"type":"integer","minimum":0,"maximum":2000000},
+            "limit_chars":{"type":"integer","minimum":1,"maximum":4096}},
             "required":[],"additionalProperties":false}})]
 }
 fn default_limit() -> usize { 10 }
+fn default_chars() -> usize { 4096 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Args {
     #[serde(default)] segment_id: Option<String>,
     #[serde(default)] offset_items: usize,
     #[serde(default = "default_limit")] limit_items: usize,
+    #[serde(default)] tool_call_id: Option<String>,
+    #[serde(default)] offset_chars: usize,
+    #[serde(default = "default_chars")] limit_chars: usize,
 }
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128
@@ -33,8 +40,13 @@ fn valid_id(id: &str) -> bool {
 }
 fn validate(args: &Args) -> Result<()> {
     if !(1..=20).contains(&args.limit_items) || args.offset_items > 4096
+        || !(1..=4096).contains(&args.limit_chars) || args.offset_chars>2_000_000
         || args.segment_id.as_deref().is_some_and(|id| !valid_id(id))
-        || (args.segment_id.is_none() && args.offset_items != 0) {
+        || args.tool_call_id.as_deref().is_some_and(|id| !valid_id(id))
+        || (args.segment_id.is_none() && args.offset_items != 0)
+        || (args.tool_call_id.is_none() && args.segment_id.is_none() && args.offset_chars != 0)
+        || (args.segment_id.is_some() && args.offset_chars != 0 && args.limit_items != 1)
+        || (args.segment_id.is_some() && args.tool_call_id.is_some()) {
         bail!("Invalid compacted segment selector");
     }
     Ok(())
@@ -121,10 +133,37 @@ fn segment_page(record: &Value, entry: &Value, sid: &str, args: &Args) -> Result
         "source_kind":"compacted_provider_history","items":items,
         "offset_items":args.offset_items,"next_offset_items":end,"total_items":total,
         "has_more":end<total,"reasoning_included":false,"revocable_guidance_included":false});
+    if args.limit_items==1 && items.len()==1 && (args.offset_chars>0
+        || serde_json::to_vec(&output)?.len()>MAX_OUTPUT_BYTES) {
+        let serialized=items[0].to_string();
+        let total_chars=serialized.chars().count();
+        if args.offset_chars>total_chars { bail!("Compacted character cursor exceeds item"); }
+        let content=serialized.chars().skip(args.offset_chars)
+            .take(args.limit_chars).collect::<String>();
+        let next=args.offset_chars+content.chars().count();
+        return Ok(json!({"segment_id":id,"source_digest":entry["source_digest"],
+            "source_kind":"compacted_item_page","item_index":args.offset_items,
+            "content":content,"offset_chars":args.offset_chars,
+            "next_offset_chars":next,"total_chars":total_chars,"has_more":next<total_chars,
+            "reasoning_included":false,"revocable_guidance_included":false}));
+    }
     if serde_json::to_vec(&output)?.len() > MAX_OUTPUT_BYTES {
-        bail!("Compacted page exceeds 16 KiB; request fewer items or skip the oversized item");
+        bail!("Compacted page exceeds 16 KiB; request fewer items");
     }
     Ok(output)
+}
+fn tool_result_page(record:&Value, call_id:&str, args:&Args)->Result<Value> {
+    if record["type"]!="function_call_output" || record["call_id"]!=call_id {
+        bail!("Tool result provenance conflict");
+    }
+    let raw=record["output"].as_str().context("Tool result unavailable")?;
+    let total=raw.chars().count();
+    if args.offset_chars>total { bail!("Tool result cursor exceeds source"); }
+    let text=raw.chars().skip(args.offset_chars).take(args.limit_chars).collect::<String>();
+    let next=args.offset_chars+text.chars().count();
+    Ok(json!({"tool_call_id":call_id,"source_kind":"current_run_tool_result",
+        "content":text,"offset_chars":args.offset_chars,"total_chars":total,
+        "next_offset_chars":next,"has_more":next<total}))
 }
 async fn work(app: &App, sid: &str, run_id: &str, args: &Value) -> Result<Value> {
     let parsed: Args = serde_json::from_value(args.clone()).context("Invalid compacted recall arguments")?;
@@ -133,7 +172,26 @@ async fn work(app: &App, sid: &str, run_id: &str, args: &Value) -> Result<Value>
     let session = current.app.store.get(&format!("session:{sid}")).await?
         .context("Current session unavailable")?;
     let entries = metadata(&session)?;
-    let output = if let Some(id) = parsed.segment_id.as_deref() {
+    let output = if let Some(call_id) = parsed.tool_call_id.as_deref() {
+        let run=current.app.run(run_id).await?;
+        let name=current.app.store.tool_call_name(sid,run_id,call_id).await?
+            .context("Tool call unavailable in current run")?;
+        if !matches!(name.as_str(),"file_search"|"file_read"|"file_list") {
+            bail!("Result recall is limited to current-run file reads");
+        }
+        let agent=session_agent_id(&current.app,sid).await?;
+        let (policy,_,visibility,state)=ability_controls(&current.app,sid).await?;
+        let mode=session_mode(&current.app,sid).await?;
+        let access=current.app.store.live_access(current.app.store.current_user_id(),&agent).await?;
+        if live_tool_decision(&current.app,&access,&name,&policy,&visibility,&state,
+            &run["loaded_abilities"],mode["mode"]=="read_only").permission
+            == crate::access::Permission::Deny {
+            bail!("File result recall unavailable under current access");
+        }
+        let record=current.app.store.tool_result(sid,run_id,call_id).await?
+            .context("Full tool result unavailable")?;
+        tool_result_page(&record,call_id,&parsed)?
+    } else if let Some(id) = parsed.segment_id.as_deref() {
         let entry = entries.iter().find(|entry|entry["segment_id"]==id)
             .context("Compacted segment unavailable in current session")?;
         let record = current.app.store.get(&format!("compaction_segment:{sid}:{id}")).await?
@@ -189,7 +247,8 @@ mod tests {
             "item_count":3,"created_at":1});
         let record = json!({"schema_version":1,"session_id":"owned","segment_id":"segment-1",
             "source_digest":digest,"source":source});
-        let args = Args {segment_id:Some("segment-1".into()),offset_items:0,limit_items:3};
+        let args = Args {segment_id:Some("segment-1".into()),offset_items:0,limit_items:3,
+            tool_call_id:None,offset_chars:0,limit_chars:4096};
         let page = segment_page(&record,&entry,"owned",&args).unwrap();
         assert_eq!(page["items"].as_array().unwrap().len(),2);
         assert!(!page.to_string().contains("SECRET"));
@@ -208,6 +267,6 @@ mod tests {
         assert!(!json!(source).to_string().contains("THOUGHT"));
         assert!(serde_json::from_value::<Args>(json!({"session_id":"foreign"})).is_err());
         assert!(validate(&Args {segment_id:Some("../foreign".into()),
-            offset_items:0,limit_items:1}).is_err());
+            offset_items:0,limit_items:1,tool_call_id:None,offset_chars:0,limit_chars:4096}).is_err());
     }
 }

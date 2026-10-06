@@ -23,10 +23,25 @@ from pathlib import Path
 
 CONTROL = Path("/run/v3/control")
 LIMIT = 1024 * 1024
+CONTEXT_CONFIG_PATH = Path("/state/config/context-compaction.json")
 ROOT = Path(os.environ.get("V3_WORKSPACE_ROOT", "/workspaces"))
 SOCKET = os.environ.get("V3_TOOL_SOCKET", "/run/v3/worker/tools.sock")
 TEMPLATE = Path(os.environ.get("V3_CODE_TEMPLATE", "/opt/v3/source-template"))
 LIVE_CHECKOUT = Path("/live-checkout")
+
+
+def search_limits():
+    """The validated data-root config is read on every search, without a restart."""
+    try:
+        config = json.loads(CONTEXT_CONFIG_PATH.read_text())
+    except FileNotFoundError:
+        config = {}
+    output = config.get("search_output_bytes", 32768)
+    line = config.get("search_line_bytes", 2048)
+    if (type(output) is not int or not 4096 <= output <= 262144
+            or type(line) is not int or not 128 <= line <= 8192 or line > output):
+        raise ValueError("invalid context search limits")
+    return output, line
 
 
 PLUGINS = {}
@@ -872,6 +887,7 @@ def file_operation(request, base, args, name):
                     raise ValueError("invalid file glob")
                 fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=directory)
+                search_output_bytes, search_line_bytes = search_limits()
                 found, size = [], 0
                 remaining = [10000, 32 * LIMIT]
                 deadline = time.monotonic() + 2
@@ -934,9 +950,13 @@ def file_operation(request, base, args, name):
                         if query and (index not in hit_lines if hit_lines is not None
                                       else query not in line):
                             continue
+                        if len(line.encode()) > search_line_bytes:
+                            start = max(0, line.find(query) - search_line_bytes // 3) if query and not regex else 0
+                            line = line[start:start + search_line_bytes] + " …[line clipped]"
+                            scan_limited = True
                         result = f"{label}:{index}:{line}"
-                        encoded_size = len(result.encode())
-                        if size + encoded_size > LIMIT:
+                        encoded_size = len(result.encode()) + bool(found)
+                        if size + encoded_size > search_output_bytes or len(found) >= 200:
                             scan_limited = True
                             return
                         found.append(result)
@@ -955,8 +975,12 @@ def file_operation(request, base, args, name):
                                 break
                             names.append(entry.name)
                     for entry in sorted(names):
+                        if depth == 0 and raw == "/live-checkout/v3" and entry in {
+                                "build-jobs", "workspaces", "target", "v2_ref", "data",
+                                "rollback", "runtime", "gate-runtime", "host-build-service"}:
+                            continue
                         if (remaining[0] <= 0 or remaining[1] <= 0
-                            or time.monotonic() >= deadline or size >= LIMIT):
+                            or time.monotonic() >= deadline or size >= search_output_bytes):
                             scan_limited = True
                             return
                         remaining[0] -= 1

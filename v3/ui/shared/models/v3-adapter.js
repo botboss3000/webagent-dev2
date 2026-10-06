@@ -3,16 +3,30 @@
 export const MISSING = 'Unavailable in v3';
 const reject = detail => { throw Error(MISSING + ': ' + detail); };
 const response = (data,status=200) => new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+// Descriptive subscription fallback matches discovery, without editing shared catalog grants.
+export function catalogCapabilityFlags(capabilities=[],transport) {
+  const caps=new Set(capabilities);
+  const legacySubscription=transport==='openai_subscription' && caps.size===1 && caps.has('text');
+  return {
+    decision_capable:caps.has('decision'),
+    text_capable:caps.has('text'),
+    image_capable:caps.has('image_in') || legacySubscription,
+    image_out_capable:caps.has('image_out'),
+    voice_capable:caps.has('voice'),
+    video_capable:caps.has('video'),
+  };
+}
+
 export function createModelAdapter(request, agentId, onAssignment) {
   let data, catalog, account, destroyed=false;
   // Public GPT-6 choices are a preview until this connection returns its account catalog.
   const subscriptionPreviewModels=[
-    {id:'gpt-6-astra',name:'GPT-6 Astra',text_capable:true},
-    {id:'gpt-6.1-sol',name:'GPT-6.1 Sol',text_capable:true},
-    {id:'gpt-6-sol',name:'GPT-6 Sol',text_capable:true},
-    {id:'gpt-6-luna',name:'GPT-6 Luna',text_capable:true},
+    {id:'gpt-6-astra',name:'GPT-6 Astra',text_capable:true,image_capable:true},
+    {id:'gpt-6.1-sol',name:'GPT-6.1 Sol',text_capable:true,image_capable:true},
+    {id:'gpt-6-sol',name:'GPT-6 Sol',text_capable:true,image_capable:true},
+    {id:'gpt-6-luna',name:'GPT-6 Luna',text_capable:true,image_capable:true},
   ];
-  const providerPresets={openai_subscription:{name:'ChatGPT Subscription',base_url:'codex://chatgpt'},deepseek:{name:'DeepSeek',base_url:'https://api.deepseek.com'},openai_api:{name:'OpenAI API',base_url:'https://api.openai.com/v1'},openrouter:{name:'OpenRouter',base_url:'https://openrouter.ai/api/v1'},abacus:{name:'Abacus RouteLLM',base_url:'https://routellm.abacus.ai/v1'},gemini:{name:'Gemini',base_url:'https://generativelanguage.googleapis.com/v1beta/openai'},groq:{name:'Groq',base_url:'https://api.groq.com/openai/v1'},together:{name:'Together',base_url:'https://api.together.xyz/v1'},mistral:{name:'Mistral',base_url:'https://api.mistral.ai/v1'},fireworks:{name:'Fireworks',base_url:'https://api.fireworks.ai/inference/v1'},xai:{name:'xAI',base_url:'https://api.x.ai/v1'},perplexity:{name:'Perplexity',base_url:'https://api.perplexity.ai'},deepinfra:{name:'DeepInfra',base_url:'https://api.deepinfra.com/v1/openai'}};
+  const providerPresets={typesafe:{name:'TypeSafe AI',base_url:'https://api.typesafe.ai'},openai_subscription:{name:'ChatGPT Subscription',base_url:'codex://chatgpt'},deepseek:{name:'DeepSeek',base_url:'https://api.deepseek.com'},openai_api:{name:'OpenAI API',base_url:'https://api.openai.com/v1'},openrouter:{name:'OpenRouter',base_url:'https://openrouter.ai/api/v1'},abacus:{name:'Abacus RouteLLM',base_url:'https://routellm.abacus.ai/v1'},gemini:{name:'Gemini',base_url:'https://generativelanguage.googleapis.com/v1beta/openai'},groq:{name:'Groq',base_url:'https://api.groq.com/openai/v1'},together:{name:'Together',base_url:'https://api.together.xyz/v1'},mistral:{name:'Mistral',base_url:'https://api.mistral.ai/v1'},fireworks:{name:'Fireworks',base_url:'https://api.fireworks.ai/inference/v1'},xai:{name:'xAI',base_url:'https://api.x.ai/v1'},perplexity:{name:'Perplexity',base_url:'https://api.perplexity.ai'},deepinfra:{name:'DeepInfra',base_url:'https://api.deepinfra.com/v1/openai'}};
   async function accountChoices(){account=await request('/models/me/catalog');return account;}
   async function adopt(source,alias){
     const saved=await request('/models/agents/'+encodeURIComponent(agentId)+'/adoptions','POST',{
@@ -31,8 +45,7 @@ export function createModelAdapter(request, agentId, onAssignment) {
     const c=catalog.connections[e.connection_id];
     return {entry_id:e.id,connection_id:c.id,catalog_source_id:data.adoptions?.[e.id]?.source_id||(catalog.platform_sources?.[e.id]?'':'byo:'+e.id),provider:c.transport,model:e.upstream_model,display_name:data.adoptions?.[e.id]?.alias||e.display_name,
       base_url:c.transport==='deepseek'?'https://api.deepseek.com':'codex://chatgpt',api_key:'',
-      text_capable:e.capabilities.includes('text'),image_capable:e.capabilities.includes('image_in'),
-      image_out_capable:e.capabilities.includes('image_out'),voice_capable:e.capabilities.includes('voice'),
+      ...catalogCapabilityFlags(e.capabilities,c.transport),
       credential_configured:!!statuses.get(c.id)?.connected,catalog_origin:catalog.platform_sources?.[e.id]?'platform':'byo'};
   });
   async function save({providers,role_assignments={}}){
@@ -65,12 +78,13 @@ export function createModelAdapter(request, agentId, onAssignment) {
           if(!connection||connection.owner_id!==data.caller_id||connection.transport!==p.provider||!connection.allowed_agents.includes(agentId)||connection.revoked)throw Error('Subscription connection is unavailable');
         }
         next.connections[connectionId]??={id:connectionId,owner_id:data.caller_id,transport:p.provider,credential_ref:'provider_credential:'+crypto.randomUUID(),allowed_agents:[agentId],revision:1,revoked:false};
-        e=next.entries[id]={id,owner_id:data.caller_id,connection_id:connectionId,upstream_model:p.model,display_name:p.display_name||p.model,capabilities:['text'],allowed_agents:[agentId],revision:1};
+        e=next.entries[id]={id,owner_id:data.caller_id,connection_id:connectionId,upstream_model:p.model,display_name:p.display_name||p.model,capabilities:[['decision',!!p.decision_capable],['text',p.text_capable!==false],['image_in',p.image_capable],['image_out',p.image_out_capable],['voice',p.voice_capable],['video',p.video_capable]].filter(([,enabled])=>enabled).map(([name])=>name),allowed_agents:[agentId],revision:1};
         // Hydrate reference row identity only after the catalog write succeeds below.
       }else if(data.adoptions?.[e.id]||next.platform_sources?.[e.id]){
         if(p.api_key)throw Error('Adopted credentials cannot be replaced through the roster');
       }else if(e.owner_id===data.caller_id){
         e.display_name=p.display_name||e.upstream_model;
+        e.capabilities=[['decision',!!p.decision_capable],['text',p.text_capable!==false],['image_in',p.image_capable],['image_out',p.image_out_capable],['voice',p.voice_capable],['video',p.video_capable]].filter(([,enabled])=>enabled).map(([name])=>name);
       }else if(p.display_name!==e.display_name)throw Error('Only the model owner can rename this connection');
       rowIds.push(e.id);
       if(p.api_key && (p.provider==='openai_subscription' || !/^[!-~]{8,512}$/.test(p.api_key)))throw Error('Invalid API key');
@@ -120,7 +134,7 @@ export function createModelAdapter(request, agentId, onAssignment) {
       const choices=await accountChoices();
       return {models:[...(choices.available_platform_models||[]),...(choices.entries||[])].map(c=>({
         id:c.id,display_name:choices.aliases?.[c.id]||c.display_name,name:choices.aliases?.[c.id]||c.display_name,catalog_name:c.display_name,
-        text_capable:c.capabilities.includes('text'),image_capable:c.capabilities.includes('image_in'),image_out_capable:c.capabilities.includes('image_out'),voice_capable:c.capabilities.includes('voice'),origin:c.origin}))};
+        ...catalogCapabilityFlags(c.capabilities,c.transport),origin:c.origin}))};
     },
     fetchModelInfo:async()=>({}),fetchModelUsage:async()=>null,
     loadDirectives:async()=>({standard:'',premium:'',system:'',image_in:'',image_out:'',voice:'',custom:{}}),

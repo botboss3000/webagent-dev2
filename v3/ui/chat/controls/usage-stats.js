@@ -7,7 +7,7 @@ export function formatCount(value) {
 export function mountUsageStats({root,client,note}) {
   const $ = id => root.querySelector('#' + id);
   const anchor = $('chat-pill-stats'), abort = new AbortController();
-  let session = '', generation = 0, data = null, pending = null, lastLoad = 0, selectedRun = null;
+  let session = '', generation = 0, data = null, pending = null, lastLoad = 0, selectedRun = null, configData = null;
   const panel = document.createElement('div');
   panel.className = 'chat-model-picker v3-context-panel';
   panel.hidden = true; panel.setAttribute('role','dialog'); panel.setAttribute('aria-label','Context statistics');
@@ -27,6 +27,7 @@ export function mountUsageStats({root,client,note}) {
     const title=document.createElement('div'); title.className='cmp-cx-title'; title.textContent="What's in this context"; content.append(title);
     const run=selectedRun||data?.latest, ctx=run?.context_summary, usage=data?.usage;
     if(selectedRun)row(content,'Run',selectedRun.id);
+    if(run?.status==='paused')row(content,'Paused',run?.error || 'Context review required');
     row(content,'Model',run?.model?.model || 'No model call yet');
     row(content,'Last dispatched context',ctx ? num(ctx.envelope_bytes)+' bytes / '+num(ctx.max_bytes)+' byte budget' : 'Not measured yet');
     if(ctx) {
@@ -60,6 +61,43 @@ export function mountUsageStats({root,client,note}) {
     }
     const compact=document.createElement('button');compact.type='button';compact.className='cmp-cc-btn v3-backend-pending';compact.disabled=true;
     compact.innerHTML='<i data-lucide="minimize-2"></i><span>Compact now</span>';compact.title='Composer compaction action backend port pending';content.append(compact);
+    if(configData?.config) {
+      const head=document.createElement('div');head.className='cmp-cc-head';
+      head.textContent='Administrator context settings';content.append(head);
+      const hint=document.createElement('p');hint.className='cmp-cx-hint';
+      hint.textContent='Saved to context-compaction.json. New model calls use these settings.';
+      content.append(hint);
+      const fields=[
+        ['Summary trigger','trigger_tokens'],['Verbatim tail','tail_tokens'],
+        ['Tool preview bytes','tool_result_preview_bytes'],['Search output bytes','search_output_bytes'],
+        ['Search line bytes','search_line_bytes'],['Summary source bytes','max_source_bytes']
+      ];
+      const inputs=new Map();
+      for(const [label,key] of fields) {
+        const wrapper=document.createElement('label');wrapper.className='cmp-cc-top';
+        const caption=document.createElement('span');caption.textContent=label;
+        const input=document.createElement('input');input.type='number';input.min='1';input.step='1';
+        input.value=String(configData.config[key]);input.setAttribute('aria-label',label);
+        wrapper.append(caption,input);content.append(wrapper);inputs.set(key,input);
+      }
+      const status=document.createElement('p');status.setAttribute('role','status');content.append(status);
+      const save=document.createElement('button');save.type='button';save.className='cmp-cc-btn';
+      save.textContent='Save context settings';content.append(save);
+      save.addEventListener('click',async()=>{
+        const next={...configData.config};
+        for(const [key,input] of inputs) {
+          const value=Number(input.value);
+          if(!Number.isSafeInteger(value)||value<1){status.textContent='Enter positive whole numbers.';return;}
+          next[key]=value;
+        }
+        save.disabled=true;status.textContent='Saving…';
+        try {
+          configData=await client.saveContextConfig({expected_digest:configData.digest,config:next});
+          status.textContent='Saved. New model calls use these settings.';
+        } catch(error) {status.textContent=error.message||'Save failed; reload settings.';}
+        finally {save.disabled=false;}
+      });
+    }
     panel.append(content);window.lucide?.createIcons();
   }
   function paint() {
@@ -77,7 +115,7 @@ export function mountUsageStats({root,client,note}) {
       const visible=!cfg || cfg.some(item=>item.el===node);
       node.hidden=!visible;node.style.display=visible?'':'none';
     }
-    if(!panel.hidden)paintPanel();
+    if(!panel.hidden && !panel.contains(document.activeElement))paintPanel();
   }
   async function refresh(force=false) {
     if(!session || pending || (!force && Date.now()-lastLoad<1500))return pending;
@@ -89,6 +127,10 @@ export function mountUsageStats({root,client,note}) {
       .finally(()=>{if(pending===request)pending=null;});
     pending=request;return request;
   }
+  async function refreshConfig() {
+    try {configData=await client.contextConfig();if(!panel.hidden)paintPanel();}
+    catch {configData=null;}
+  }
   function toggle(run=null) {
     if(!panel.hidden){close();return;}
     selectedRun=run;
@@ -98,6 +140,7 @@ export function mountUsageStats({root,client,note}) {
     const bottom=Math.max(8,Math.min(innerHeight-8-panel.getBoundingClientRect().height,innerHeight-rect.top+6));
     panel.style.bottom=bottom+'px';panel.style.left=Math.max(8,Math.min(rect.left,innerWidth-360))+'px';
     void refresh(true);
+    void refreshConfig();
   }
   anchor.addEventListener('click',event=>{if(!event.target.closest('.chat-stats-chev'))toggle();},{signal:abort.signal});
   anchor.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();toggle();}},{signal:abort.signal});

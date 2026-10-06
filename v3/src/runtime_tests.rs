@@ -1078,6 +1078,51 @@ async fn recovery_holds_uncertain_writes_and_requeues_safe_reads() {
 }
 
 #[tokio::test]
+async fn interrupted_build_finish_waits_for_receipt_without_replaying_write() {
+    let (_root, app) = fixture().await;
+    let sid = conversation(&app).await;
+    let id = queued(&app, &sid).await;
+    running(&app, &id, "build-generation").await;
+    let mut run = app.run(&id).await.unwrap();
+    run["phase"] = json!("tools");
+    run["pending"] = json!({"name":"v3_build_work","state":"executing",
+        "call_id":"original-build-call","arguments":{"action":"finish",
+            "task_id":"build-recovery-test","expected_inputs_sha256":"0".repeat(64)}});
+    app.save(&mut run).await.unwrap();
+    recover(&app, true).await.unwrap();
+    let waiting = app.run(&id).await.unwrap();
+    assert_eq!(waiting["status"], "waiting_external");
+    assert_eq!(waiting["uncertain"], false);
+    assert_eq!(waiting["pending"]["call_id"], "original-build-call");
+    assert_eq!(waiting["pending"]["external_job"]["kind"], "v3_build");
+    recover(&app, false).await.unwrap();
+    let repeated = app.run(&id).await.unwrap();
+    assert_eq!(repeated["status"], "waiting_external");
+    assert_eq!(repeated["pending"]["call_id"], "original-build-call");
+    assert_eq!(repeated["call_index"], waiting["call_index"]);
+    let mut stopped=repeated.clone();
+    stopped["status"]=json!("stopped");
+    app.save_override(&mut stopped).await.unwrap();
+    let _=command(State(app.clone()),Path((id.clone(),"resume".into())),
+        Json(json!({"client_request_id":"resume-build-result"}))).await.unwrap();
+    let resumed=app.run(&id).await.unwrap();
+    assert_eq!(resumed["status"], "waiting_external");
+    assert_eq!(resumed["pending"]["state"], "executing");
+    let result=json!({"status":"success","output":{"task_id":"build-recovery-test",
+        "job_id":"existing-job","status":"completed","verified_healthy":true}});
+    let mut settled=resumed.clone();
+    agent_loop::attach_external_build_result(&mut settled,&result).unwrap();
+    assert_eq!(settled["status"], "queued");
+    assert!(agent_loop::attach_external_build_result(&mut settled,&result).is_err());
+    app.store.save_run_override(&mut settled,"tool_result",&result).await.unwrap();
+    let durable=app.run(&id).await.unwrap();
+    assert_eq!(durable["call_index"], json!(1));
+    assert_eq!(durable["input"].as_array().unwrap().last().unwrap()["call_id"],
+        "original-build-call");
+    assert_eq!(durable["pending"], Value::Null);
+}
+
+#[tokio::test]
 async fn startup_resume_setting_stops_safe_runs_but_preserves_uncertain_writes() {
     let (_root, app) = fixture().await;
     crate::services::save_boot_orphan_resume(&app.store, "admin", false, 0).await.unwrap();

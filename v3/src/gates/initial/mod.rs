@@ -1,23 +1,39 @@
 //! The initial gate owns bounded working updates visible before the final reply.
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisibilityConfig { pub tool_name: String, pub guidance: String }
 
-/// Per-agent preferences never replace the server-owned gate protocol.
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+/// The agent selects one publication path; the server still owns the manual protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromotionMode { None, Manual, Auto }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentVisibility { pub enabled: bool, pub guidance: String, #[serde(default)] pub format: String }
+pub struct AgentVisibility { pub mode: PromotionMode, pub guidance: String }
 impl Default for AgentVisibility {
-    fn default() -> Self { Self { enabled: true, guidance: String::new(), format: String::new() } }
+    fn default() -> Self { Self { mode: PromotionMode::Manual, guidance: String::new() } }
 }
 impl AgentVisibility {
     pub fn validate(&self) -> Result<()> {
         if self.guidance.len() > 4096 { bail!("Additional guidance must be at most 4096 bytes"); }
-        if self.format.len() > 4096 { bail!("Message format must be at most 4096 bytes"); }
         Ok(())
+    }
+    pub fn from_stored(value: &Value) -> Result<Self> {
+        if value.is_null() { return Ok(Self::default()); }
+        if value.get("mode").is_some() { return Ok(serde_json::from_value(value.clone())?); }
+        // Existing agents used a boolean. The retired format field is intentionally
+        // ignored: Ask/Plan/Auto prompts now supply call-scoped formatting.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Legacy { enabled: bool, guidance: String, #[serde(default)] format: String }
+        let legacy: Legacy = serde_json::from_value(value.clone())?;
+        let _ = legacy.format;
+        Ok(Self { mode: if legacy.enabled { PromotionMode::Manual } else { PromotionMode::None },
+            guidance: legacy.guidance })
     }
 }
 pub async fn agent_visibility(store: &crate::store::Store, agent: &str) -> Result<AgentVisibility> {
@@ -25,8 +41,7 @@ pub async fn agent_visibility(store: &crate::store::Store, agent: &str) -> Resul
     let blob: Vec<u8> = sqlx::query_scalar("SELECT metadata FROM agents WHERE id=?")
         .bind(agent).fetch_one(&view.agent_pool).await?;
     let metadata = view.unseal(&blob)?;
-    let settings = if metadata["message_visibility"].is_null() { AgentVisibility::default() }
-        else { serde_json::from_value(metadata["message_visibility"].clone())? };
+    let settings = AgentVisibility::from_stored(&metadata["message_visibility"])?;
     settings.validate()?;
     Ok(settings)
 }
@@ -53,13 +68,15 @@ mod tests {
     use super::*;
     #[test]
     fn agent_visibility_is_additive_strict_and_byte_bounded() {
-        let defaults=AgentVisibility::default();assert!(defaults.enabled);assert!(defaults.guidance.is_empty());assert!(defaults.format.is_empty());
-        assert!(AgentVisibility{enabled:false,guidance:"x".repeat(4096),format:"Short lines".into()}.validate().is_ok());
-        assert!(AgentVisibility{enabled:true,guidance:"é".repeat(2049),format:String::new()}.validate().is_err());
-        assert!(AgentVisibility{enabled:true,guidance:String::new(),format:"x".repeat(4097)}.validate().is_err());
-        assert_eq!(serde_json::from_value::<AgentVisibility>(json!({"enabled":true,"guidance":"ok"})).unwrap().format,"");
-        assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":true,"guidance":"ok","fixed_protocol":"override"})).is_err());
-        assert!(serde_json::from_value::<AgentVisibility>(json!({"enabled":"yes","guidance":"ok"})).is_err());
+        let defaults=AgentVisibility::default();assert_eq!(defaults.mode,PromotionMode::Manual);assert!(defaults.guidance.is_empty());
+        assert!(AgentVisibility{mode:PromotionMode::None,guidance:"x".repeat(4096)}.validate().is_ok());
+        assert!(AgentVisibility{mode:PromotionMode::Auto,guidance:"é".repeat(2049)}.validate().is_err());
+        assert_eq!(AgentVisibility::from_stored(&json!({"enabled":true,"guidance":"ok","format":"retired"})).unwrap().mode,PromotionMode::Manual);
+        assert_eq!(AgentVisibility::from_stored(&json!({"enabled":false,"guidance":"ok"})).unwrap().mode,PromotionMode::None);
+        assert_eq!(AgentVisibility::from_stored(&json!({"mode":"auto","guidance":"ok"})).unwrap().mode,PromotionMode::Auto);
+        assert!(AgentVisibility::from_stored(&json!({"mode":"auto","guidance":"ok","format":"retired"})).is_err());
+        assert!(AgentVisibility::from_stored(&json!({"enabled":true,"guidance":"ok","fixed_protocol":"override"})).is_err());
+        assert!(AgentVisibility::from_stored(&json!({"mode":"both","guidance":"ok"})).is_err());
     }
     #[test]
     fn working_update_is_bounded_and_exact() {

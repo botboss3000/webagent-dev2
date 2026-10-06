@@ -44,10 +44,11 @@ curl -fsS http://100.112.23.15:8081/health/ready
 
 The development server needs Docker Buildx. Both image targets use the same
 tested Rust builder in `v3/Dockerfile`; BuildKit caches Cargo downloads and
-artifacts across source edits. Build the targets from settled inputs, and
-coordinate source writers before starting either command. The protected build
-broker captures one frozen context for both targets and verifies it again
-before replacing the development containers.
+artifacts across source edits. Register each source task with the protected
+broker before editing. Each worker edits a separate snapshot; finishing freezes
+that task and queues its own serial integration, locked tests, image builds, and
+development deployment. The two containers receive the same candidate digest
+and mount versioned code assets from that release.
 
 The existing named tunnels serve https://webagent.live/app from dev2 on host port 8080
 and https://dev.webagent.live/app from v3 on host port 8081. The previous
@@ -67,12 +68,16 @@ saving a key confirms storage, not account entitlement. Keys are never returned
 to the browser. Each accepted run pins its transport and credential reference. Each accepted run pins its
 provider and model so changing the agent setting affects only later runs. Composer model preferences are different: their revision is re-resolved and pinned at the next model-call boundary within the current run. A dispatched call keeps its original selection; the independently pinned System plan is unchanged.
 
-Development UI files in `v3/ui` and the selected shared CSS, Agents partial,
-fonts, and favicon are mounted read-only into the v3 container. HTML, CSS, and
-JavaScript edits to those files appear after a browser refresh without rebuilding
-the image or restarting the container. The shared files also serve v2, so keep
-v3-specific UI changes in `v3/ui`; changing the container mount list still
-requires recreation. The chat baseline lives in `v3/ui/chat/chat.html` and
+Development UI files in `v3/ui` and selected shared assets are served from a
+broker-owned versioned snapshot through a stable read-only mount. An isolated
+task changing only `v3/ui/` can switch that snapshot without Cargo, Buildx or
+container replacement; refresh the browser to load the new assets. UI releases
+may finish while a Rust image build runs. Compatible queued full builds from
+one caller may share one tested image build, while each keeps its own receipt.
+The shared assets also serve v2, so keep v3-specific UI changes in `v3/ui`.
+Changing the container mount list still requires a full release. The chat
+baseline lives in
+`v3/ui/chat/chat.html` and
 `v3/ui/chat/chat.css`; `v3/ui/app.js` supplies authentication and selected-agent context to
 `v3/ui/chat/core/panel.js`, which mounts the partial and owns chat rendering,
 controls, and teardown. `chat/core/client.js` owns the existing v3 chat requests
@@ -717,12 +722,26 @@ always wins and invalid JSON fails explicitly. The legacy file remains a migrati
 editing it after migration does not change runtime behavior. Both API and loop use `/state`.
 Model/provider/fallback fields are not accepted.
 Settings are read at each model-call boundary and held immutable through the summary call.
+Administrators can read and update this same data-root file through
+`GET/PUT /api/v3/admin/context-compaction`; writes validate the full schema,
+require the returned digest, and publish atomically. The chat context panel
+edits the principal budgets. The Python worker rereads the file for every search.
 
 Defaults are a 40,000 estimated-token history trigger, 10,000-token verbatim tail,
 and 2,000-token summary prompt target, using four characters per estimated token.
 Estimates count serialized history characters, including the previous checkpoint, not instructions
 or tool schemas. The independent full-request byte ceiling remains in loop-runtime.json and
 can trigger compaction earlier. Safe complete boundaries may retain less than the tail target.
+File searches cap returned match text and individual lines using `search_output_bytes`
+and `search_line_bytes`, excluding generated directories when searching the
+whole live v3 checkout. An explicit path to such a directory remains searchable.
+Before model assembly, oversized ordinary tool results are replaced in provider
+replay with a bounded preview, status, call ID, byte count and SHA-256 receipt.
+Ability discovery and loaded skill bodies remain complete; the
+encrypted interaction keeps the full result. `recall_compacted` can page a
+current-run file result by `tool_call_id` after checking live access. If a
+history prefix exceeds `max_source_bytes`, multiple completed-boundary folds
+can shrink it without placing the entire prefix in one summary request.
 Each fold replaces the previous checkpoint plus aged history with one summary. Public
 chat and tool history remain intact. A durable, hash-only background job removes
 reasoning from the aged private interactions and completed-run recovery snapshots;
@@ -734,7 +753,7 @@ Loop-runtime schema 2 removes the duplicate summary reserve. Schema 1 data is mi
 with a backup; legacy workflow storage imports discard the redundant reserve. Workflow API
 writes reject compaction settings: use the compaction JSON instead. Cached per-item byte and
 Unicode character measurements feed compaction planning without reserializing unchanged history.
-No settings UI or failure-policy changes are added. New recall segments omit reasoning;
+New recall segments omit reasoning;
 legacy segments remain readable and continue to withhold it. Rust changes require rebuilding;
 data JSON edits apply at the next call boundary without restart. Back up configuration and state
 before rollout. Checkpoint representation remains compatible; aged reasoning in

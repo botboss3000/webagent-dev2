@@ -37,6 +37,7 @@ class InstallTests(unittest.TestCase):
         self.host = b"CONTEXT = ('v3/src',)\n"
         (self.source / "host.py").write_bytes(self.host)
         (self.source / "install.py").write_bytes(b"# fixture bootstrap\n")
+        (self.source / "release.py").write_bytes(b"# fixture release\n")
         self.fake = FakePrivileges()
         self.patches = [patch.object(installer.shutil, "disk_usage", return_value=types.SimpleNamespace(free=5*1024*1024*1024)),
                         patch.object(installer, "PRIVILEGES", self.fake),
@@ -187,7 +188,7 @@ class InstallTests(unittest.TestCase):
              patch.object(installer.os, "initgroups", record("groups")), patch.object(installer.os, "setgid", record("gid")), \
              patch.object(installer.os, "setuid", record("uid")), patch.object(installer.os, "set_inheritable", record("inheritable")), \
              patch.object(installer.os, "execve", record("exec")), patch.object(installer.ctypes, "CDLL", return_value=libc):
-            installer._drop_and_exec(42, 43)
+            installer._drop_and_exec(42, 43, 44)
         self.assertEqual(["groups", "gid", "uid", "no_new_privs"], [name for name, _ in calls[:4]])
         command = calls[-1][1]
         self.assertEqual("/usr/bin/python3", command[0])

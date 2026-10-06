@@ -86,7 +86,7 @@ def candidate(base_blob, task_blob, live_blob, validate):
     return archive(merged, validate), changed
 
 
-def release_mounts(previous, root):
+def release_mounts(previous, root, asset_root=None):
     """Pin code mounts to a frozen version, preserving state and runtime mounts."""
     mapping = {
         "/live-v3": "v3",
@@ -102,10 +102,23 @@ def release_mounts(previous, root):
     host = dict(previous)
     mounts = []
     seen = set()
+    api = any(item.get("Target") == "/live-checkout"
+              for item in host.get("Mounts") or [])
+    legacy_assets = {"/opt/v3/ui", "/opt/v3/shared-ui/shared/css",
+                     "/opt/v3/shared-ui/main-panel/agents",
+                     "/opt/v3/shared-ui/vendor/fonts",
+                     "/opt/v3/shared-ui/vendor/lucide",
+                     "/opt/v3/shared-ui/favicon.svg"}
     for mount in host.get("Mounts") or []:
         mount = dict(mount)
         target = mount.get("Target")
-        if target in mapping:
+        if api and asset_root is not None and target in legacy_assets:
+            continue
+        if api and asset_root is not None and target == "/opt/v3/assets":
+            mount["Source"] = str(asset_root)
+            mount["ReadOnly"] = True
+            seen.add(target)
+        elif target in mapping:
             source = root / mapping[target]
             if not source.exists() or source.is_symlink():
                 raise ValueError("release mount input unavailable: " + str(target))
@@ -113,8 +126,13 @@ def release_mounts(previous, root):
             mount["ReadOnly"] = True
             seen.add(target)
         mounts.append(mount)
-    api = any(item.get("Target") == "/live-checkout" for item in mounts)
-    required = ({"/live-v3", "/opt/v3/ui"} if api
+    if api and asset_root is not None and "/opt/v3/assets" not in seen:
+        if not asset_root.is_dir() or asset_root.is_symlink():
+            raise ValueError("stable asset mount unavailable")
+        mounts.append({"Type": "bind", "Source": str(asset_root),
+                       "Target": "/opt/v3/assets", "ReadOnly": True})
+        seen.add("/opt/v3/assets")
+    required = ({"/live-v3", "/opt/v3/assets" if asset_root is not None else "/opt/v3/ui"} if api
                 else {"/opt/v3/plugins/abilities"})
     if not required <= seen:
         raise ValueError("required release mounts absent")
@@ -166,3 +184,92 @@ def promote_checkout(root, before_blob, after_blob, changed, validate):
         finally:
             temporary.unlink(missing_ok=True)
     return len(actions)
+
+
+def checkout_matches(root, after_blob, changed, validate):
+    """Reconcile a completed deployment without writing the shared checkout."""
+    after = entries(after_blob, validate)
+    root = Path(root).resolve()
+    for name in changed:
+        if not name.startswith("v3/") or name.startswith("v3/data/"):
+            return False
+        path = root / name
+        for parent in (path, *path.parents):
+            if parent == root:
+                break
+            if parent.is_symlink():
+                return False
+        if path.exists():
+            if not path.is_file():
+                return False
+            info = path.stat()
+            current = (info.st_mode & 0o777, path.read_bytes())
+        else:
+            current = None
+        if current != after.get(name):
+            return False
+    return True
+
+
+def stage_assets(root, job_id, blob, validate):
+    """Freeze the tested source, including served UI and workspace templates."""
+    uuid.UUID(job_id)
+    files = entries(blob, validate)
+    if "v3/ui/index.html" not in files:
+        raise ValueError("UI release has no application entrypoint")
+    if root.is_symlink():
+        raise ValueError("asset root symlink forbidden")
+    root.mkdir(parents=True, exist_ok=True, mode=0o755)
+    root.chmod(0o755)
+    revisions = root / "releases"
+    if revisions.is_symlink():
+        raise ValueError("asset revisions symlink forbidden")
+    revisions.mkdir(exist_ok=True, mode=0o755)
+    revisions.chmod(0o755)
+    destination = revisions / job_id
+    if destination.exists():
+        existing = entries(snapshot(destination, ("v3", "ui"), lambda _: None),
+                           lambda _: None)
+        if existing != files:
+            raise ValueError("frozen UI asset release changed")
+    else:
+        extract(destination, archive(files, lambda _: None), lambda _: None)
+        destination.chmod(0o755)
+    return destination
+
+
+def current_asset_id(root):
+    pointer = root / "current"
+    if not pointer.exists() and not pointer.is_symlink():
+        return None
+    if not pointer.is_symlink():
+        raise ValueError("asset pointer is not a symlink")
+    target = os.readlink(pointer)
+    if not target.startswith("releases/") or "/" in target[len("releases/"):]:
+        raise ValueError("asset pointer target invalid")
+    job_id = target[len("releases/"):]
+    uuid.UUID(job_id)
+    if not (root / target).is_dir():
+        raise ValueError("asset pointer target unavailable")
+    return job_id
+
+
+def activate_assets(root, job_id):
+    """Atomically select a complete immutable UI snapshot."""
+    uuid.UUID(job_id)
+    target = root / "releases" / job_id
+    if not target.is_dir() or target.is_symlink():
+        raise ValueError("asset release unavailable")
+    previous = current_asset_id(root)
+    temporary = root / ("current-" + uuid.uuid4().hex)
+    try:
+        os.symlink("releases/" + job_id, temporary)
+        os.replace(temporary, root / "current")
+        directory = os.open(root, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return previous

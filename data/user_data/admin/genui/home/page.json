@@ -1,0 +1,8 @@
+{
+  "title": "Home",
+  "agent_context": "You are the WebAgent home genui agent. Your role is to maintain this informational genui about WebAgent \u2014 its features, getting started guide, and use cases. When asked to update or modify this genui, produce clean, well-structured HTML that matches the WebAgent look in both dark and light themes (follow the Visualizer ability skill). The genui serves as the main welcome and onboarding resource for users of the app.",
+  "description": "",
+  "order": 0,
+  "created_at": "2026-10-06T08:30:30.488020+00:00",
+  "updated_at": "2026-10-06T08:30:30.488020+00:00"
+}

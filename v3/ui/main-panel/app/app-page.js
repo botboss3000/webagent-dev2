@@ -2,6 +2,7 @@
 import { renderAgentDirectory } from '../agents/pages/catalog.js';
 import { mountUsers, mountPolicies, mountPageAccess } from './users/users.js';
 import { mountAppModels } from './models/models.js';
+import { mountBuilds } from './builds.js';
 import { wirePageTabDrag } from '../../shared/page-tabs.js';
 import { startView as startFiles, stopView as stopFiles, resetExplorerForRemount } from './explorer-view.js';
 
@@ -9,6 +10,7 @@ export async function start(mount) {
   const generation=(mount._appGeneration||0)+1;mount._appGeneration=generation;
   mount._appModelsDispose?.();mount._appModelsDispose=null;
   mount._appFilesDispose?.();mount._appFilesDispose=null;
+  mount._appBuildsDispose?.();mount._appBuildsDispose=null;
   const active=()=>mount._appGeneration===generation;
   mount.replaceChildren();
   if (!mount._identityListener) {
@@ -39,6 +41,8 @@ export async function start(mount) {
   if (!all.some(p=>p.id===selected)) selected='config';
   const tabs = new Map();
   let filesMounted=false, filesLoading=false, filesPending=false;
+  let buildsDispose=null;
+  mount._appBuildsDispose=()=>{buildsDispose?.();buildsDispose=null;};
   mount._appFilesDispose=()=>{ stopFiles(); resetExplorerForRemount(); window.__v3FilesCsrf=''; window.__v3FilesAdmin=false; };
   async function ensureFiles() {
     if (filesMounted) { await startFiles(); return; }
@@ -92,8 +96,10 @@ export async function start(mount) {
       tab.setAttribute('aria-selected',String(page.id===id));
       if (!tab.hidden&&!order.includes(page.id)) strip.append(tab);
     }
-    if (route) { const url=new URL(location.href);url.searchParams.set('appView',id);history.replaceState({},'',url); }
+    if (route) { const url=new URL(location.href);url.searchParams.set('appView',id);if(url.href!==location.href)history.pushState({},'',url); }
     if (id==='files') void ensureFiles(); else if (filesMounted) stopFiles();
+    if (id==='builds' && !buildsDispose) buildsDispose=mountBuilds(mount.querySelector('#app-builds-page'));
+    else if (id!=='builds' && buildsDispose) {buildsDispose();buildsDispose=null;}
   }
   function sync() {
     for (const id of order) strip.append(tabs.get(id));

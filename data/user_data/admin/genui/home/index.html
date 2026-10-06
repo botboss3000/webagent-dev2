@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  WebAgent — seed Home genui (FIRST-CLASS contract reference).
+
+  This is the canonical example of how an agent authors a genui under the
+  first-class model (no sandboxed iframe; the genui is grafted into the app
+  inside a shadow root). Copy these patterns:
+
+    • TOKENS ON :host — define design tokens on :host (dark default) with a
+      :host(.light) override. NOT :root / html.light / body — those selectors
+      don't exist inside the shadow root. The app toggles the .light/.dark class
+      on the host, so :host(.light) is how you theme.
+    • TRANSPARENT BACKGROUND by default — the app's own animated background shows
+      THROUGH the genui. Only paint a background when you deliberately want a
+      custom one (and it stays contained to the Gen UI area).
+    • SCOPE EVERYTHING TO root — the script gets (root, api) from
+      WebagentGenui.register(...). Query your own DOM via root.getElementById /
+      root.querySelector. NEVER use document.* for your elements and NEVER add
+      window-level key/pointer listeners (they'd hit the whole app). Scope any
+      listeners to root or to your own elements.
+    • TALK TO THE AGENT via api — api.chat(text) / api.action(verb,text) /
+      api.refresh() send instructions to the agent; api.onTheme(cb) reacts to
+      theme flips; api.storeCredential(ability, values) sends secrets straight
+      to the vault (never to the agent). Return an optional cleanup() that stops
+      any camera/mic tracks.
+-->
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WebAgent — Home</title>
+<style>
+  :host {
+    /* — Dark (default) — */
+    --bg-card: rgba(255,255,255,0.025);
+    --bg-card-hover: rgba(255,255,255,0.045);
+    --bg-card-open: rgba(122,162,247,0.05);
+    --bg-pill: rgba(122,162,247,0.10);
+    --bg-icon: linear-gradient(160deg, rgba(125,207,255,0.18), rgba(187,154,247,0.10));
+
+    --border: rgba(255,255,255,0.08);
+    --border-hover: rgba(255,255,255,0.15);
+    --border-open: rgba(125,207,255,0.45);
+
+    --fg-strong: #f4f5fb;
+    --fg-body: #c7cee6;
+    --fg-soft: #98a0bf;
+    --fg-muted: #6b7397;
+    --fg-accent: #9bbbff;
+    --fg-link: #9bdcff;
+
+    --title-from: #d6e4ff;
+    --title-mid:  #9bbbff;
+    --title-to:   #c9b1ff;
+    --bullet: #c9b1ff;
+
+    --ring-glow: 0 0 0 1px rgba(125,207,255,0.20), 0 18px 60px -20px rgba(122,162,247,0.35);
+    --card-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 12px 40px -24px rgba(0,0,0,0.6);
+
+    display: block;
+    color: var(--fg-body);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  :host(.light) {
+    --bg-card: rgba(255,255,255,0.72);
+    --bg-card-hover: rgba(255,255,255,0.9);
+    --bg-card-open: rgba(255,255,255,0.96);
+    --bg-pill: rgba(255,140,66,0.12);
+    --bg-icon: linear-gradient(160deg, rgba(255,140,66,0.18), rgba(212,135,58,0.10));
+
+    --border: rgba(60,40,30,0.12);
+    --border-hover: rgba(60,40,30,0.2);
+    --border-open: rgba(255,140,66,0.55);
+
+    --fg-strong: #25181a;
+    --fg-body: #4a3739;
+    --fg-soft: #6e595a;
+    --fg-muted: #8e7878;
+    --fg-accent: #c2541a;
+    --fg-link: #d96f1f;
+
+    --title-from: #3a2018;
+    --title-mid:  #c2541a;
+    --title-to:   #d4873a;
+    --bullet: #d96f1f;
+
+    --ring-glow: 0 0 0 1px rgba(255,140,66,0.18), 0 18px 60px -20px rgba(255,140,66,0.30);
+    --card-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 10px 30px -20px rgba(80,40,10,0.18);
+  }
+
+  /* Page is transparent — the app's animated background shows through. */
+  .genui-root { background: transparent; }
+  .container { max-width: 780px; margin: 0 auto; padding: 0 24px; }
+  code {
+    background: var(--bg-pill); border-radius: 5px; padding: 1px 6px;
+    font-size: 12.5px; font-family: 'JetBrains Mono','Fira Code',ui-monospace,monospace;
+    color: var(--fg-link);
+  }
+
+  header { padding: 64px 0 40px; text-align: center; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--fg-accent); background: var(--bg-pill);
+    padding: 6px 14px; border-radius: 100px; margin-bottom: 22px; font-weight: 500;
+    border: 1px solid var(--border); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--fg-accent); box-shadow: 0 0 8px var(--fg-accent);
+  }
+  header h1 {
+    /* line-height >= ~1.1 plus a sliver of bottom padding gives the gradient
+       clip-box room for descenders (the "g" tail). A tight line-height on a
+       background-clip:text title slices the bottoms of g/y/p off. Keep this
+       room whenever you copy this title pattern into a new genui. */
+    margin: 0 0 12px; font-size: 56px; font-weight: 600; letter-spacing: -0.035em;
+    line-height: 1.12; padding-bottom: 0.08em;
+    background: linear-gradient(135deg, var(--title-from), var(--title-mid) 45%, var(--title-to) 75%, var(--title-from));
+    background-size: 220% 220%; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; animation: titleShift 14s ease-in-out infinite;
+  }
+  @keyframes titleShift { 0%,100%{background-position:0% 50%;} 50%{background-position:100% 50%;} }
+  header p.tagline { margin: 0 auto; font-size: 17px; color: var(--fg-soft); max-width: 560px; }
+
+  main { padding: 12px 0 64px; }
+  .stack { display: flex; flex-direction: column; gap: 10px; }
+
+  .card {
+    position: relative; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 18px; overflow: hidden;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+    box-shadow: var(--card-shadow);
+    transition: background .25s ease, border-color .25s ease, box-shadow .3s ease;
+  }
+  .card:hover { background: var(--bg-card-hover); border-color: var(--border-hover); }
+  .card.open { background: var(--bg-card-open); border-color: var(--border-open); box-shadow: var(--ring-glow), var(--card-shadow); }
+
+  .card-head { display: flex; align-items: center; gap: 18px; padding: 20px 22px; cursor: pointer; user-select: none; outline: none; }
+  .card-head:focus-visible { box-shadow: inset 0 0 0 2px var(--border-open); border-radius: 14px; }
+  .card-icon {
+    flex-shrink: 0; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-icon); border: 1px solid var(--border); border-radius: 12px; color: var(--fg-accent);
+    transition: transform .3s cubic-bezier(.32,.72,.32,1), border-color .25s;
+  }
+  .card-icon svg { width: 20px; height: 20px; stroke-width: 1.6; }
+  .card.open .card-icon { border-color: var(--border-open); transform: scale(1.04); }
+  .card-meta { flex: 1; min-width: 0; }
+  .card-title { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--fg-strong); letter-spacing: -0.01em; }
+  .card-summary { margin: 0; font-size: 13.5px; color: var(--fg-soft); }
+  .chevron { flex-shrink: 0; width: 18px; height: 18px; color: var(--fg-accent); opacity: .5; transition: transform .28s cubic-bezier(.32,.72,.32,1), opacity .2s; }
+  .card.open .chevron { transform: rotate(180deg); opacity: 1; }
+
+  .card-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .32s cubic-bezier(.32,.72,.32,1); }
+  .card.open .card-body-wrap { grid-template-rows: 1fr; }
+  .card-body-inner { overflow: hidden; }
+  .card-body { padding: 2px 24px 24px 82px; font-size: 14px; color: var(--fg-soft); line-height: 1.65; }
+  .card-body p { margin: 0 0 12px; } .card-body p:last-child { margin: 0; }
+  .card-body strong { color: var(--fg-body); font-weight: 600; }
+  .card-body em { color: var(--fg-link); font-style: normal; }
+  .pills { margin: 10px 0 4px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { display: inline-block; font-size: 12px; padding: 4px 11px; border-radius: 100px; background: var(--bg-pill); color: var(--fg-accent); font-weight: 500; border: 1px solid var(--border); }
+
+  .hint {
+    margin-top: 28px; text-align: center; padding: 18px; font-size: 13px; color: var(--fg-muted);
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .hint strong { color: var(--fg-link); font-weight: 600; }
+  .hint .try-btns { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .try-btn {
+    font: inherit; font-size: 12.5px; cursor: pointer; color: var(--fg-accent);
+    background: var(--bg-pill); border: 1px solid var(--border); border-radius: 100px; padding: 6px 14px;
+    transition: border-color .2s, color .2s, background .2s;
+  }
+  .try-btn:hover { border-color: var(--border-open); color: var(--fg-link); }
+
+  @media (max-width: 540px) {
+    header { padding: 44px 0 28px; } header h1 { font-size: 40px; } header p.tagline { font-size: 15px; }
+    .card-head { padding: 16px; gap: 14px; } .card-body { padding: 0 16px 18px 64px; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="eyebrow">Gen UI workspace</div>
+      <h1>WebAgent</h1>
+      <p class="tagline">Build AI agents that fit your business — and design real, working pages right here, live in the app.</p>
+    </header>
+
+    <main>
+      <div class="stack" id="stack"></div>
+
+      <div class="hint">
+        <strong>Try it:</strong> use the prompt bar below to ask the agent to change this page — or tap a suggestion:
+        <div class="try-btns" id="tryBtns"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+  // FIRST-CLASS CONTRACT: the app calls this with (root, api). `root` is THIS
+  // genui's shadow root — query your own DOM through it, never document.*.
+  WebagentGenui.register(function (root, api) {
+    const ICONS = {
+      agents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="8.5" cy="13.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="13.5" r="1.2" fill="currentColor"/><path d="M9 17h6"/><path d="M12 3v4"/></svg>',
+      deploy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 15l-2 6 6-2"/><path d="M14.5 4.5c4 0 5 1 5 5L13 16l-5-5L14.5 4.5z"/><circle cx="15" cy="9" r="1.5" fill="currentColor"/></svg>',
+      genui: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor"/><path d="M7 14l2.5-2.5L12 14l3-3 2 2"/></svg>',
+      code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/><line x1="14" y1="5" x2="10" y2="19"/></svg>',
+      integrations: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6h7"/><path d="M6 8.5v7"/><path d="M18 8.5v7"/><path d="M8.5 18h7"/></svg>'
+    };
+
+    const FEATURES = [
+      { id:'agents', title:'Build Custom Agents', summary:'From simple chatbots to autonomous codebase editors.',
+        body:'<p>Design an agent for any role — pick the tools, knowledge, system prompt, and personality. Every reasoning step and tool call streams live so you can <em>watch the agent think</em> while it works.</p>' },
+      { id:'genui', title:'First-Class Gen UI', summary:'Pages built by the agent, running live in the app — with real powers.',
+        body:'<p>This page is one. Gen UI now render directly in the app (no sandbox), so a dashboard can show a <strong>live webcam</strong>, talk to the agent with one tap, and store logins straight to your vault.</p><p>Ask in the prompt bar below to add a section or build a whole new page — each page gets its own dedicated agent.</p>' },
+      { id:'deploy', title:'Deploy Anywhere', summary:'Your laptop, a VPS, or the cloud. No lock-in on infra or model.',
+        body:'<p>Local-first by default; the same code runs in production. Swap between OpenRouter, OpenAI, Anthropic, or a local model.</p>' },
+      { id:'code', title:'Full Code Read / Write', summary:'Agents read, modify, and ship code in the codebase they live in.',
+        body:'<p>Run an admin AI for your own repo: it ships changes, fixes bugs, and updates docs — every file it touches streamed live for review.</p>' },
+      { id:'integrations', title:'Connects to Everything', summary:'Messaging, productivity, social, marketplaces, the browser.',
+        body:'<p>Enable a category app-wide, then turn it on per agent. Missing one? An agent with Create Tools can write a new tool at runtime.</p><div class="pills"><span class="pill">Telegram</span><span class="pill">Slack</span><span class="pill">Email</span><span class="pill">Google</span><span class="pill">Browser</span><span class="pill">Marketplaces</span></div>' }
+    ];
+
+    const stack = root.getElementById('stack');
+    FEATURES.forEach((f, i) => {
+      const card = document.createElement('article');
+      card.className = 'card' + (i === 0 ? ' open' : '');
+      card.innerHTML =
+        '<div class="card-head" role="button" tabindex="0" aria-expanded="' + (i === 0) + '">' +
+          '<div class="card-icon">' + (ICONS[f.id] || '') + '</div>' +
+          '<div class="card-meta"><h3 class="card-title">' + f.title + '</h3><p class="card-summary">' + f.summary + '</p></div>' +
+          '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+        '</div>' +
+        '<div class="card-body-wrap"><div class="card-body-inner"><div class="card-body">' + f.body + '</div></div></div>';
+      stack.appendChild(card);
+    });
+
+    function toggle(card) {
+      const cards = stack.querySelectorAll('.card');
+      cards.forEach((c) => {
+        const head = c.querySelector('.card-head');
+        const open = (c === card) ? !c.classList.contains('open') : false;
+        c.classList.toggle('open', open);
+        head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }
+    // Listener is scoped to OUR stack element, not window/document.
+    stack.addEventListener('click', (e) => {
+      const head = e.target.closest('.card-head');
+      if (head) toggle(head.parentElement);
+    });
+    stack.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const head = e.target.closest('.card-head');
+      if (head) { e.preventDefault(); toggle(head.parentElement); }
+    });
+
+    // Suggestion chips talk to the agent through the toolbox.
+    const SUGGESTIONS = ['Add a pricing section', 'Make the hero more playful', 'Add a contact form'];
+    const tryBtns = root.getElementById('tryBtns');
+    SUGGESTIONS.forEach((s) => {
+      const b = document.createElement('button');
+      b.className = 'try-btn'; b.type = 'button'; b.textContent = s;
+      b.addEventListener('click', () => api.chat(s));
+      tryBtns.appendChild(b);
+    });
+
+    // Theme is driven by the app via the :host(.light) class — nothing to do
+    // here, but this shows how a genui could react to theme flips if needed.
+    api.onTheme(function (/* theme */) { /* e.g. recolour a <genui> chart */ });
+
+    // No camera/timers/streams to release on this page, so cleanup is a no-op.
+    return function cleanup() {};
+  });
+  </script>
+</body>
+</html>

@@ -14,7 +14,7 @@ pub(super) fn append_tool(run: &mut Value, result: &Value) -> Result<()> {
     Ok(())
 }
 mod recovery;
-pub(crate) use recovery::{reconcile_late_tool_result, user_apps, recover};
+pub(crate) use recovery::{attach_external_build_result, reconcile_late_tool_result, user_apps, recover};
 mod scheduler;
 pub(crate) use scheduler::scheduler;
 // Follow one claimed run through the fixed workflow. At the relevant

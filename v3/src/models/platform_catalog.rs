@@ -42,7 +42,7 @@ impl Roster {
             for (id,e) in entries {
                 if id!=&e.id || !crate::access::valid_id(id) || e.display_name.trim().is_empty()
                     || e.display_name.len()>200 || !valid_model(&e.upstream_model)
-                    || e.capabilities.iter().any(|c|!matches!(c.as_str(),"text"|"image_in"|"image_out"|"voice"|"video")) {
+                    || e.capabilities.iter().any(|c|!matches!(c.as_str(),"text"|"decision"|"image_in"|"image_out"|"voice"|"video")) {
                     bail!("Invalid platform model metadata");
                 }
             }
@@ -92,6 +92,17 @@ mod tests {
         let mut r=roster();r.publish(1,None).unwrap();r.publish(2,Some(2)).unwrap();
         assert_eq!(r.published_revision,Some(3));assert_eq!(r.history.len(),2);
         r.retired=true;assert!(r.validate().is_err());
+    }
+    #[test] fn typesafe_decision_only_entry_validates_and_uses_api_key() {
+        let transport: Transport=serde_json::from_str("\"typesafe\"").unwrap();
+        assert!(transport.uses_api_key());
+        let mut roster=roster();
+        roster.draft.insert("jev".into(), Entry {
+            id:"jev".into(),display_name:"Jev".into(),upstream_model:"jev-latest".into(),
+            transport,capabilities:BTreeSet::from(["decision".into()]),
+        });
+        roster.validate().unwrap();
+        assert!(!roster.draft["jev"].capabilities.contains("text"));
     }
     #[test] fn secrets_and_roles_are_rejected_and_namespaced_models_validate() {
         assert!(valid_model("organization/model-name"));assert!(!valid_model("model\n"));

@@ -329,12 +329,13 @@ pub(crate) async fn control(State(app): State<App>, Json(body): Json<Value>) -> 
         }
         for user_app in user_apps(&app).await? {
             for view in user_app.store.active_runs().await? {
-                if matches!(status(&view), "queued" | "running") {
+                if matches!(status(&view), "queued" | "running" | "waiting_external") {
                     let mut run = user_app.run(view["id"].as_str().unwrap()).await?;
                     run["status"] = json!("stopped");
                     run["error"] = json!("Stopped by global shutoff");
                     if (run["pending"]["state"] == "executing"
-                        && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+                        && !tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+                        && run["pending"]["external_job"]["kind"]!="v3_build")
                         || parallel_batch::executing_write(&run)
                     {
                         run["uncertain"] = json!(true);
@@ -377,7 +378,9 @@ pub(crate) async fn command(
                 token.cancel();
             }
             if !terminal(status(&run)) {
-                if (run["pending"]["state"] == "executing"
+                if run["pending"]["external_job"]["kind"]=="v3_build" {
+                    run["status"]=json!(if action=="pause" {"paused"} else {"cancelled"});
+                } else if (run["pending"]["state"] == "executing"
                     && !tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
                     || parallel_batch::executing_write(&run)
                 {
@@ -405,11 +408,12 @@ pub(crate) async fn command(
             }) {
                 return Err(conflict("Another run owns this conversation"));
             }
-            run["status"] = json!("queued");
+            let external=run["pending"]["external_job"]["kind"]=="v3_build";
+            run["status"] = json!(if external {"waiting_external"}else{"queued"});
             run["error"] = Value::Null;
             run["attempt"] = json!(0);
             run["turns"] = json!(0);
-            if run["pending"]["state"] == "executing" {
+            if run["pending"]["state"] == "executing" && !external {
                 run["pending"]["state"] = json!("requested");
             }
             if let Some(items)=run["batch"].as_array_mut() {

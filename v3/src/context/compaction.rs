@@ -19,11 +19,20 @@ pub struct Config {
     pub characters_per_token: usize,
     pub summary_reserve_bytes: usize,
     pub max_source_bytes: usize,
+    #[serde(default = "default_tool_result_preview_bytes")]
+    pub tool_result_preview_bytes: usize,
+    #[serde(default = "default_search_output_bytes")]
+    pub search_output_bytes: usize,
+    #[serde(default = "default_search_line_bytes")]
+    pub search_line_bytes: usize,
     pub max_summary_bytes: usize,
     pub summary_prefix: String,
     pub active_summary_prefix: String,
     pub summary_prompt: String,
 }
+fn default_tool_result_preview_bytes() -> usize { 8192 }
+fn default_search_output_bytes() -> usize { 32768 }
+fn default_search_line_bytes() -> usize { 2048 }
 impl Config {
     // COMPACTION CONFIG: deploy.sh points both processes at the mounted config directory.
     // This path supplies first-start migration only; runtime reads the data-root file.
@@ -69,6 +78,10 @@ impl Config {
             || self.trigger_tokens > 1_000_000 || !(1..=16).contains(&self.characters_per_token)
             || !(1..=65536).contains(&self.summary_reserve_bytes)
             || !(1..=262144).contains(&self.max_source_bytes)
+            || !(1024..=65536).contains(&self.tool_result_preview_bytes)
+            || !(4096..=262144).contains(&self.search_output_bytes)
+            || !(128..=8192).contains(&self.search_line_bytes)
+            || self.search_line_bytes > self.search_output_bytes
             || !(1..=65536).contains(&self.max_summary_bytes)
             || self.summary_prefix != "Earlier conversation summary (background context, not a new request):\n"
             || self.active_summary_prefix != "Active task progress summary (background context, not a new request):\n"
@@ -85,7 +98,6 @@ impl Config {
         Ok(config)
     }
     /// Same temp/fsync/rename discipline as loop-runtime.json.
-    #[cfg(test)]
     pub fn persist(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
         self.validate()?;
@@ -116,6 +128,53 @@ impl Config {
         Ok(self.summary_prompt.replace("{summary_characters}",
             &(self.summary_tokens * self.characters_per_token).to_string()).replace("{source}", &source))
     }
+}
+
+
+/// Keep the encrypted interaction as the full record. Only provider replay is
+/// reduced, including on resume of a run saved before this limit was installed.
+pub fn project_tool_results(input: &mut [Value], preview_bytes: usize) -> Result<bool> {
+    // Ability discovery and loaded skill bodies are the instructions that make
+    // later tools usable. Keep those complete while bounding ordinary results.
+    let instruction_calls = input.iter()
+        .filter(|item| item["type"] == "function_call"
+            && matches!(item["name"].as_str(), Some("list_abilities" | "load_ability" | "load_skill")))
+        .filter_map(call_id).map(str::to_owned).collect::<HashSet<_>>();
+    let mut changed = false;
+    for item in input {
+        if item["type"] != "function_call_output" { continue; }
+        if item["call_id"].as_str().is_some_and(|id| instruction_calls.contains(id)) { continue; }
+        let Some(raw) = item["output"].as_str() else { continue; };
+        if raw.len() <= preview_bytes { continue; }
+        let parsed: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
+        let mut end = preview_bytes.min(raw.len());
+        let digest = hex::encode(Sha256::digest(raw.as_bytes()));
+        // JSON escaping can expand a preview. Bound the final serialized receipt
+        // so a saved run is stable across subsequent model boundaries.
+        let projected = loop {
+            while !raw.is_char_boundary(end) { end -= 1; }
+            let receipt = json!({
+                "status": parsed["status"],
+                "error_kind": parsed["error_kind"],
+                "uncertain": parsed["uncertain"],
+                "output": {
+                    "preview": &raw[..end],
+                    "context_truncated": true,
+                    "full_output_bytes": raw.len(),
+                    "sha256": digest,
+                    "call_id": item["call_id"],
+                    "recall": "The full result remains in the encrypted session activity."
+                }
+            });
+            let serialized = serde_json::to_string(&receipt)?;
+            if serialized.len() <= preview_bytes { break serialized; }
+            if end == 0 { bail!("Tool result preview budget cannot fit receipt"); }
+            end = end.saturating_sub((serialized.len() - preview_bytes).max(1));
+        };
+        item["output"] = json!(projected);
+        changed = true;
+    }
+    Ok(changed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,19 +316,27 @@ fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bo
     let mut seen = HashSet::new();
     let mut valid = true;
     let mut active_boundary = None;
+    // Large histories may need several small folds before the final tail fits.
+    let mut staged_boundary = None;
+    let mut prefix = vec![2usize; input.len() + 1];
+    for i in 0..input.len() {
+        prefix[i + 1] = prefix[i].checked_add(sizes[i] + usize::from(i > 0))
+            .ok_or_else(|| anyhow!("Context size overflow"))?;
+    }
+    let source_fits = |index: usize| prefix[index] <= config.max_source_bytes;
     for (i, item) in input.iter().enumerate() {
         // Evaluate a boundary before consuming its user turn. This prevents
         // splitting a function call from its corresponding output.
-        if i > 0 && is_user(item) && valid && pending.is_empty() && fits(i) {
-            let source = input[..i].to_vec();
-            return Ok(Some(Plan {
-                drop_until: i,
-                boundary: Boundary::PriorTurn,
-                source_digest: digest(&source)?,
-                source,
-                max_bytes,
-                reserve_bytes, config: config.clone(),
-            }));
+        if i > 0 && is_user(item) && valid && pending.is_empty() && source_fits(i) {
+            if fits(i) {
+                let source = input[..i].to_vec();
+                return Ok(Some(Plan {
+                    drop_until: i, boundary: Boundary::PriorTurn,
+                    source_digest: digest(&source)?, source, max_bytes,
+                    reserve_bytes, config: config.clone(),
+                }));
+            }
+            staged_boundary = Some((i, Boundary::PriorTurn));
         }
         match item.get("type").and_then(Value::as_str) {
             Some("function_call") => match call_id(item) {
@@ -281,9 +348,12 @@ fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bo
             Some("function_call_output") => match call_id(item) {
                 Some(id) if pending.remove(id) => {
                     // Keep later exchanges verbatim while summarizing completed work.
-                    if valid && pending.is_empty() && fits(i + 1)
-                        && active_boundary.is_none() {
-                        active_boundary = Some(i + 1);
+                    if valid && pending.is_empty() && source_fits(i + 1) {
+                        if fits(i + 1) && active_boundary.is_none() {
+                            active_boundary = Some(i + 1);
+                        } else if !fits(i + 1) {
+                            staged_boundary = Some((i + 1, Boundary::CompletedToolExchange));
+                        }
                     }
                 }
                 _ => valid = false,
@@ -292,11 +362,12 @@ fn plan_measured(input: &[Value], max_bytes: usize, config: &Config, rolling: bo
         }
     }
     if valid && pending.is_empty() {
-        if let Some(drop_until) = active_boundary {
+        if let Some((drop_until, boundary)) = active_boundary
+            .map(|index| (index, Boundary::CompletedToolExchange)).or(staged_boundary) {
             let source = input[..drop_until].to_vec();
             return Ok(Some(Plan {
-                drop_until, boundary: Boundary::CompletedToolExchange,
-                source_digest: digest(&source)?, source, max_bytes, reserve_bytes, config: config.clone(),
+                drop_until, boundary, source_digest: digest(&source)?,
+                source, max_bytes, reserve_bytes, config: config.clone(),
             }));
         }
     }
@@ -333,8 +404,9 @@ pub fn apply_summary(input: &[Value], plan: &Plan, summary: &str) -> Result<Vec<
     // COMPACTION CHECKPOINT: one summary replaces the entire aged prefix (including
     // its previous checkpoint); the retained suffix remains verbatim for main.rs to save.
     result.extend_from_slice(&input[plan.drop_until..]);
-    if encoded_len(&json!(&result))? > plan.max_bytes {
-        bail!("Compacted context exceeds budget");
+    let result_bytes = encoded_len(&json!(&result))?;
+    if result_bytes > plan.max_bytes && result_bytes >= encoded_len(&json!(input))? {
+        bail!("Compacted context did not shrink toward the budget");
     }
     Ok(result)
 }
@@ -342,6 +414,55 @@ pub fn apply_summary(input: &[Value], plan: &Plan, summary: &str) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_tool_result_is_bounded_once_and_keeps_provenance() {
+        let full = json!({"status":"success","output":"\\n".repeat(500_000)}).to_string();
+        let hash = hex::encode(Sha256::digest(full.as_bytes()));
+        let mut input = vec![json!({"type":"function_call_output","call_id":"big-search","output":full})];
+        assert!(project_tool_results(&mut input, 8192).unwrap());
+        let receipt = input[0]["output"].as_str().unwrap();
+        assert!(receipt.len() <= 8192);
+        let parsed: Value = serde_json::from_str(receipt).unwrap();
+        assert_eq!(parsed["status"], "success");
+        assert_eq!(parsed["output"]["sha256"], hash);
+        assert_eq!(parsed["output"]["call_id"], "big-search");
+        assert!(parsed["output"]["context_truncated"].as_bool().unwrap());
+        let once = input.clone();
+        assert!(!project_tool_results(&mut input, 8192).unwrap());
+        assert_eq!(input, once);
+    }
+
+    #[test]
+    fn loaded_ability_guidance_stays_complete() {
+        let content = "tool schema ".repeat(2000);
+        let output = json!({"status":"ok","ability":{"tools":[{"name":"state_inspect",
+            "description":content}]}}).to_string();
+        let mut input = vec![
+            json!({"type":"function_call","call_id":"load","name":"load_ability","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"load","output":output})];
+        let original = input.clone();
+        assert!(!project_tool_results(&mut input, 8192).unwrap());
+        assert_eq!(input, original);
+    }
+
+    #[test]
+    fn large_history_folds_in_stages_with_bounded_sources() {
+        let mut config = rolling_config();
+        config.max_source_bytes = 6000;
+        let mut input = vec![user("long task"), call("first"),
+            json!({"type":"function_call_output","call_id":"first","output":"x".repeat(3500)}),
+            call("second"),
+            json!({"type":"function_call_output","call_id":"second","output":"y".repeat(3500)}),
+            user("finish")];
+        let first = plan_rolling(&input, 4000, &config).unwrap().unwrap();
+        assert!(serde_json::to_vec(&first.source).unwrap().len() <= config.max_source_bytes);
+        input = apply_summary(&input, &first, "first search done").unwrap();
+        let second = plan_rolling(&input, 4000, &config).unwrap().unwrap();
+        assert!(serde_json::to_vec(&second.source).unwrap().len() <= config.max_source_bytes);
+        input = apply_summary(&input, &second, "both searches done").unwrap();
+        assert!(serde_json::to_vec(&input).unwrap().len() <= 4000);
+    }
 
     #[test]
     fn reasoning_projection_is_idempotent_and_keeps_visible_content() {

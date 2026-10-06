@@ -105,6 +105,12 @@ impl Completion {
 impl Provider {
     /// Fixed installation endpoints, bounded bytes/time, and no secrets in query strings.
     pub async fn discover_models(&self, provider:ProviderId, tokens:&Value, cancel:CancellationToken)->Result<Value> {
+        // Jev is a decision model, not an OpenAI-compatible chat transport.
+        if provider == ProviderId::Typesafe {
+            if cancel.is_cancelled() { return Err(typed_failure(FailureKind::Cancelled,false,"Provider discovery cancelled")); }
+            required(tokens,"api_key")?;
+            return Ok(json!({"models":[{"id":"jev-latest","name":"Jev","display_name":"Jev","text_capable":false,"decision_capable":true,"image_capable":false,"image_out_capable":false,"voice_capable":false,"video_capable":false}],"provider_acceptance_verified":false}));
+        }
         let base=provider.chat_endpoint().ok_or_else(||anyhow!("Subscription discovery is unavailable"))?;
         let fixed=base.strip_suffix("chat/completions").ok_or_else(||anyhow!("Discovery unavailable"))?.to_owned()+"models";
         #[cfg(not(test))]
@@ -125,9 +131,12 @@ impl Provider {
             let data:Value=serde_json::from_slice(&bytes).map_err(|_|typed_failure(FailureKind::Protocol,false,"Invalid provider discovery response"))?;
             let rows=data["data"].as_array().ok_or_else(||typed_failure(FailureKind::Protocol,false,"Provider discovery listing unavailable"))?;
             let mut ids=std::collections::BTreeSet::new();
-            let models:Vec<_>=rows.iter().filter_map(|row|row["id"].as_str())
-                .filter(|id|crate::platform_catalog::valid_model(id)&&ids.insert((*id).to_owned()))
-                .take(256).map(|id|json!({"id":id,"capabilities_verified":false})).collect();
+            let catalogs=super::capabilities::metadata(&self.client).await;
+            let models:Vec<_>=rows.iter().filter_map(|row| {
+                let id=row["id"].as_str()?;
+                if !crate::platform_catalog::valid_model(id)||!ids.insert(id.to_owned()) { return None; }
+                Some(super::capabilities::normalize(id,row,&super::capabilities::lookup(id,provider,&catalogs)))
+            }).take(256).collect();
             Ok(json!({"models":models,"provider_acceptance_verified":false}))
         };
         tokio::select! {

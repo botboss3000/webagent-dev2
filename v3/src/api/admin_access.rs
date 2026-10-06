@@ -36,14 +36,15 @@ pub(crate) async fn quiesce_user(app: &App, user_id: &str, agent_filter: Option<
         if agent_filter.is_some_and(|filter| filter != agent_id) {
             continue;
         }
-        if !matches!(crate::status(&run), "queued" | "running" | "waiting_approval") {
+        if !matches!(crate::status(&run), "queued" | "running" | "waiting_approval" | "waiting_external") {
             continue;
         }
         if let Some(token) = app.active.lock().await.get(id) {
             token.cancel();
         }
         if run["uncertain"] == true || (run["pending"]["state"] == "executing"
-            && !crate::tools::is_read(run["pending"]["name"].as_str().unwrap_or("")))
+            && !crate::tools::is_read(run["pending"]["name"].as_str().unwrap_or(""))
+            && run["pending"]["external_job"]["kind"]!="v3_build")
             || crate::parallel_batch::executing_write(&run) {
             run["status"] = json!("recovery");
             run["uncertain"] = json!(true);

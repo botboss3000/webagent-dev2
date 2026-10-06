@@ -41,6 +41,7 @@ async fn worker(app:&App,sid:&str,name:&str,args:&Value,trusted:Option<Value>,ca
     tools::execute_trusted(name,args,sid,&app.tool_socket,trusted,cancel).await
 }
 pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->Result<String> {
+    if app.shutoff().await? {bail!("Host build authority stopped");}
     let agent=session_agent_id(app,sid).await?;
     let mut scoped=app.clone();scoped.store=app.store.for_agent(&agent).await?;
     let run=scoped.run(run_id).await?;
@@ -65,15 +66,19 @@ pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->R
             bail!("Automatic V3 deployment is not authorized");
         }
     }
+    // A finish can replace this loop's ability bundle while its broker job is
+    // still live. Policy, activation, and access remain in the fingerprint;
+    // bundle bytes alone cannot revoke the job during its own deployment.
+    let bundle=if work_finish {Value::Null} else {json!(scoped.abilities.live_version())};
     Ok(digest(&json!([scoped.store.current_user_id(),sid,agent,access.context_fingerprint(),
-        policy,revision,visibility,state,mode,run["loaded_abilities"],scoped.abilities.live_version()])))
+        policy,revision,visibility,state,mode,run["loaded_abilities"],bundle])))
 }
 fn build_work_arguments(args:&Value)->Result<Value> {
     let object=args.as_object().ok_or_else(||anyhow!("Build work arguments must be an object"))?;
     const KNOWN:&[&str]=&["action","task_id","summary","mode","expected_inputs_sha256"];
     if object.keys().any(|key|!KNOWN.contains(&key.as_str())) {bail!("Unknown build work argument");}
     let relevant:&[&str]=match args["action"].as_str().unwrap_or("") {
-        "status"=>&["action"],
+        "status"=>&["action","task_id"],
         "begin"=>&["action","task_id","summary","mode"],
         "finish"=>&["action","task_id","expected_inputs_sha256"],
         "abandon"=>&["action","task_id"],
@@ -229,7 +234,7 @@ pub fn valid_development_path(path:&str,sid:&str,agent:&str)->bool {
         assert_eq!(build_work_arguments(&begin).unwrap(),json!({"action":"begin",
             "task_id":"v3-rust-parallel-1005a","summary":"Rust test","mode":"isolated"}));
         assert_eq!(build_work_arguments(&json!({"action":"status","task_id":"ignored",
-            "expected_inputs_sha256":zero})).unwrap(),json!({"action":"status"}));
+            "expected_inputs_sha256":zero})).unwrap(),json!({"action":"status","task_id":"ignored"}));
         let finish=json!({"action":"finish","task_id":"v3-rust-parallel-1005a",
             "expected_inputs_sha256":zero,"summary":"ignored"});
         assert_eq!(build_work_arguments(&finish).unwrap(),json!({"action":"finish",

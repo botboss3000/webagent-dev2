@@ -4,7 +4,7 @@
 const el=(tag,cls='',text='')=>{const n=document.createElement(tag);n.className=cls;n.textContent=text;return n;};
 async function request(path,method='GET',body){
   const auth=await fetch('/api/v3/auth/me',{credentials:'same-origin',cache:'no-store'});
-  if(!auth.ok)throw Error('Sign in required');const me=await auth.json();
+  if(!auth.ok)throw Error('');const me=await auth.json();
   if(!me.is_admin)throw Error('Administrator access required');
   const r=await fetch('/api/v3'+path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':me.csrf_token})},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.error||data.message||'Request failed ('+r.status+')');return data;

@@ -58,7 +58,7 @@ pub(crate) async fn chat_usage_get(State(app):State<App>,Path(sid):Path<String>)
     let totals=usage::public(&app.store.get(&format!("session_usage:{sid}")).await?.unwrap_or(Value::Null));
     let views=app.store.recent_runs(Some(&sid)).await?;
     let runs=public_runs(&app,views.into_iter().take(1).collect()).await?;
-    let latest=runs.first().map(|run|json!({"id":run["id"],"status":run["status"],"model":run["model"],
+    let latest=runs.first().map(|run|json!({"id":run["id"],"status":run["status"],"error":run["error"],"model":run["model"],
         "context_summary":run["context_summary"],"context_controls":run["context_controls"],"usage":run["usage"],"compactions":run["compactions"]}));
     Ok(Json(json!({"usage":totals,"latest":latest})))
 }
@@ -290,7 +290,9 @@ mod tests {
         assert_eq!(run["dispatch_mode"]["execution_mode"],"plan");
         assert_eq!(run["system_selection_plan"]["candidates"][0]["upstream_model"],"model-one");
         assert_eq!(run["usage"]["input_tokens"],35);
-        app.save(&mut run).await.unwrap();app.save(&mut run).await.unwrap();
+        app.save(&mut run).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        app.save(&mut run).await.unwrap();
         let totals=app.store.get(&format!("session_usage:{sid}")).await.unwrap().unwrap();
         assert_eq!(totals["input_tokens"],35);assert_eq!(totals["output_tokens"],3);assert_eq!(totals["reported_calls"],2);
         let (messages,_)=app.store.chat_snapshot(&sid).await.unwrap();

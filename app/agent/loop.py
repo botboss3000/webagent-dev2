@@ -7429,7 +7429,19 @@ async def _stream_agent_events_impl(
                                         raise asyncio.CancelledError(
                                             "Side effect fenced immediately before invocation."
                                         )
-                                result = await handler(**args)
+                                async def _tool_heartbeat():
+                                    while True:
+                                        await asyncio.sleep(_HEARTBEAT_INTERVAL)
+                                        await _beat()
+                                heartbeat_task = asyncio.create_task(_tool_heartbeat())
+                                try:
+                                    result = await handler(**args)
+                                finally:
+                                    heartbeat_task.cancel()
+                                    try:
+                                        await heartbeat_task
+                                    except asyncio.CancelledError:
+                                        pass
                             result_str = str(result)
                             after_changes = await capture_tool_state_async(name, args)
                             changed_paths = await record_tool_delta(
@@ -7493,7 +7505,12 @@ async def _stream_agent_events_impl(
                         tasks = [_throttled(name, args, tc.id) for _, tc, name, args in valid_calls]
                     else:
                         tasks = [execute_one(name, args, tc.id) for _, tc, name, args in valid_calls]
+                    _build_wait_started = time.time()
                     results = await asyncio.gather(*tasks)
+                    if any(name == "v3_build_finish" for _, _, name, _ in valid_calls):
+                        # An authorized release may outlast the agent's ordinary
+                        # turn limit; resume that limit after its terminal result.
+                        _loop_start_ts += time.time() - _build_wait_started
 
                     for (idx, tc, tool_name, tool_args), result in zip(valid_calls, results):
                         if loop_config.is_enabled("interrupt_chk"):

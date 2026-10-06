@@ -131,18 +131,21 @@ existing storage and API contracts stay stable through this source move.
    measures append-only history, and [context/assembly.rs](../src/context/assembly.rs)
    combines and validates the request, [context/compaction.rs](../src/context/compaction.rs) plans and validates
    history compaction, and [models/provider/mod.rs](../src/models/provider/mod.rs) sends it.
-   Agent identity stores optional message-format and closing-notification guidance
-   in encrypted metadata. The Identity API revision-fences edits. Message format
-   is call-scoped on every model call, even with the working-message route off;
-   notification guidance accompanies the server-owned closing protocol.
+   Ask, Plan, and Auto mode prompts provide call-scoped message formatting.
+   Agent identity selects no working-message promotion, manual promotion through
+   the private control, or automatic promotion of every nonfinal assistant message.
+   The Identity API revision-fences edits. Manual promotion guidance accompanies
+   the server-owned protocol only in manual mode; closing-notification guidance
+   accompanies the separate closing protocol.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
    again. Some actions need human approval. Eligible independent calls can run
    together under each tool's concurrency setting; rejected calls get their own
    result. Only a permitted low-level action reaches the Python tool worker.
    The private `publish_main_message` and `set_closer_status` controls stay in
-   Rust. A valid working update becomes a nonterminal assistant chat row in the
-   same transaction as its tool result. Showing a tool to the model does not
-   permit its use.
+   Rust. Manual promotion makes a valid working update a nonterminal assistant
+   chat row in the same transaction as its tool result. Automatic promotion
+   writes each nonfinal assistant message beside its model interaction in one
+   transaction. Showing a tool to the model does not permit its use.
 7. **Check a final reply.** Rust applies its own output rules. The configured
    closer records a status flag and short notification intent; missing or
    malformed status becomes `unverified` without another model turn. If enabled,
@@ -285,9 +288,27 @@ are caller-owned, idempotent and revision fenced. Revocation cancels a pending j
 after uncertain effects it retains receipts and rollback material for reconciliation.
 V3 Build's work tool records per-session source claims in the protected broker's
 durable coordination registry. A final close with the current full-context digest
-submits one combined build/test/deploy job; other open claims block submission and
-the broker checks the digest and claims again before stopping a container. Rust
+assigns one durable job ID for that isolated task; other open tasks may
+continue independently. UI-only changes under `v3/ui/` select a frozen source
+snapshot through a stable read-only mount without Cargo, Buildx or a container
+replacement. A UI release can complete while a full image build runs. Before
+that image deploys, the broker merges the latest UI snapshot only if its
+non-UI build inputs are identical. Compatible queued full-build jobs from the
+same caller share one tested image build, retain separate receipts, and reject
+same-file conflicts. The broker checks exact digests before changing a live
+container or asset pointer. Rust
 checks live installation and tool authority and renews the job's short lease.
+The initiating V3 run keeps its original tool call in a durable
+`waiting_external` state. Core loop recovery reads the broker's existing
+task and job receipts after a restart, then saves one result under the
+original call ID and queues the run. It never repeats `finish`, even when the
+loop was replaced between submission and saving the job ID. This does not
+depend on an optional workflow module.
+The administrator Builds page reads a bounded projection of these durable job
+receipts through Rust's admin-authenticated API and the protected broker. Each
+new receipt records phase times and whether the pinned image build confirmed
+Rust tests. UI-only receipts report Rust tests as not required. A failed image
+build before test confirmation reports tests as unconfirmed.
 The broker also accepts the development checkout owner over the same Unix socket
 for only work coordination and read-only status/job polling. It derives Codex's
 identity from the Unix peer, never a client-supplied V3 user or credential.
@@ -297,9 +318,9 @@ a fixed Python identity; neither the V2 caller nor its patch can claim Codex or
 a V3 session identity. The broker requires an open task and exact source digest
 before checking and applying a bounded V3 text patch. It saves an apply receipt
 before the write so restart or timeout cannot silently repeat an uncertain edit.
-V2 Workspace proposals stay isolated until this explicit apply. Closing the last
-Python task has the same automatic development build/deployment effect as a V3
-task, so the V2 finish tool has a separate confirmation gate.
+V2 Workspace proposals stay isolated until this explicit apply. Finishing a
+Python task starts the same automatic development build/deployment as a V3 task,
+even while other tasks remain open, so its finish tool has a separate confirmation gate.
 An unregistered external editor is outside the registry, so the digest remains
 the final source-race fence.
 Computer Control and Program Screenshot remain excluded and unavailable. The

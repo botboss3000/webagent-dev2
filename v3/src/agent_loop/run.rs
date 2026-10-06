@@ -171,16 +171,10 @@ pub(crate) async fn execute_run(
             let before_model = gate_registry::selected(&workflow_policy,
                 workflow::Checkpoint::ModelDispatch)?;
             let agent_visibility = gate_controls::agent_visibility(&app.store, &agent_id).await?;
-            // Identity format applies to every model call, even when the working-message route is off.
-            if !agent_visibility.format.trim().is_empty() {
-                contributions.push(context_input::Contribution {
-                    id:"agent_message_format".into(),source:"agent_identity".into(),
-                    lifetime:context_input::Lifetime::Call,
-                    content:format!("Apply this format to user-facing messages in this call:\n{}", &agent_visibility.format),
-                    turn:run["turns"].as_u64().unwrap_or(0),call:call_number,
-                });
-            }
-            if agent_visibility.enabled && before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
+            let promotion_mode=if before_model.iter().any(|item|item.id==gate_registry::MESSAGE_VISIBILITY) {
+                agent_visibility.mode
+            } else { gate_controls::PromotionMode::None };
+            if promotion_mode==gate_controls::PromotionMode::Manual {
                 let mut config=gate_registry::visibility_config()?;
                 if !agent_visibility.guidance.is_empty() {
                     config.guidance.push_str("\nAdditional agent guidance:\n");
@@ -218,6 +212,14 @@ pub(crate) async fn execute_run(
                     return Ok(());
                 }
             };
+            // The worker may return more than a model or summarizer can accept.
+            // Preserve the encrypted tool interaction and bound only provider replay.
+            if context_compaction::project_tool_results(
+                run["input"].as_array_mut().unwrap(), compaction_config.tool_result_preview_bytes)?
+            {
+                context_accounting.reset();
+                app.save(&mut run).await?;
+            }
             // MODEL-CONTEXT-CEILING: runtime profiles bound the entire envelope;
             // compaction JSON still owns folding policy and summary reserves.
             let model_ceiling = loop_runtime::Config::read(&app.runtime_path)?
@@ -538,6 +540,9 @@ pub(crate) async fn execute_run(
             }
             workflow::record(&mut current, &workflow_policy,
                 &workflow::Input::ModelDispatch(snapshot), workflow::Decision::Pass)?;
+            // Pin publication routing to the call whose text will return. A
+            // later settings edit changes the next call, not this response.
+            current["promotion_mode"]=json!(promotion_mode);
             app.save(&mut current).await?;
             // DISPATCH-RELEASE-SNAPSHOTS: fencing is committed; do not retain its
             // reconstructed history or consumed local metadata during network waits.
@@ -750,15 +755,29 @@ pub(crate) async fn execute_run(
                         publication::terminal(&app.store, &mut run, output, &text, &publication_policy).await?;
                         return Ok(());
                     }
+                    let auto_promote=run["promotion_mode"]=="auto";
+                    if auto_promote && output.iter().filter(|item|item["type"]=="message")
+                        .any(|item|item["content"].as_array()
+                            .map(|parts|parts.iter().filter_map(|part|part["text"].as_str())
+                                .map(str::len).sum::<usize>()>16384)
+                            .unwrap_or(false)) {
+                        // Keep the provider output private and pause explicitly. A
+                        // rejected public row must not leave a half-saved model turn.
+                        run["status"]=json!("paused");
+                        run["error"]=json!("Auto promotion message exceeds 16384 bytes");
+                        app.store.save_run(&mut run,"model_output",&json!({"output":output})).await?;
+                        return Ok(());
+                    }
                     app.store
-                        .save_run(&mut run, "model_output", &json!({"output":output}))
+                        .save_run(&mut run, "model_output", &json!({"output":output,
+                            "auto_promote":auto_promote}))
                         .await?;
                 }
             }
         } else {
             if run["calls"].as_array().is_some_and(|calls|calls.len()>1
                 && !calls.iter().any(|call|matches!(call["name"].as_str(),
-                    Some("publish_main_message" | "set_closer_status" | "compact_context")))) {
+                    Some("publish_main_message" | "set_closer_status" | "compact_context" | "v3_build_work")))) {
                 // NATIVE-GATE-SERIAL: private controls keep provider order and
                 // never enter a parallel batch or the Python tool worker.
                 run["closing"]=Value::Null;
@@ -806,7 +825,7 @@ pub(crate) async fn execute_run(
                 } else {gate_registry::CLOSING_STATUS};
                 let enabled=gate_registry::selected(&workflow_policy,checkpoint)?
                     .iter().any(|item|item.id==module_id)
-                    && (name != "publish_main_message" || gate_controls::agent_visibility(&app.store, &agent_id).await?.enabled);
+                    && (name != "publish_main_message" || run["promotion_mode"]=="manual");
                 workflow::record(&mut run,&workflow_policy,
                     &workflow::Input::PreTool(workflow::PreToolInput {
                         name:name.clone(),arguments_digest:digest(&args),
@@ -1044,6 +1063,23 @@ pub(crate) async fn execute_run(
                 return Ok(());
             }
             if status(&run) != "running" {
+                if !terminal(status(&run)) && name=="v3_build_work" && args["action"]=="finish"
+                    && run["pending"]["state"]=="executing"
+                    && result.as_ref().map_or(true,|value|value["status"]=="success") {
+                    // A pause or revocation may race the broker acknowledgement.
+                    // Keep the job reference; a queued receipt is not the final tool result.
+                    run["pending"]["external_job"]=json!({"kind":"v3_build",
+                        "task_id":args["task_id"],"expected_inputs_sha256":args["expected_inputs_sha256"],
+                        "job_id":result.as_ref().ok().map(|value|value["output"]["job_id"].clone()),
+                        "submitted_at":now()});
+                    run["uncertain"]=json!(false);
+                    let restricted=run["error"]=="Cancelled by user"
+                        || run["error"].as_str().unwrap_or("").starts_with("Access changed")
+                        || app.shutoff().await?;
+                    run["status"]=json!(if restricted {"stopped"}else{"waiting_external"});
+                    app.save(&mut run).await?;
+                    return Ok(());
+                }
                 // An already committed result can resolve uncertainty without restarting the run.
                 if reconcile_late_tool_result(&mut run, result)? {
                     app.save(&mut run).await?;
@@ -1052,6 +1088,18 @@ pub(crate) async fn execute_run(
             }
             match result {
                 Ok(value) => {
+                    if name=="v3_build_work" && args["action"]=="finish" && value["status"]=="success" {
+                        // The broker owns the job across our own container replacement.
+                        // Keep this model call pending; recovery reads its receipt and
+                        // returns one result under the original call_id.
+                        run["pending"]["external_job"]=json!({"kind":"v3_build",
+                            "task_id":args["task_id"],"expected_inputs_sha256":args["expected_inputs_sha256"],
+                            "job_id":value["output"]["job_id"],"submitted_at":now()});
+                        run["status"]=json!("waiting_external");
+                        run["error"]=Value::Null;
+                        app.save(&mut run).await?;
+                        return Ok(());
+                    }
                     let uncertain = value["uncertain"]==true || matches!(
                         value["status"].as_str(),
                         Some("cancelled" | "timeout" | "uncertain")
@@ -1077,6 +1125,17 @@ pub(crate) async fn execute_run(
                         .await?;
                 }
                 Err(_) => {
+                    if name=="v3_build_work" && args["action"]=="finish" {
+                        // The request may have reached the broker before the socket
+                        // closed. Reconcile by task ID; never submit finish again.
+                        run["pending"]["external_job"]=json!({"kind":"v3_build",
+                            "task_id":args["task_id"],"expected_inputs_sha256":args["expected_inputs_sha256"],
+                            "submitted_at":now()});
+                        run["status"]=json!("waiting_external");
+                        run["error"]=Value::Null;
+                        app.save(&mut run).await?;
+                        return Ok(());
+                    }
                     if tools::is_read(&name) {
                         run["pending"]["state"] = json!("requested");
                         run["status"] = json!("failed");

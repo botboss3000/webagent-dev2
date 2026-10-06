@@ -11,8 +11,12 @@
   "tools": [
     "v3_build_status",
     "v3_build_work_status",
+    "v3_build_wait",
     "v3_build_work",
     "v3_source_read",
+    "v3_source_read_batch",
+    "v3_source_search",
+    "v3_cargo_task",
     "v3_source_apply",
     "v3_source_receipt",
     "v3_build_finish",
@@ -26,10 +30,22 @@
     "v3_build_work_status": {
       "destructive": false
     },
+    "v3_build_wait": {
+      "destructive": false
+    },
     "v3_build_work": {
       "destructive": true
     },
     "v3_source_read": {
+      "destructive": false
+    },
+    "v3_source_read_batch": {
+      "destructive": false
+    },
+    "v3_source_search": {
+      "destructive": false
+    },
+    "v3_cargo_task": {
       "destructive": false
     },
     "v3_source_apply": {

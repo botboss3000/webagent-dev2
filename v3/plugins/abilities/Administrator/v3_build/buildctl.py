@@ -115,6 +115,8 @@ def main():
     abandon.add_argument("task_id")
     job = commands.add_parser("job")
     job.add_argument("job_id")
+    adopt = commands.add_parser("adopt-release", help="accept a verified healthy deployed release with a checkout conflict")
+    adopt.add_argument("job_id")
     wait = commands.add_parser("wait", help="poll a finished task's shared job without submitting work")
     wait.add_argument("task_id")
     wait.add_argument("--timeout", type=int, default=MAX_WAIT_SECONDS,
@@ -136,6 +138,8 @@ def main():
             result = call("v3_build_status", {})
     elif args.command == "job":
         result = call("v3_worker_job", {"job_id": args.job_id})
+    elif args.command == "adopt-release":
+        result = call("v3_build_adopt_release", {"job_id": args.job_id})
     else:
         arguments = {"action": args.command}
         if args.command in ("begin", "finish", "abandon"):

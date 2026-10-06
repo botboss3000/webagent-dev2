@@ -1248,6 +1248,31 @@ impl Store {
         if inserted.rows_affected() > 0 { self.touch_session_activity(tx, sid).await?; }
         Ok(())
     }
+    async fn insert_working_message(
+        &self, tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, sid: &str,
+        rid: &str, message_id: &str, text: &str,
+    ) -> Result<()> {
+        // Working rows have no terminal_run_id. Their stable IDs make a
+        // recovered model response or private control safe to replay.
+        if !message_id.starts_with(&format!("working:{rid}:"))
+            || message_id.len() > 256 || text.trim().is_empty() || text.len() > 16384 {
+            return Err(anyhow!("Invalid working message"));
+        }
+        let existing = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT content FROM chat WHERE id=?")
+            .bind(message_id).fetch_optional(&mut **tx).await?;
+        if let Some(raw) = existing {
+            if self.unseal(&raw)? != json!(text) {
+                return Err(anyhow!("Working message ID conflicts with existing text"));
+            }
+        } else {
+            sqlx::query("INSERT INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),NULL)")
+                .bind(message_id).bind(sid).bind(rid).bind("assistant")
+                .bind(self.encode_user_record(&json!(text))?).execute(&mut **tx).await?;
+            self.touch_session_activity(tx, sid).await?;
+        }
+        Ok(())
+    }
     /// Reconstruct a split recovery record under the reader's transaction.
     /// Legacy records contain input inline and need no migration on read. Missing
     /// rows or gaps are corruption, never an excuse to resume with partial input.
@@ -1611,31 +1636,12 @@ impl Store {
             }
         }
         if kind == "working_message" {
-            // WORKING-PUBLICATION: a validated private control creates one
-            // nonterminal chat row in the same transaction as its tool result.
-            // The terminal_run_id stays NULL so the final reply keeps its
-            // separate exactly-once uniqueness constraint.
+            // The private control result and public bubble commit together.
             let message_id = payload["id"].as_str()
                 .ok_or_else(|| anyhow!("Working message has no ID"))?;
             let text = payload["text"].as_str()
                 .ok_or_else(|| anyhow!("Working message has no text"))?;
-            if !message_id.starts_with(&format!("working:{rid}:"))
-                || message_id.len() > 256 || text.trim().is_empty() || text.len() > 16384 {
-                return Err(anyhow!("Invalid working message"));
-            }
-            let existing = sqlx::query_scalar::<_, Vec<u8>>(
-                "SELECT content FROM chat WHERE id=?")
-                .bind(message_id).fetch_optional(&mut *tx).await?;
-            if let Some(raw) = existing {
-                if self.unseal(&raw)? != json!(text) {
-                    return Err(anyhow!("Working message ID conflicts with existing text"));
-                }
-            } else {
-                sqlx::query("INSERT INTO chat(id,session_id,run_id,role,content,created_at,terminal_run_id) VALUES(?,?,?,?,?,strftime('%s','now'),NULL)")
-                    .bind(message_id).bind(sid).bind(rid).bind("assistant")
-                    .bind(self.encode_user_record(&json!(text))?).execute(&mut *tx).await?;
-                self.touch_session_activity(&mut tx, sid).await?;
-            }
+            self.insert_working_message(&mut tx,sid,rid,message_id,text).await?;
         }
         if kind == "model_output" {
             let output = payload["output"]
@@ -1653,6 +1659,20 @@ impl Store {
                     item,
                 )
                 .await?;
+                if payload["auto_promote"] == true && item["type"] == "message" {
+                    if run["status"] == "completed" {
+                        return Err(anyhow!("Final reply cannot be auto promoted"));
+                    }
+                    let text=item["content"].as_array()
+                        .map(|parts|parts.iter().filter_map(|part|part["text"].as_str())
+                            .collect::<Vec<_>>().join(""))
+                        .unwrap_or_default();
+                    if !text.trim().is_empty() {
+                        let message_id=format!("working:{rid}:auto:{turn}:{ordinal}");
+                        // The interaction and its public bubble share this transaction.
+                        self.insert_working_message(&mut tx,sid,rid,&message_id,&text).await?;
+                    }
+                }
             }
             if run["status"] == "completed" {
                 let text = payload["terminal_text"]
@@ -2929,6 +2949,38 @@ mod tests {
             json!("Progress update"));
         let conflict=json!({"id":"working:working-run:call-1","text":"Different"});
         assert!(store.save_run(&mut run,"working_message",&conflict).await.is_err());
+    }
+    #[tokio::test]
+    async fn auto_promotion_is_ordered_atomic_and_idempotent() {
+        let root=tempfile::tempdir().unwrap();
+        let store=Store::open(root.path()).await.unwrap();
+        store.put("session:auto-session",&json!({"id":"auto-session","created_at":1})).await.unwrap();
+        let mut run=json!({"id":"auto-run","session_id":"auto-session","status":"running",
+            "generation":"generation","lease_epoch":0,"input":[],"turns":1});
+        let output=json!([
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"First"}]},
+            {"type":"function_call","call_id":"read-1","name":"file_read","arguments":"{}"},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Second"}]}
+        ]);
+        let payload=json!({"output":output,"auto_promote":true});
+        store.save_run(&mut run,"model_output",&payload).await.unwrap();
+        store.save_run(&mut run,"model_output",&payload).await.unwrap();
+        let (chat,_)=store.chat_snapshot("auto-session").await.unwrap();
+        assert_eq!(chat.len(),2);
+        assert_eq!(chat[0]["id"],"working:auto-run:auto:1:0");
+        assert_eq!(chat[0]["content"],"First");
+        assert_eq!(chat[1]["id"],"working:auto-run:auto:1:2");
+        assert_eq!(chat[1]["content"],"Second");
+        let activity=store.private_activity("auto-session",0).await.unwrap();
+        assert_eq!(activity["events"].as_array().unwrap().len(),3);
+        assert_eq!(activity["segments"].as_array().unwrap().len(),2);
+        let mut oversized=json!({"id":"too-large","session_id":"auto-session","status":"running",
+            "generation":"generation","lease_epoch":0,"input":[],"turns":1});
+        let bad=json!({"output":[{"type":"message","content":[{"text":"x".repeat(16385)}]}],
+            "auto_promote":true});
+        assert!(store.save_run(&mut oversized,"model_output",&bad).await.is_err());
+        let (unchanged,_)=store.chat_snapshot("auto-session").await.unwrap();
+        assert_eq!(unchanged.len(),2);
     }
     #[tokio::test]
     async fn command_ack_and_lease_takeover_fence_terminal_publication() {

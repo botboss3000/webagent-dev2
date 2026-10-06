@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune development artifacts when v3 build receipts change
+
+[Path]
+PathChanged=/home/ar/webagent-dev2/v3/build-jobs
+PathChanged=/home/ar/webagent-dev2/v3/build-jobs/coordination
+Unit=webagent-dev-artifact-prune.service
+
+[Install]
+WantedBy=multi-user.target

@@ -30,6 +30,10 @@ TOOL_SCHEMAS = {
     "v3_build_work_status": {"type": "object", "properties": {}, "additionalProperties": False},
     "v3_worker_job": {"type": "object", "properties": {"job_id": {"type": "string"}},
         "required": ["job_id"], "additionalProperties": False},
+    "v3_build_wait": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "timeout_seconds": {"type": "integer", "minimum": 0, "maximum": 60}},
+        "required": ["task_id"], "additionalProperties": False},
 }
 _V3_LOGIN_PARAMETERS: Dict[str, Any] = {
     "type": "object",
@@ -121,6 +125,28 @@ TOOL_SCHEMAS.update({
         "required": ["task_id", "request_id"], "additionalProperties": False},
 })
 TOOL_SCHEMAS["login_as_current_user_v3"] = _V3_LOGIN_PARAMETERS
+TOOL_SCHEMAS.update({
+    "v3_source_search": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "query": {"type": "string", "minLength": 1, "maxLength": 120},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+        "required": ["task_id", "query"], "additionalProperties": False},
+    "v3_source_read_batch": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "requests": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
+            "type": "object", "properties": {
+                "path": {"type": "string", "maxLength": 240},
+                "offset": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200}},
+            "required": ["path"], "additionalProperties": False}}},
+        "required": ["task_id", "requests"], "additionalProperties": False},
+    "v3_cargo_task": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "task": {"type": "string", "enum": ["check", "test"]},
+        "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}},
+        "required": ["task_id", "task", "expected_inputs_sha256"], "additionalProperties": False},
+})
 DESTRUCTIVE = {"login_as_current_user_v3", "v3_build_work", "v3_build_finish", "v3_source_apply"}
 
 
@@ -193,7 +219,9 @@ async def _worker_request(method, path, body=None):
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
         return {"status": "error", "error": "Worker URL must be an origin without credentials or path"}
     try:
-        async with httpx.AsyncClient(timeout=75, follow_redirects=False, trust_env=False) as client:
+        # A task-scoped Cargo check may use the broker's full 600-second budget.
+        timeout = 675 if path == "/v1/coordinator" and isinstance(body, dict) and body.get("name") == "v3_cargo_task" else 75
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
             response = await client.request(method, url + path, headers={"Authorization": "Bearer " + token}, json=body)
             if response.status_code == 409:
                 return {"status": "busy", "http_status": 409, "error": "Worker has an active job or is restarting"}
@@ -291,6 +319,52 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
         """Read native task receipts and shared open count without mutating work."""
         return json.dumps(await _bridge_request(user_id, "v3_build_work", {"action": "status"}))
 
+    async def v3_build_wait(task_id, timeout_seconds=45):
+        """Bounded read-only wait; the native broker remains the result authority."""
+        import re
+        if (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id)
+                or type(timeout_seconds) is not int or not 0 <= timeout_seconds <= 60):
+            return json.dumps({"status": "error", "error": "Stable task ID and timeout of 0-60 seconds required"})
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        job_id = None
+        try:
+            while True:
+                if not job_id:
+                    work = await _bridge_request(user_id, "v3_build_work", {"action": "status"})
+                    if not isinstance(work.get("own"), list):
+                        return json.dumps({"status": "pending", "task_id": task_id, "reason": "coordinator unavailable"})
+                    receipt = next((item for item in work["own"] if item.get("task_id") == task_id), None)
+                    if receipt is None:
+                        return json.dumps({"status": "error", "task_id": task_id, "error": "Task receipt unavailable"})
+                    job_id = receipt.get("job_id")
+                    if not job_id and receipt.get("status") in ("abandoned", "failed"):
+                        return json.dumps({"status": receipt["status"], "task_id": task_id})
+                if job_id:
+                    job = await _bridge_request(user_id, "v3_worker_job", {"job_id": job_id})
+                    if job.get("status") not in ("queued", "running", "pending"):
+                        if job.get("status") in (None, "error", "rejected"):
+                            return json.dumps({"status": "pending", "task_id": task_id, "job_id": job_id,
+                                               "reason": "job record unavailable"})
+                        result = {key: job.get(key) for key in ("job_id", "status", "phase")}
+                        result["task_id"] = task_id
+                        result["reason"] = str(job.get("reason") or job.get("log") or "")[-1024:]
+                        if job.get("status") == "completed":
+                            health = await _bridge_request(user_id, "v3_build_status", {})
+                            result["containers"] = {key: {"state": value.get("state"), "health": value.get("health")}
+                                for key, value in (health.get("containers") or {}).items() if key in ("api", "loop")}
+                            result["verified_healthy"] = all(
+                                result["containers"].get(key) == {"state": "running", "health": "healthy"}
+                                for key in ("api", "loop"))
+                        return json.dumps(result)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return json.dumps({"status": "pending", "task_id": task_id, "job_id": job_id,
+                                       "reason": "waiting for other tasks" if not job_id else "build still pending"})
+                await asyncio.sleep(min(15, remaining))
+        except (OSError, TimeoutError, ValueError):
+            return json.dumps({"status": "pending", "task_id": task_id, "job_id": job_id,
+                               "reason": "coordinator connection unavailable"})
+
     async def v3_build_work(action, task_id="", summary=""):
         """Register or abandon source work without scheduling a build."""
         import re
@@ -314,13 +388,48 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
                 or not isinstance(expected_inputs_sha256, str)
                 or not re.fullmatch(r"[a-f0-9]{64}", expected_inputs_sha256)):
             return json.dumps({"status": "error", "error": "Stable task ID and source digest required"})
-        return json.dumps(await _bridge_request(user_id, "v3_build_work", {
-            "action": "finish", "task_id": task_id, "expected_inputs_sha256": expected_inputs_sha256}))
+        submitted = await _bridge_request(user_id, "v3_build_work", {
+            "action": "finish", "task_id": task_id, "expected_inputs_sha256": expected_inputs_sha256})
+        if submitted.get("status") in ("error", "denied", "blocked", "busy"):
+            return json.dumps(submitted)
+        # Keep this original tool call open. Only the bridge polls the durable
+        # broker receipt; the model sees one terminal tool result.
+        deadline = asyncio.get_running_loop().time() + 60 * 60
+        while True:
+            remaining = max(0, deadline - asyncio.get_running_loop().time())
+            result = json.loads(await v3_build_wait(task_id, min(60, int(remaining))))
+            if result.get("status") != "pending":
+                result["submitted_job_id"] = submitted.get("job_id")
+                return json.dumps(result)
+            if remaining <= 0:
+                return json.dumps({"status": "pending", "task_id": task_id,
+                                   "job_id": result.get("job_id") or submitted.get("job_id"),
+                                   "reason": "Build exceeded one-hour tool wait; resume from this task ID"})
+            # v3_build_wait can return immediately before an assigned job
+            # appears. Do not spin against the coordinator in that interval.
+            if not result.get("job_id"):
+                await asyncio.sleep(min(15, remaining))
 
     async def v3_source_read(task_id, path, offset=1, limit=200):
         """Read bounded lines from this open isolated V3 task source snapshot."""
         return json.dumps(await _bridge_request(user_id, "v3_source_read", {
             "task_id": task_id, "path": path, "offset": offset, "limit": limit}))
+
+    async def v3_source_search(task_id, query, limit=30):
+        """Search bounded literal text in this open isolated task."""
+        return json.dumps(await _bridge_request(user_id, "v3_source_search", {
+            "task_id": task_id, "query": query, "limit": limit}))
+
+    async def v3_source_read_batch(task_id, requests):
+        """Read up to four bounded source ranges from one task."""
+        return json.dumps(await _bridge_request(user_id, "v3_source_read_batch", {
+            "task_id": task_id, "requests": requests}))
+
+    async def v3_cargo_task(task_id, task, expected_inputs_sha256, timeout_seconds=600):
+        """Run a fixed pinned Cargo check against this task's source digest."""
+        return json.dumps(await _bridge_request(user_id, "v3_cargo_task", {
+            "task_id": task_id, "task": task, "expected_inputs_sha256": expected_inputs_sha256,
+            "timeout_seconds": timeout_seconds}))
 
     async def v3_source_apply(task_id, request_id, patch, expected_inputs_sha256):
         """Apply a checked text patch to this task's isolated V3 source snapshot."""
@@ -342,7 +451,10 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
 
     return {"login_as_current_user_v3": login_as_current_user_v3,
             "v3_build_status": v3_build_status, "v3_build_work_status": v3_build_work_status,
+            "v3_build_wait": v3_build_wait,
             "v3_build_work": v3_build_work,
             "v3_build_finish": v3_build_finish, "v3_source_read": v3_source_read,
+            "v3_source_read_batch": v3_source_read_batch, "v3_source_search": v3_source_search,
+            "v3_cargo_task": v3_cargo_task,
             "v3_source_apply": v3_source_apply,
             "v3_source_receipt": v3_source_receipt, "v3_worker_job": v3_worker_job}

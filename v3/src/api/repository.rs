@@ -124,10 +124,15 @@ pub(crate) async fn put(State(app): State<App>, Extension(identity): Extension<V
 /// model result or durable history item. The worker matches the exact remote.
 pub(crate) async fn transport(app: &App, sid: &str) -> anyhow::Result<Value> {
     let agent=crate::session_agent_id(app,sid).await?;
+    transport_for_agent(app,&agent).await
+}
+/// The administrator File Manager uses the default agent's independent V3
+/// repository connections for a live-checkout Git operation.
+pub(crate) async fn transport_for_agent(app: &App, agent: &str) -> anyhow::Result<Value> {
     let caller=app.store.current_user_id();
-    let access=app.store.live_access(caller,&agent).await?;
+    let access=app.store.live_access(caller,agent).await?;
     anyhow::ensure!(access.admitted(),"Repository transport access revoked");
-    let value=catalog(app,&agent).await.map_err(|_|anyhow::anyhow!("Repository catalog unavailable"))?;
+    let value=catalog(app,agent).await.map_err(|_|anyhow::anyhow!("Repository catalog unavailable"))?;
     let mut connections=Vec::new();
     for record in value.connections.values().filter(|c|!c.revoked) {
         let token=if record.credential_ref.is_empty() {None} else {

@@ -42,6 +42,13 @@ sh /home/ar/webagent-dev2/v3/deploy.sh start-loop
 curl -fsS http://100.112.23.15:8081/health/ready
 ```
 
+The development server needs Docker Buildx. Both image targets use the same
+tested Rust builder in `v3/Dockerfile`; BuildKit caches Cargo downloads and
+artifacts across source edits. Build the targets from settled inputs, and
+coordinate source writers before starting either command. The protected build
+broker captures one frozen context for both targets and verifies it again
+before replacing the development containers.
+
 The existing named tunnels serve https://webagent.live/app from dev2 on host port 8080
 and https://dev.webagent.live/app from v3 on host port 8081. The previous
 production app container is stopped and kept as a rollback snapshot.

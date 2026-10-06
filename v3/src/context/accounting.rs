@@ -94,3 +94,16 @@ impl ContextAccounting {
   println!("accounting measurement: items=512 repetitions=500 bytes_per_context={expected} full={full:?} incremental={incremental:?} baseline_temporary_json_bytes={baseline}; incremental unchanged-history measurements=0");
  }
 }
+
+#[cfg(test)]
+mod empty_history_tests {
+    use super::ContextAccounting;
+
+    #[test]
+    fn empty_history_has_two_json_bytes_and_zero_measured_items() {
+        let mut accounting = ContextAccounting::default();
+        accounting.sync(&[]).unwrap();
+        assert_eq!(accounting.bytes(), 2);
+        assert_eq!(accounting.measured_items, 0);
+    }
+}

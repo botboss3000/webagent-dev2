@@ -148,16 +148,19 @@ def install():
     try:
         host = read_regular(source, "host.py", 2 * 1024 * 1024, owner=1000)
         bootstrap = read_regular(source, "install.py", 2 * 1024 * 1024, owner=1000)
+        release = read_regular(source, "release.py", 2 * 1024 * 1024, owner=1000)
         service = protected_directory(parent, "host-build-service")
         # Compile without importing or executing source. The installed service
         # subsequently runs its protected copy, never this writable checkout.
         compile(host, "host.py", "exec")
         compile(bootstrap, "bootstrap.py", "exec")
+        compile(release, "release.py", "exec")
         publish(service, "host.py", host, 0o644)
         publish(service, "bootstrap.py", bootstrap, 0o644)
-        manifest = {"host_sha256": hashlib.sha256(host).hexdigest(), "bootstrap_sha256": hashlib.sha256(bootstrap).hexdigest()}
+        publish(service, "release.py", release, 0o644)
+        manifest = {"host_sha256": hashlib.sha256(host).hexdigest(), "bootstrap_sha256": hashlib.sha256(bootstrap).hexdigest(), "release_sha256": hashlib.sha256(release).hexdigest()}
         publish(service, "installed.json", json.dumps(manifest, sort_keys=True).encode())
-        if read_regular(source, "host.py", 2 * 1024 * 1024, owner=1000) != host or read_regular(source, "install.py", 2 * 1024 * 1024, owner=1000) != bootstrap:
+        if read_regular(source, "host.py", 2 * 1024 * 1024, owner=1000) != host or read_regular(source, "install.py", 2 * 1024 * 1024, owner=1000) != bootstrap or read_regular(source, "release.py", 2 * 1024 * 1024, owner=1000) != release:
             raise ValueError("installation raced a source edit; repeat after writers pause")
         return manifest
     finally:
@@ -374,7 +377,7 @@ def snapshot_server(listener, context, stopping):
                     pass
 
 
-def _drop_and_exec(host_fd, listener_fd):
+def _drop_and_exec(host_fd, listener_fd, bridge_fd):
     account = pwd.getpwnam("ar")
     if account.pw_uid != 1000 or account.pw_gid != 1000:
         raise PermissionError("fixed broker identity changed")
@@ -386,9 +389,10 @@ def _drop_and_exec(host_fd, listener_fd):
         raise OSError(ctypes.get_errno(), "broker no_new_privs failed")
     os.set_inheritable(host_fd, True)
     os.set_inheritable(listener_fd, True)
+    os.set_inheritable(bridge_fd, True)
     # fd pins the protected code inode even if a source author renames its
     # enclosing checkout directory. No root code is loaded after privilege drop.
-    os.execve("/usr/bin/python3", ["python3", "-I", "/proc/self/fd/" + str(host_fd), "--listener-fd", str(listener_fd), "--snapshot-socket", str(SERVICE / "snapshot.sock")],
+    os.execve("/usr/bin/python3", ["python3", "-I", "/proc/self/fd/" + str(host_fd), "--listener-fd", str(listener_fd), "--bridge-listener-fd", str(bridge_fd), "--snapshot-socket", str(SERVICE / "snapshot.sock")],
               {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/ar", "LANG": "C.UTF-8"})
 
 
@@ -408,8 +412,12 @@ def _supervisor(service, ready):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     runtime_parent = directory(V3 / "runtime")
-    runtime = protected_directory(runtime_parent, "build", 0o750, gid=1100)
+    # The app owns the socket; Codex needs directory traversal to reach it.
+    # Neither account can replace entries in this protected directory.
+    runtime = protected_directory(runtime_parent, "build", 0o751, gid=1000)
+    os.fchown(runtime, 0, 1000)  # Also repair an existing protected directory.
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bridge_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     host_fd = None
     child = None
     snapshot_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -425,9 +433,23 @@ def _supervisor(service, ready):
         except FileNotFoundError:
             pass
         listener.bind(sockname)
-        os.chown(sockname, 1100, 1100)
-        os.chmod(sockname, 0o600)
+        os.chown(sockname, 1100, 1000)
+        os.chmod(sockname, 0o660)
         listener.listen(16)
+        # Dedicated V2 Python bridge: host worker authenticates HTTP callers,
+        # while this socket assigns its own broker identity, never Codex's.
+        bridge_name = "/proc/self/fd/" + str(runtime) + "/python.sock"
+        try:
+            old_bridge = os.stat("python.sock", dir_fd=runtime, follow_symlinks=False)
+            if not stat.S_ISSOCK(old_bridge.st_mode) or old_bridge.st_uid != 1000:
+                raise PermissionError("unexpected Python bridge socket")
+            os.unlink("python.sock", dir_fd=runtime)
+        except FileNotFoundError:
+            pass
+        bridge_listener.bind(bridge_name)
+        os.chown(bridge_name, 1000, 1000)
+        os.chmod(bridge_name, 0o600)
+        bridge_listener.listen(16)
         host_fd = os.open("host.py", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=service)
         info = os.fstat(host_fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or PRIVILEGES.owner(info) != 0 or info.st_mode & 0o022:
@@ -458,7 +480,7 @@ def _supervisor(service, ready):
             os.setsid()
             os.dup2(error_fd, 2)
             os.close(error_fd)
-            _drop_and_exec(host_fd, listener.fileno())
+            _drop_and_exec(host_fd, listener.fileno(), bridge_listener.fileno())
         os.close(error_fd)
         threading.Thread(target=snapshot_server, args=(snapshot_listener, context, snapshot_stopping), daemon=True).start()
         publish(service, "supervisor.pid", str(os.getpid()).encode())
@@ -519,6 +541,7 @@ def _supervisor(service, ready):
         if ready is not None:
             os.close(ready)
         listener.close()
+        bridge_listener.close()
         if host_fd is not None:
             os.close(host_fd)
         os.close(runtime)
@@ -532,7 +555,7 @@ def start():
     service = directory(SERVICE)
     try:
         manifest = json.loads(read_regular(service, "installed.json", 4096, owner=0))
-        for name, key in (("host.py", "host_sha256"), ("bootstrap.py", "bootstrap_sha256")):
+        for name, key in (("host.py", "host_sha256"), ("bootstrap.py", "bootstrap_sha256"), ("release.py", "release_sha256")):
             body = read_regular(service, name, 2 * 1024 * 1024, owner=0)
             if hashlib.sha256(body).hexdigest() != manifest[key]:
                 raise ValueError("installed broker code digest changed")

@@ -1,3 +1,12 @@
-.v3-contract-pending{display:inline-block;margin-inline-start:6px;font-size:9px;letter-spacing:.025em;color:var(--warning);vertical-align:middle;white-space:normal}.v3-reference-models{min-width:0}.v3-reference-models .ac-model-meta-defaultline input:disabled,.v3-reference-models .ac-model-alias-add:disabled{cursor:not-allowed}.v3-reference-models .ac-model-meta-editable[aria-disabled=true]{cursor:not-allowed}
-
-.v3-contract-pending{margin-inline-start:6px}
+.v3-reference-models{min-width:0}
+.v3-reference-models .ac-model-meta-defaultline input:disabled,.v3-reference-models .ac-model-alias-add:disabled{cursor:not-allowed}
+.v3-reference-models .ac-model-meta-editable[aria-disabled=true]{cursor:not-allowed}
+.v3-reference-models .v3-pending-feature,
+.v3-reference-models .v3-pending-feature > .ac-ability-row,
+.v3-reference-models .v3-pending-feature .ac-model-meta-k,
+.v3-reference-models .v3-pending-feature .ac-model-meta-v,
+.v3-reference-models .v3-pending-feature .ac-saved-usage-v,
+.v3-reference-models .v3-pending-feature .ac-directive-symbol,
+.v3-reference-models .agent-model-analytics-host.v3-pending-feature .ac-model-analytics-head h3,
+.v3-reference-models .agent-model-analytics-host.v3-pending-feature .ac-model-analytics-status,
+.v3-reference-models .v3-pending-feature:disabled{color:var(--danger)}

@@ -11,12 +11,14 @@ import hashlib
 import fcntl
 import http.client
 import io
+import importlib.util
 import inspect
 import json
 import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import socket
 import stat
 import struct
@@ -29,8 +31,10 @@ import uuid
 SOURCE = Path("/home/ar/webagent-dev2")
 STATE = SOURCE / "v3/build-jobs"
 SOCKET = SOURCE / "v3/runtime/build/build.sock"
+BRIDGE_SOCKET = SOURCE / "v3/runtime/build/python.sock"
+BRIDGE_WORKSPACE = "94c353d5-70bd-44b2-9af0-757c4a979fc9"
 CONTEXT = (
-    "v3/Dockerfile", "v3/Dockerfile.loop", "v3/Cargo.toml", "v3/Cargo.lock", "v3/build.rs", "v3/.gitignore",
+    "v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock", "v3/build.rs", "v3/.gitignore",
     "v3/src", "v3/ui", "v3/plugins/abilities", "v3/plugins/gates", "v3/worker.py",
     "v3/sandbox.py", "v3/launch.py", "v3/promote.py", "v3/ui-baseline.json", "v3/tests",
     "v3/README.md", "v3/docs", "v3/deploy.sh", "v3/config",
@@ -46,6 +50,15 @@ WORKER_CONTROL = Path("/var/lib/webagent-v3-build-worker/control.sock")
 MAX_LOG = 1024 * 1024
 PUBLIC_LOG = 16 * 1024
 MAX_CONTEXT = 128 * 1024 * 1024
+MIN_BUILD_FREE = 12 * 1024 * 1024 * 1024
+MIN_DEPLOY_FREE = 8 * 1024 * 1024 * 1024
+
+_release_file = (SOURCE / "v3/host-build-service/release.py"
+                 if str(__file__).startswith("/proc/self/fd/") else Path(__file__).with_name("release.py"))
+_release_spec = importlib.util.spec_from_file_location(
+    "v3_build_release", _release_file)
+release = importlib.util.module_from_spec(_release_spec)
+_release_spec.loader.exec_module(release)
 
 
 def canonical(value):
@@ -83,7 +96,7 @@ def context_digest(blob):
                 raise ValueError("snapshot file exceeds bound")
             body = archive.extractfile(member).read()
             entries[name] = (member.mode & 0o777, len(body), hashlib.sha256(body).hexdigest())
-    for required in ("v3/Dockerfile", "v3/Dockerfile.loop", "v3/Cargo.toml", "v3/Cargo.lock",
+    for required in ("v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock",
                      "v3/data/config/gates/message_visibility_v1.json", "v3/data/config/gates/closing_status_v1.json"):
         if required not in entries:
             raise ValueError("snapshot missing required input")
@@ -94,6 +107,104 @@ def context_digest(blob):
             if name not in entries or entries[name][2] != expected:
                 raise ValueError("shared UI baseline changed")
     return hashlib.sha256(canonical(entries)).hexdigest(), len(entries)
+
+
+def source_git(root, arguments, patch):
+    """Use fixed Git arguments and environment; never execute repository hooks."""
+    env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8",
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+           "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1"}
+    root = Path(root)
+    try:
+        prefix = root.relative_to(SOURCE).as_posix()
+    except ValueError:
+        prefix = ""
+    if prefix and arguments[0] == "apply":
+        # Git invoked below its parent repository silently skips paths outside
+        # the current prefix. Anchor the patch at the checkout root instead.
+        arguments = ["apply", "--directory=" + prefix, *arguments[1:]]
+        cwd = SOURCE
+    else:
+        cwd = root
+    command = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+               "-c", "diff.external=", *arguments]
+    result = subprocess.run(command, cwd=cwd, env=env, input=patch, capture_output=True, timeout=30)
+    if result.returncode or len(result.stdout) > 65536:
+        raise ValueError("checked source patch rejected")
+    return result.stdout
+
+
+def source_patch_text_counts(patch):
+    """Count all text changes, including lines Git would ignore after a short hunk."""
+    added = removed = 0
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("@@ "):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            added += 1
+        elif in_hunk and line.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def inspect_source_patch(root, patch):
+    """Confine a checked text diff to V3 source; proposals stay separate until here."""
+    if not root.is_dir() or root.is_symlink() or root.stat().st_uid != 1000:
+        raise ValueError("live V3 checkout unavailable")
+    if any(line.startswith(("GIT binary patch", "Binary files ", "rename from ",
+                            "rename to ", "copy from ", "copy to "))
+           for line in patch.splitlines()):
+        raise ValueError("binary or move patch denied")
+    for line in patch.splitlines():
+        if line.startswith(("new file mode ", "deleted file mode ", "old mode ", "new mode ")):
+            if line.rsplit(" ", 1)[-1] not in ("100644", "100755"):
+                raise ValueError("unsupported source file mode")
+    encoded = patch.encode()
+    output = source_git(root, ["apply", "--numstat", "-z", "-"], encoded)
+    records = [part for part in output.split(b"\0") if part]
+    if not output.endswith(b"\0") or not 1 <= len(records) <= 64:
+        raise ValueError("invalid source patch path list")
+    counted_added = counted_removed = 0
+    paths = []
+    allowed_files = {"Cargo.toml", "Cargo.lock", "build.rs", "Dockerfile",
+                     ".gitignore", "README.md", "deploy.sh", "launch.py",
+                     "worker.py", "sandbox.py", "promote.py", "ui-baseline.json"}
+    allowed_dirs = {"src", "plugins", "tests", "ui", "docs", "config"}
+    for record in records:
+        fields = record.split(b"\t", 2)
+        if len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit():
+            raise ValueError("unsupported source patch")
+        counted_added += int(fields[0])
+        counted_removed += int(fields[1])
+        name = fields[2].decode("utf-8")
+        try:
+            prefix = root.relative_to(SOURCE).as_posix() + "/"
+        except ValueError:
+            prefix = ""
+        if prefix:
+            if not name.startswith(prefix):
+                raise ValueError("source patch escaped task workspace")
+            name = name[len(prefix):]
+        parts = name.split("/")
+        if (name in paths or name.startswith("/") or "\\" in name
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                or any(not part or part in (".", "..") for part in parts)
+                or not (name in allowed_files or parts[0] in allowed_dirs and len(parts) > 1)):
+            raise ValueError("source patch path denied")
+        cursor = root
+        for index, part in enumerate(parts):
+            cursor = cursor / part
+            if cursor.is_symlink() or (cursor.exists() and
+                    (not cursor.is_dir() if index < len(parts) - 1 else not cursor.is_file())):
+                raise ValueError("source patch path is not a regular source file")
+        paths.append(name)
+    if (counted_added, counted_removed) != source_patch_text_counts(patch):
+        raise ValueError("source patch hunk line counts mismatch")
+    source_git(root, ["apply", "--check", "--whitespace=error", "-"], encoded)
+    return paths
 
 
 def replacement_config(current, old_defaults, new_defaults):
@@ -249,6 +360,9 @@ class Runner:
         context_digest(blob)
         return blob
 
+    def promote_checkout(self, before, after, changed):
+        return release.promote_checkout(self.source, before, after, changed, context_digest)
+
     def inspect(self, name):
         if name not in TARGETS and not re.fullmatch(r"webagent-dev-v3(?:-loop)?-pre-build-[0-9a-f-]{36}", name):
             raise ValueError("container outside development target")
@@ -256,10 +370,17 @@ class Runner:
         self.secrets.extend(item.partition("=")[2] for item in value.get("Config", {}).get("Env", []) if "=" in item)
         return value
 
+    def check_space(self, minimum):
+        free = shutil.disk_usage(self.source).free
+        if free < minimum:
+            raise ValueError(f"development build needs {minimum // (1024 ** 3)} GiB free; {free // (1024 ** 3)} GiB available")
+        return free
+
     def build(self, blob, job_id, role):
         tag = "webagent-dev-v3" + ("-loop" if role == "loop" else "") + ":job-" + job_id
-        dockerfile = "v3/Dockerfile.loop" if role == "loop" else "v3/Dockerfile"
-        log = self.command(["docker", "build", "-f", dockerfile, "-t", tag, "-"], stdin=blob)
+        log = self.command(["docker", "buildx", "build", "--builder", "default", "--load",
+                            "--progress=plain", "--target", role, "-f", "v3/Dockerfile",
+                            "-t", tag, "-"], stdin=blob)
         image = self.command(["docker", "image", "inspect", "--format", "{{.Id}}", tag], timeout=30).strip()
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
             raise ValueError("invalid image identity")
@@ -297,7 +418,7 @@ class Runner:
     def rename(self, name, target):
         self.command(["docker", "rename", name, target], timeout=30)
 
-    def create(self, name, image, previous):
+    def create(self, name, image, previous, release_root=None):
         # Docker engine JSON preserves the inspected container configuration,
         # including private Env values, without shell escaping or printing it.
         old_defaults = json.loads(self.command(["docker", "image", "inspect", previous["Image"]], timeout=30, private_raw=True))[0]["Config"]
@@ -305,6 +426,8 @@ class Runner:
         config = replacement_config(previous["Config"], old_defaults, new_defaults)
         config["Image"] = image
         host = dict(previous["HostConfig"])
+        if release_root is not None:
+            host = release.release_mounts(host, Path(release_root))
         # Container-id-derived values must not be reused. Preserve configured
         # mounts, network, limits, ports, restart policy and security options.
         host.pop("ContainerIDFile", None)
@@ -381,7 +504,8 @@ class Broker:
             self.requests[job["request_key"]] = job["job_id"]
         if recover:
             for job in self.jobs.values():
-                if job["status"] in ("queued", "running"):
+                if job["status"] in ("queued", "running") and not (
+                        job.get("isolated") and job["status"] == "queued"):
                     # A restart never repeats a build or external mutation.
                     job["status"] = "uncertain" if job["operation"] == "deploy" or job.get("effects_started") else "interrupted"
                     job["reason"] = "broker restarted; no automatic replay"
@@ -389,6 +513,8 @@ class Broker:
                         job["status"] = "completed"
                         job["reason"] = "recovered matching healthy deployment"
                     self._save(job)
+        if recover:
+            self._start_next()
 
     def _save(self, job):
         path = self.state / (job["job_id"] + ".json")
@@ -435,6 +561,51 @@ class Broker:
         self._save_work()
         return job["job_id"]
 
+    def _current_release_blob(self):
+        completed = sorted((job for job in self.jobs.values()
+                            if job.get("isolated") and job["status"] == "completed"),
+                           key=lambda job: job["created_at"])
+        if completed:
+            job = completed[-1]
+            blob = (self.state / job["job_id"] / "candidate.tar").read_bytes()
+            if context_digest(blob)[0] != job["inputs_sha256"]:
+                raise ValueError("durable release input mismatch")
+            return blob
+        return self.runner.snapshot()
+
+    def _start_next(self):
+        if self.active is not None or self.stopping:
+            return
+        for job in sorted(self.jobs.values(), key=lambda value: value["created_at"]):
+            if not job.get("isolated") or job["status"] != "queued":
+                continue
+            try:
+                self._lease(job)
+                folder = self.state / job["job_id"]
+                base = (folder / "base.tar").read_bytes()
+                task = (folder / "task.tar").read_bytes()
+                live = self._current_release_blob()
+                candidate, changed = release.candidate(base, task, live, context_digest)
+                digest, _ = context_digest(candidate)
+                release_root = folder / "release"
+                (folder / "candidate.tar").write_bytes(candidate)
+                if release_root.exists():
+                    if context_digest(release.snapshot(release_root, CONTEXT, context_digest))[0] != digest:
+                        raise ValueError("prepared release changed across broker restart")
+                else:
+                    release.extract(release_root, candidate, context_digest)
+                job.update(inputs_sha256=digest, base_inputs_sha256=context_digest(live)[0],
+                           changed_paths=changed, release_root=str(release_root),
+                           phase="admitted")
+                self._save(job)
+                self.active = job["job_id"]
+                self.pool.submit(self._run, job, candidate)
+                return
+            except Exception as error:
+                job.update(status="failed", phase="admission_failed",
+                           reason=scrub(str(error), self.runner.secrets))
+                self._save(job)
+
     def _view(self, job):
         raw = scrub(job.get("log", ""), self.runner.secrets).encode("utf-8")
         tail = raw[-PUBLIC_LOG:].decode("utf-8", "replace")
@@ -442,7 +613,7 @@ class Broker:
         # the public byte limit. Storage can retain a larger bounded log.
         while len(tail.encode("utf-8")) > PUBLIC_LOG:
             tail = tail[1:]
-        view = {key: job[key] for key in ("job_id", "operation", "status", "phase", "inputs_sha256", "created_at", "images", "rollback", "tool_name", "access_fingerprint") if key in job}
+        view = {key: job[key] for key in ("job_id", "operation", "status", "phase", "inputs_sha256", "created_at", "images", "rollback", "tool_name", "access_fingerprint", "isolated") if key in job}
         if "reason" in job:
             view["reason"] = scrub(job["reason"], self.runner.secrets).encode("utf-8")[:4096].decode("utf-8", "ignore")
         return view | {"log": tail, "log_truncated": len(raw) > PUBLIC_LOG, "log_bytes": len(raw)}
@@ -453,7 +624,7 @@ class Broker:
 
     def _incoming_lease(self, trusted):
         deadline, fingerprint = trusted.get("lease_until"), trusted.get("access_fingerprint")
-        max_lease = 4 * 3600 if trusted.get("local_caller") is True else 35
+        max_lease = 4 * 3600 if trusted.get("local_caller") is True or trusted.get("bridge_caller") is True else 35
         if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not time.time() < deadline <= time.time() + max_lease:
             raise ValueError("current bounded host authorization lease required")
         if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
@@ -484,7 +655,7 @@ class Broker:
         if not isinstance(request, dict) or set(request) - {"id", "name", "arguments", "workspace", "timeout_seconds", "trusted"}:
             raise ValueError("invalid broker request")
         trusted, workspace, args = request.get("trusted"), request.get("workspace"), request.get("arguments", {})
-        if not isinstance(trusted, dict) or not {"user_id", "session_id"} <= set(trusted) or set(trusted) - {"user_id", "session_id", "lease_until", "access_fingerprint", "local_caller"}:
+        if not isinstance(trusted, dict) or not {"user_id", "session_id"} <= set(trusted) or set(trusted) - {"user_id", "session_id", "lease_until", "access_fingerprint", "local_caller", "bridge_caller"}:
             raise ValueError("trusted caller required")
         if not isinstance(trusted["user_id"], str) or not 1 <= len(trusted["user_id"]) <= 128 or "\0" in trusted["user_id"]:
             raise ValueError("invalid caller")
@@ -517,9 +688,9 @@ class Broker:
                         # Expired authorization cannot be revived by renewal.
                         if job.get("lease_until", 0) <= time.time():
                             continue
-                        # A deployment already replacing this API keeps its bounded
+                        # A queued isolated release or deployment keeps its bounded
                         # commit lease while still accepting live revocation.
-                        job["lease_until"] = max(job["lease_until"], deadline) if job.get("effects_started") else deadline
+                        job["lease_until"] = max(job["lease_until"], deadline) if job.get("effects_started") or job.get("isolated") else deadline
                     else:
                         job["revoked"] = True
                     self._save(job)
@@ -545,15 +716,102 @@ class Broker:
                         return {"status": "ok", "service": "v3-build-worker.service",
                                 "active": True, "interrupted_job": None}
                 raise RuntimeError("Restart requested but fresh worker readiness was not confirmed; inspect host before retry")
+            if name == "v3_source_read":
+                if set(args) - {"task_id", "path", "offset", "limit"} or not {"task_id", "path"} <= set(args):
+                    raise ValueError("source read requires task_id and path")
+                task_id, name_path = args["task_id"], args["path"]
+                if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id):
+                    raise ValueError("bounded task ID required")
+                if not isinstance(name_path, str) or not re.fullmatch(r"[A-Za-z0-9_./-]{1,240}", name_path):
+                    raise ValueError("bounded source path required")
+                parts = name_path.split("/")
+                if any(part in ("", ".", "..") for part in parts) or parts[0] in ("data", "workspaces"):
+                    raise ValueError("source read path denied")
+                offset, limit = args.get("offset", 1), args.get("limit", 200)
+                if type(offset) is not int or offset < 1 or type(limit) is not int or not 1 <= limit <= 200:
+                    raise ValueError("bounded source line range required")
+                key = hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest()
+                item = self.work.get(key)
+                if not item or item.get("mode") != "isolated" or item["status"] != "open":
+                    raise ValueError("open isolated task required")
+                root = self.work_dir / "trees" / key
+                source = root / "v3" / name_path
+                if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to((root / "v3").resolve()):
+                    raise ValueError("source file unavailable")
+                data = source.read_bytes()
+                if len(data) > 1024 * 1024 or b"\0" in data:
+                    raise ValueError("source read exceeds text bound")
+                lines = data.decode("utf-8").splitlines()
+                selected = lines[offset - 1:offset - 1 + limit]
+                if len(canonical(selected)) > 16000:
+                    raise ValueError("source read result exceeds bound; request fewer lines")
+                return {"task_id": task_id, "path": name_path, "offset": offset,
+                        "lines": selected,
+                        "total_lines": len(lines),
+                        "workspace_inputs_sha256": context_digest(
+                            release.snapshot(root, CONTEXT, context_digest))[0]}
+            if name == "v3_source_receipt":
+                if set(args) != {"task_id", "request_id"}:
+                    raise ValueError("bridge source receipt request denied")
+                item = self.work.get(hashlib.sha256(canonical([trusted["user_id"], workspace, args["task_id"]])).hexdigest())
+                receipt = item.get("applies", {}).get(args["request_id"]) if item else None
+                if not receipt:
+                    raise ValueError("source receipt unavailable")
+                return dict(receipt)
+            if name == "v3_source_apply":
+                if set(args) != {"task_id", "request_id", "patch", "expected_inputs_sha256"}:
+                    raise ValueError("bridge source apply request denied")
+                task_id, request_id = args["task_id"], args["request_id"]
+                if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id) or not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id):
+                    raise ValueError("bounded task and request IDs required")
+                item = self.work.get(hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest())
+                if not item or item["status"] != "open":
+                    raise ValueError("registered open bridge task required")
+                patch = args["patch"]
+                if not isinstance(patch, str) or not 0 < len(patch.encode()) <= 1024 * 1024:
+                    raise ValueError("bounded text patch required")
+                digest = hashlib.sha256(canonical(args)).hexdigest()
+                receipt = item.setdefault("applies", {}).get(request_id)
+                if receipt:
+                    if receipt["request_sha256"] != digest:
+                        raise ValueError("request_id reused with changed source apply")
+                    return dict(receipt)
+                isolated = item.get("mode") == "isolated"
+                if self.active is not None and not isolated:
+                    raise ValueError("build active; source apply denied")
+                tree = self.work_dir / "trees" / item["key"] if isolated else self.runner.source
+                current, _ = context_digest(
+                    release.snapshot(tree, CONTEXT, context_digest) if isolated else self.runner.snapshot())
+                if current != args["expected_inputs_sha256"]:
+                    raise ValueError("stale source inputs")
+                source = tree / "v3"
+                paths = inspect_source_patch(source, patch)
+                receipt = {"task_id": task_id, "request_id": request_id, "request_sha256": digest,
+                           "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
+                           "status": "dispatching", "paths": paths}
+                item["applies"][request_id] = receipt
+                self._save_work()
+                try:
+                    source_git(source, ["apply", "--whitespace=error", "-"], patch.encode())
+                except Exception:
+                    receipt.update(status="uncertain", reason="source apply outcome requires review")
+                else:
+                    receipt.update(status="success", reason="checked patch applied")
+                self._save_work()
+                return dict(receipt)
             if name == "v3_build_work":
-                if set(args) - {"action", "task_id", "summary", "expected_inputs_sha256"}:
+                if set(args) - {"action", "task_id", "summary", "expected_inputs_sha256", "mode"}:
                     raise ValueError("unsupported work argument")
                 action = args.get("action")
                 if action == "status":
                     if set(args) != {"action"}:
                         raise ValueError("status takes no work arguments")
                     own = [dict(task_id=i["task_id"], status=i["status"], summary=i["summary"],
-                                inputs_sha256=i.get("inputs_sha256"), job_id=i.get("job_id"))
+                                inputs_sha256=i.get("inputs_sha256"), job_id=i.get("job_id"),
+                                mode=i.get("mode", "shared"), workspace_path=i.get("workspace_path"),
+                                workspace_inputs_sha256=(context_digest(release.snapshot(
+                                    self.work_dir / "trees" / i["key"], CONTEXT, context_digest))[0]
+                                    if i.get("mode") == "isolated" and i["status"] == "open" else None))
                            for i in self.work.values() if self._owned(i, trusted, workspace)]
                     return {"open_count": len(self._open_work()), "own": own[-20:],
                             "busy": self.active is not None}
@@ -565,24 +823,45 @@ class Broker:
                 key = hashlib.sha256(canonical([trusted["user_id"], workspace, task_id])).hexdigest()
                 item = self.work.get(key)
                 if action == "begin":
-                    if set(args) != {"action", "task_id", "summary"}:
+                    if set(args) not in (
+                            {"action", "task_id", "summary"},
+                            {"action", "task_id", "summary", "mode"}):
                         raise ValueError("begin requires task_id and summary")
+                    mode = args.get("mode", "shared")
+                    if mode not in ("shared", "isolated"):
+                        raise ValueError("unsupported source work mode")
+                    if any(work.get("mode", "shared") != mode for work in self._open_work()):
+                        raise ValueError("shared and isolated work modes cannot overlap")
+                    if mode == "shared" and any(job.get("isolated") and job["status"] in ("queued", "running") for job in self.jobs.values()):
+                        raise ValueError("isolated release queue active")
                     summary = args["summary"]
                     if not isinstance(summary, str) or not 1 <= len(summary) <= 200 or any(ord(c) < 32 for c in summary):
                         raise ValueError("bounded summary required")
                     if item:
-                        if item["summary"] != summary:
-                            raise ValueError("task_id reused with changed summary")
-                        return {"task_id": task_id, "status": item["status"], "open_count": len(self._open_work())}
-                    if self.active is not None:
+                        if item["summary"] != summary or item.get("mode", "shared") != mode:
+                            raise ValueError("task_id reused with changed summary or mode")
+                        return {"task_id": task_id, "status": item["status"],
+                                "open_count": len(self._open_work()),
+                                "workspace_path": item.get("workspace_path")}
+                    if mode == "shared" and self.active is not None:
                         raise ValueError("build or deployment active; wait before beginning new work")
                     if len(self.work) >= 1000:
                         raise ValueError("coordination registry full; administrator maintenance required")
-                    self.work[key] = {"task_id": task_id, "user_id": trusted["user_id"],
-                                      "workspace": workspace, "summary": summary, "status": "open",
-                                      "created_at": time.time()}
+                    item = {"task_id": task_id, "user_id": trusted["user_id"],
+                            "workspace": workspace, "summary": summary, "status": "open",
+                            "created_at": time.time(), "mode": mode, "key": key, "applies": {}}
+                    if mode == "isolated":
+                        blob = self._current_release_blob()
+                        folder = self.work_dir / "trees" / key
+                        release.extract(folder, blob, context_digest)
+                        (folder / "baseline.tar").write_bytes(blob)
+                        item["workspace_path"] = str(folder / "v3")
+                        item["base_inputs_sha256"] = context_digest(blob)[0]
+                    self.work[key] = item
                     self._save_work()
-                    return {"task_id": task_id, "status": "open", "open_count": len(self._open_work())}
+                    return {"task_id": task_id, "status": "open", "open_count": len(self._open_work()),
+                            "workspace_path": item.get("workspace_path"),
+                            "workspace_inputs_sha256": item.get("base_inputs_sha256")}
                 if action == "abandon":
                     if set(args) != {"action", "task_id"} or not item or item["status"] != "open":
                         raise ValueError("only an open task in this session may be abandoned")
@@ -599,9 +878,41 @@ class Broker:
                 if item["status"] == "closed":
                     if item["inputs_sha256"] != expected:
                         raise ValueError("closed task digest cannot change")
-                    job_id = self._auto_schedule(item, trusted, workspace)
+                    job_id = (item.get("job_id") if item.get("mode") == "isolated"
+                              else self._auto_schedule(item, trusted, workspace))
                     return {"task_id": task_id, "status": "closed", "job_id": job_id,
                             "open_count": len(self._open_work())}
+                if item.get("mode") == "isolated":
+                    folder = self.work_dir / "trees" / key
+                    task_blob = release.snapshot(folder, CONTEXT, context_digest)
+                    current, _ = context_digest(task_blob)
+                    if current != expected:
+                        raise ValueError("stale work inputs")
+                    base_blob = (folder / "baseline.tar").read_bytes()
+                    release.candidate(base_blob, task_blob, base_blob, context_digest)
+                    lease_until, fingerprint = self._incoming_lease(trusted)
+                    job_id = str(uuid.uuid4())
+                    private = self.state / job_id
+                    private.mkdir(mode=0o700)
+                    (private / "base.tar").write_bytes(base_blob)
+                    (private / "task.tar").write_bytes(task_blob)
+                    job = {"job_id": job_id, "request_key": "task-" + key,
+                           "body_digest": hashlib.sha256(canonical([task_id, current])).hexdigest(),
+                           "user_id": trusted["user_id"], "workspace": workspace,
+                           "operation": "build_deploy", "isolated": True, "inputs_sha256": current,
+                           "created_at": time.time(), "status": "queued", "phase": "waiting",
+                           "images": {}, "log": "", "tool_name": "v3_build_work",
+                           "lease_until": max(lease_until, time.time() + 4 * 3600),
+                           "access_fingerprint": fingerprint, "revoked": False}
+                    self._save(job)
+                    self.jobs[job_id] = job
+                    item.update(status="closed", inputs_sha256=current, job_id=job_id,
+                                finished_at=time.time())
+                    self._save_work()
+                    self._start_next()
+                    return {"task_id": task_id, "status": "closed",
+                            "open_count": len(self._open_work()), "job_id": job_id,
+                            "inputs_sha256": current}
                 if self.active is not None:
                     raise ValueError("build or deployment active; close after it finishes")
                 current, _ = context_digest(self.runner.snapshot())
@@ -704,6 +1015,7 @@ class Broker:
                 job["status"] = "running"
                 self._save(job)
             if job["operation"] in ("build", "build_deploy"):
+                self.runner.check_space(MIN_BUILD_FREE)
                 # Capture current environment values privately solely to scrub
                 # any accidental occurrence in compiler output.
                 for target in TARGETS:
@@ -718,11 +1030,12 @@ class Broker:
                         job["images"][role] = image
                         job["log"] = scrub(job["log"] + log, self.runner.secrets)
                         self._save(job)
+                self.runner.check_space(MIN_DEPLOY_FREE)
             if job["operation"] in ("deploy", "build_deploy"):
                 self._phase(job, "capturing_rollback")
                 previous = {role: self.runner.inspect(name) for role, name in zip(("api", "loop"), TARGETS)}
                 private = self.state / job["job_id"]
-                private.mkdir(mode=0o700)
+                private.mkdir(mode=0o700, exist_ok=bool(job.get("isolated")))
                 # Credentials remain in protected host state, never tool output.
                 fd = os.open(private / "container-config.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as stream:
@@ -730,9 +1043,15 @@ class Broker:
                     stream.flush()
                     os.fsync(stream.fileno())
                 self.runner.export([previous[r]["Image"] for r in ("api", "loop")], private / "rollback-images.tar")
-                if context_digest(self.runner.snapshot())[0] != job["inputs_sha256"]:
+                if job.get("isolated"):
+                    prepared = release.snapshot(Path(job["release_root"]), CONTEXT, context_digest)
+                    if context_digest(prepared)[0] != job["inputs_sha256"]:
+                        raise ValueError("frozen release changed before deployment")
+                    if context_digest(self._current_release_blob())[0] != job["base_inputs_sha256"]:
+                        raise ValueError("release base changed before deployment")
+                elif context_digest(self.runner.snapshot())[0] != job["inputs_sha256"]:
                     raise ValueError("build inputs changed before deployment")
-                if self._open_work():
+                if self._open_work() and not job.get("isolated"):
                     raise ValueError("registered V3 source work reopened before deployment")
                 with self.lock:
                     job["rollback"] = {"api": TARGETS[0] + "-pre-build-" + job["job_id"], "loop": TARGETS[1] + "-pre-build-" + job["job_id"]}
@@ -755,7 +1074,11 @@ class Broker:
                     self._phase(job, "renaming_" + role)
                     self.runner.rename(name, job["rollback"][role])
                     self._phase(job, "creating_" + role)
-                    self.runner.create(name, job["images"][role], previous[role])
+                    if job.get("isolated"):
+                        self.runner.create(name, job["images"][role], previous[role],
+                                           job["release_root"])
+                    else:
+                        self.runner.create(name, job["images"][role], previous[role])
                     self._phase(job, "starting_" + role)
                     self.runner.start(name)
                 # API readiness depends on the loop heartbeat. Start both
@@ -765,7 +1088,12 @@ class Broker:
                     self._phase(job, "checking_" + role)
                     if not self.runner.healthy(name, job["images"][role]):
                         raise RuntimeError("replacement V3 " + role + " not healthy; rollback material retained")
-            after, _ = context_digest(self.runner.snapshot())
+            if job.get("isolated"):
+                self._phase(job, "promoting_checkout")
+                self.runner.promote_checkout(self._current_release_blob(), blob, job["changed_paths"])
+            after, _ = context_digest(
+                release.snapshot(Path(job["release_root"]), CONTEXT, context_digest)
+                if job.get("isolated") else self.runner.snapshot())
             with self.lock:
                 self._lease(job)
                 job["status"] = "completed" if after == job["inputs_sha256"] else ("uncertain" if mutated else "stale")
@@ -780,6 +1108,8 @@ class Broker:
         finally:
             with self.lock:
                 self.active = None
+                if job["status"] not in ("uncertain", "interrupted"):
+                    self._start_next()
 
     def request_shutdown(self):
         with self.lock:
@@ -798,28 +1128,36 @@ class Broker:
             self.lease = None
 
 
-async def serve(broker, listener):
-    async def client(reader, writer):
+async def serve(broker, listener, bridge_listener=None):
+    async def client(reader, writer, bridge=False):
         request = None
         try:
             sock = writer.get_extra_info("socket")
             _, uid, _ = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid not in (1000, 1100):
+            if uid not in (1000, 1100) or (bridge and uid != 1000):
                 raise ValueError("broker caller identity denied")
             raw = await asyncio.wait_for(reader.readline(), 5)
-            if len(raw) > 65536 or not raw.endswith(b"\n"):
+            if len(raw) > 2 * 1024 * 1024 or not raw.endswith(b"\n"):
                 raise ValueError("bounded request required")
             request = json.loads(raw)
-            if uid == 1000:
-                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job"):
+            if bridge:
+                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"):
+                    raise ValueError("bridge operation denied")
+                request["workspace"] = BRIDGE_WORKSPACE
+                request["trusted"] = {"user_id": "python-v2-admin", "session_id": BRIDGE_WORKSPACE,
+                    "lease_until": time.time() + 4 * 3600,
+                    "access_fingerprint": hashlib.sha256(b"python-v2-build-bridge").hexdigest(),
+                    "bridge_caller": True}
+            elif uid == 1000:
+                if set(request) - {"id", "name", "arguments"} or request.get("name") not in ("v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"):
                     raise ValueError("local caller operation denied")
                 request["workspace"] = LOCAL_WORKSPACE
                 request["trusted"] = {"user_id": "codex-local", "session_id": LOCAL_WORKSPACE,
                     "lease_until": time.time() + 4 * 3600,
                     "access_fingerprint": hashlib.sha256(b"local-codex-build").hexdigest(),
                     "local_caller": True}
-            elif request.get("trusted", {}).get("local_caller") is not None:
-                raise ValueError("local caller authority cannot be supplied by the app")
+            elif request.get("trusted", {}).get("local_caller") is not None or request.get("trusted", {}).get("bridge_caller") is not None:
+                raise ValueError("local or bridge authority cannot be supplied by the app")
             result = await asyncio.to_thread(broker.handle, request)
             response = {"id": request.get("id"), "status": "success", "output": result}
         except Exception as error:
@@ -833,14 +1171,23 @@ async def serve(broker, listener):
     # That /proc/self/fd address is not valid in the unprivileged child, and
     # Python 3.13+ socket cleanup tries to stat it. The supervisor owns cleanup.
     options = {"cleanup_socket": False} if "cleanup_socket" in inspect.signature(asyncio.get_running_loop().create_unix_server).parameters else {}
-    server = await asyncio.start_unix_server(client, sock=listener, limit=65537, **options)
-    async with server:
-        await server.serve_forever()
+    server = await asyncio.start_unix_server(
+        client, sock=listener, limit=2 * 1024 * 1024 + 8192, **options)
+    if bridge_listener is None:
+        async with server:
+            await server.serve_forever()
+    else:
+        bridge_server = await asyncio.start_unix_server(
+            lambda reader, writer: client(reader, writer, True),
+            sock=bridge_listener, limit=2 * 1024 * 1024 + 8192, **options)
+        async with server, bridge_server:
+            await asyncio.gather(server.serve_forever(), bridge_server.serve_forever())
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--listener-fd", type=int, required=True)
+    parser.add_argument("--bridge-listener-fd", type=int)
     parser.add_argument("--snapshot-helper")
     parser.add_argument("--snapshot-socket")
     arguments = parser.parse_args()
@@ -849,9 +1196,10 @@ def main():
     listener = socket.socket(fileno=arguments.listener_fd)
     if listener.family != socket.AF_UNIX:
         raise SystemExit("Unix listener required")
+    bridge_listener = socket.socket(fileno=arguments.bridge_listener_fd) if arguments.bridge_listener_fd is not None else None
     broker = Broker(runner=Runner(snapshot_helper=arguments.snapshot_helper, snapshot_socket=arguments.snapshot_socket))
     async def run():
-        task = asyncio.create_task(serve(broker, listener))
+        task = asyncio.create_task(serve(broker, listener, bridge_listener))
         def stop():
             broker.request_shutdown()
             task.cancel()

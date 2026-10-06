@@ -7,7 +7,7 @@ NETWORK_TRANSPORT=None
 _SANDBOX_ROOT=contextvars.ContextVar("git_workspace_root",default=None)
 _RESTRICT=runpy.run_path(str(Path(__file__).resolve().parents[4]/"sandbox.py"))["restrict"]
 READS={"status","diff","log","show","branch_list","tag_list","stash_list"}
-OPS=READS|{"branch_create","branch_delete","tag_create","tag_delete","checkout","stash_push","stash_pop","add","reset","pull","push"}
+OPS=READS|{"branch_create","branch_delete","tag_create","tag_delete","checkout","merge","stash_push","stash_pop","add","reset","fetch","pull","push"}
 class Rejected(ValueError):pass
 class Uncertain(Exception):pass
 def exact(args,keys,required=()):
@@ -98,9 +98,11 @@ def replace_source(repo,raw,data,expected):
 
 def repository(base,raw):
  p=Path(base).resolve()
- for part in components(raw):
-  p=p/part
-  if p.is_symlink():raise Rejected("Symlink repository unavailable")
+ if raw!="__root__":
+  for part in components(raw):
+   p=p/part
+   if p.is_symlink():raise Rejected("Symlink repository unavailable")
+ elif p.is_symlink():raise Rejected("Symlink repository unavailable")
  g=p/".git"
  if not p.is_dir() or not g.is_dir() or g.is_symlink():raise Rejected("Ordinary workspace repository required")
  for name in ["commondir","objects/info/alternates","objects/info/http-alternates"]:
@@ -118,7 +120,7 @@ async def command(repo,argv,mutable=False,env_extra=None,local=False,timeout=30)
  if env_extra:
   if not isinstance(env_extra,dict) or any(k not in {"GIT_ASKPASS","V3_GIT_URL","V3_GIT_USERNAME","V3_GIT_TOKEN"} or not isinstance(v,str) for k,v in env_extra.items()):raise Rejected("Invalid trusted transport")
   env.update(env_extra)
- opts=["-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false","-c","diff.external=","-c","commit.gpgsign=false","-c","tag.gpgsign=false","-c","credential.helper=","-c","credential.useHttpPath=true","-c","http.followRedirects=false","-c","http.sslVerify=true","-c","protocol.ext.allow=never","-c","protocol.file.allow="+("always" if local else "never")]
+ opts=["-c","safe.directory="+str(repo),"-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false","-c","diff.external=","-c","commit.gpgsign=false","-c","tag.gpgsign=false","-c","credential.helper=","-c","credential.useHttpPath=true","-c","http.followRedirects=false","-c","http.sslVerify=true","-c","protocol.ext.allow=never","-c","protocol.file.allow="+("always" if local else "never")]
  proc=await asyncio.create_subprocess_exec("git",*opts,*argv,cwd=repo,env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT,start_new_session=True,preexec_fn=lambda:(_RESTRICT(_SANDBOX_ROOT.get() or repo.parent,read_paths=(str(Path(__file__).resolve().parent/"askpass.py"),)) if env_extra else _RESTRICT(_SANDBOX_ROOT.get() or repo.parent)))
  output=bytearray()
  async def drain():
@@ -198,8 +200,8 @@ async def network(base,repo,remote,operation):
  if operation=="push":
   # Bounded outgoing-history scan; unknown/new remotes conservatively scan HEAD.
   await command(repo,["log","--no-ext-diff","--no-textconv","--no-show-signature","-p","HEAD","--not","--remotes="+ref(remote),"--"])
- branch=ref((await command(repo,["symbolic-ref","--quiet","--short","HEAD"])).decode().strip())
- argv=["pull","--ff-only","--no-rebase",target,branch] if operation=="pull" else ["push","--no-verify",target,"HEAD:refs/heads/"+branch]
+ branch=ref((await command(repo,["symbolic-ref","--quiet","--short","HEAD"])).decode().strip()) if operation!="fetch" else ""
+ argv=["fetch","--no-tags","--prune",ref(remote)] if operation=="fetch" else (["pull","--ff-only","--no-rebase",target,branch] if operation=="pull" else ["push","--no-verify",target,"HEAD:refs/heads/"+branch])
  output=await command(repo,argv,mutable=True,env_extra=env,local=local,timeout=120)
  if local and operation=="push":
   await command(repo,["update-ref","refs/remotes/"+ref(remote)+"/"+branch,await head(repo)],mutable=True)
@@ -221,8 +223,8 @@ def operation_arguments(args,op):
   "status":set(),"diff":{"paths","cached"},"log":{"paths","ref","limit"},
   "show":{"paths","ref"},"branch_list":set(),"tag_list":set(),"stash_list":set(),
   "branch_create":{"name","ref"},"branch_delete":{"name"},"tag_create":{"name","ref"},
-  "tag_delete":{"name"},"checkout":{"ref","paths"},"stash_push":{"message","paths"},
-  "stash_pop":set(),"add":{"paths"},"reset":{"paths"},"pull":{"remote"},"push":{"remote"}}
+  "tag_delete":{"name"},"checkout":{"ref","paths"},"merge":{"ref"},"stash_push":{"message","paths"},
+  "stash_pop":set(),"add":{"paths"},"reset":{"paths"},"fetch":{"remote"},"pull":{"remote"},"push":{"remote"}}
  allowed=common|applicable[op]
  for key,value in args.items():
   inert=value in ("",None) or key=="paths" and value==[] or key=="cached" and value is False or key=="limit" and type(value) is int and 1<=value<=100
@@ -245,10 +247,10 @@ async def git_tool(base,args):
  if type(count) is not int or not 1<=count<=100 or "cached" in args and type(args["cached"]) is not bool:raise Rejected("Invalid Git option")
  if op=="status":
   value=await snapshot(base,args.get("repo","webagent-v3"));value["notice"]=notice(value);return value
- if op in ("pull","push"):return {"text":(await network(base,p,args.get("remote","origin"),op)).decode()}
+ if op in ("fetch","pull","push"):return {"text":(await network(base,p,args.get("remote","origin"),op)).decode()}
  name=ref(args.get("name")) if op in ("branch_create","branch_delete","tag_create","tag_delete") else "main"
- selected=ref(args.get("ref")) if op=="checkout" else ref(args.get("ref","HEAD"))
- argv={"diff":["diff","--no-ext-diff","--no-textconv",*(["--cached"] if args.get("cached") else []),"--",*ps],"log":["log","--no-show-signature",f"-{count}","--format=%H %s",selected,"--",*ps],"show":["show","--no-ext-diff","--no-textconv","--no-show-signature",selected,"--",*ps],"branch_list":["branch","--list"],"branch_create":["branch",name,selected],"branch_delete":["branch","-d",name],"tag_list":["tag","--list"],"tag_create":["tag",name,selected],"tag_delete":["tag","-d",name],"checkout":["checkout",selected,"--",*ps] if ps else ["checkout",selected],"stash_list":["stash","list"],"stash_push":["stash","push","-m",text(args.get("message","Workspace checkpoint")),"--",*ps],"stash_pop":["stash","pop"],"add":["add","--",*ps],"reset":["reset","HEAD","--",*ps]}[op]
+ selected=ref(args.get("ref")) if op in ("checkout","merge") else ref(args.get("ref","HEAD"))
+ argv={"diff":["diff","--no-ext-diff","--no-textconv",*(["--cached"] if args.get("cached") else []),"--",*ps],"log":["log","--no-show-signature",f"-{count}","--format=%H %s",selected,"--",*ps],"show":["show","--no-ext-diff","--no-textconv","--no-show-signature",selected,"--",*ps],"branch_list":["branch","--list"],"branch_create":["branch",name,selected],"branch_delete":["branch","-d",name],"tag_list":["tag","--list"],"tag_create":["tag",name,selected],"tag_delete":["tag","-d",name],"checkout":["checkout",selected,"--",*ps] if ps else ["checkout",selected],"merge":["merge","--no-edit","--no-ff",selected],"stash_list":["stash","list"],"stash_push":["stash","push","-m",text(args.get("message","Workspace checkpoint")),"--",*ps],"stash_pop":["stash","pop"],"add":["add","--",*ps],"reset":["reset","HEAD","--",*ps]}[op]
  if op in ("add","reset") and not ps:raise Rejected("Exact paths required")
  return {"text":(await command(p,argv,mutable=op not in READS)).decode()}
 async def resolve_conflict(base,args):

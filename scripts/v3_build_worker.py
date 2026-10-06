@@ -23,6 +23,8 @@ import uuid
 
 TARGET = "webagent-dev-v3"
 ID = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
+COORDINATOR_SOCKET = Path("/home/ar/webagent-dev2/v3/runtime/build/python.sock")
+COORDINATOR_NAMES = {"v3_build_work", "v3_build_status", "v3_worker_job", "v3_source_apply", "v3_source_receipt", "v3_source_read"}
 
 def load_build(repo):
     spec = importlib.util.spec_from_file_location("v3_build_host", repo / "plugins/abilities/Administrator/v3_build/v3_build.py")
@@ -77,6 +79,30 @@ class Worker:
                 job.update(status="interrupted", error="Worker restarted; inspect host before resubmitting deployment")
                 self.save(job)
             self.jobs[job["id"]] = job
+
+    def coordinator(self, name, arguments):
+        """Authenticated HTTP callers use the broker's distinct Python identity."""
+        if name not in COORDINATOR_NAMES or not isinstance(arguments, dict):
+            raise ValueError("Unsupported coordinator request")
+        request_id = str(uuid.uuid4())
+        payload = json.dumps({"id": request_id, "name": name, "arguments": arguments},
+                             separators=(",", ":")).encode() + b"\n"
+        if len(payload) > 2 * 1024 * 1024:
+            raise ValueError("Coordinator request too large")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(75)
+            connection.connect(str(COORDINATOR_SOCKET))
+            connection.sendall(payload)
+            with connection.makefile("rb") as stream:
+                raw = stream.readline(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024 or not raw.endswith(b"\n"):
+            raise RuntimeError("Bounded coordinator response unavailable")
+        response = json.loads(raw)
+        if response.get("id") != request_id:
+            raise RuntimeError("Coordinator response ID mismatch")
+        if response.get("status") != "success":
+            return {"status": "rejected", "error": str(response.get("output", "Coordinator rejected request"))[:512]}
+        return response["output"]
 
     def save(self, job):
         path = self.state / (job["id"] + ".json")
@@ -274,12 +300,17 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Timer(0.5, restart_process).start()
                 self.respond(202, {"status": "restarting", "previous_pid": previous_pid})
                 return
-            if post and self.path == "/v1/jobs":
+            if post and self.path == "/v1/coordinator":
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 2048: raise ValueError("Invalid body size")
+                if not 0 < size <= 2 * 1024 * 1024:
+                    raise ValueError("Invalid coordinator body size")
                 request = json.loads(self.rfile.read(size))
-                if not isinstance(request, dict): raise ValueError("Expected JSON object")
-                return self.respond(202, worker.submit(request))
+                if not isinstance(request, dict) or set(request) != {"name", "arguments"}:
+                    raise ValueError("Invalid coordinator request")
+                return self.respond(200, worker.coordinator(request["name"], request["arguments"]))
+            if post and self.path == "/v1/jobs":
+                # Legacy direct submissions bypass the native shared work registry.
+                return self.respond(410, {"error": "Use the native V3 coordinator"})
             if not post and self.path == "/v1/status": return self.respond(200, worker.status())
             if not post and self.path.startswith("/v1/jobs/"):
                 key = self.path.removeprefix("/v1/jobs/")

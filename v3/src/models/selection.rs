@@ -843,4 +843,12 @@ mod upstream_id_tests {
             assert!(!crate::platform_catalog::valid_model(invalid));
         }
     }
+    #[test]
+    fn record_ids_obey_ascii_and_length_limits() {
+        let max = "a".repeat(128);
+        assert!(super::valid_id(&max));
+        assert!(!super::valid_id(&format!("{max}a")));
+        assert!(!super::valid_id("model/unsafe"));
+        assert!(!super::valid_id("modél"));
+    }
 }

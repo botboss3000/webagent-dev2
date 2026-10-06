@@ -1,5 +1,5 @@
 FROM cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38 AS preview_tunnel
-FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS tested_builder
 WORKDIR /build
 COPY v3/Cargo.toml v3/Cargo.lock ./
 COPY v3/build.rs ./build.rs
@@ -14,17 +14,22 @@ COPY v3/plugins ./plugins
 COPY v3/plugins/abilities ./plugins/abilities
 COPY v3/ui ./ui
 ENV CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-RUN cargo test --locked -- --test-threads=1
-RUN cargo build --release --locked
+# Keep Cargo downloads and artifacts across source changes; publish the tested
+# binary outside the cache mount so both runtime targets copy one exact build.
+RUN --mount=type=cache,id=webagent-v3-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=webagent-v3-target,target=/build/target,sharing=locked \
+    cargo test --locked -- --test-threads=1 \
+    && cargo build --release --locked \
+    && install -Dm755 /build/target/release/webagent-v3 /out/webagent-v3
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS api
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates curl tini git ripgrep build-essential pkg-config chromium chromium-driver python3-selenium \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1100 v3 && useradd -u 1100 -g 1100 -M -s /usr/sbin/nologin v3app \
     && useradd -u 1101 -g 1100 -M -s /usr/sbin/nologin v3tools
 COPY --from=preview_tunnel /usr/local/bin/cloudflared /usr/local/bin/cloudflared
-COPY --from=builder /build/target/release/webagent-v3 /usr/local/bin/webagent-v3
-COPY --from=builder /usr/local/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu /opt/rust
+COPY --from=tested_builder /out/webagent-v3 /usr/local/bin/webagent-v3
+COPY --from=tested_builder /usr/local/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu /opt/rust
 COPY v3/worker.py v3/sandbox.py v3/launch.py v3/promote.py /opt/v3/
 COPY v3/plugins/abilities /opt/v3/plugins/abilities
 COPY v3/plugins/gates /opt/v3/plugins/gates
@@ -42,3 +47,16 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 CMD curl --fail http://127.0.0.1:8080/health/ready || exit 1
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["/usr/bin/python3","-I","/opt/v3/launch.py"]
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS loop
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1100 v3 && useradd -u 1100 -g 1100 -M -s /usr/sbin/nologin v3loop
+COPY --from=tested_builder /out/webagent-v3 /usr/local/bin/webagent-v3
+COPY v3/plugins/abilities /opt/v3/plugins/abilities
+COPY v3/plugins/gates /opt/v3/plugins/gates
+ENV V3_PROCESS_ROLE=loop V3_STATE_ROOT=/state V3_WORKSPACE_ROOT=/workspaces
+USER 1100:1100
+HEALTHCHECK --interval=5s --timeout=3s --start-period=20s --retries=3 CMD ["env","V3_PROCESS_ROLE=health","/usr/local/bin/webagent-v3"]
+ENTRYPOINT ["/usr/bin/tini","--"]
+CMD ["/usr/local/bin/webagent-v3"]

@@ -218,6 +218,24 @@ async def execute_locked(request, lock):
         return {"status":"success","output":module.notice(value)}
     if name in ("git_tool", "resolve_conflict", "commit_and_push"):
         return await administrator_plugin("git_control").execute(name, args, base, request.get("trusted"))
+    if name == "administrator_file_manager":
+        module = PLUGINS.get("file_manager")
+        if module is None:
+            path = Path(__file__).parent / "plugins/abilities/Administrator/git_control/file_manager.py"
+            spec = importlib.util.spec_from_file_location("v3_file_manager", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            PLUGINS["file_manager"] = module
+        return await asyncio.to_thread(module.execute, args)
+    if name == "administrator_file_git":
+        module = PLUGINS.get("file_manager")
+        if module is None:
+            path = Path(__file__).parent / "plugins/abilities/Administrator/git_control/file_manager.py"
+            spec = importlib.util.spec_from_file_location("v3_file_manager", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            PLUGINS["file_manager"] = module
+        return await module.git_action(args, request.get("trusted"), administrator_plugin("git_control"))
     if name in ("terminal_open", "terminal_read", "terminal_send", "terminal_wait", "terminal_list", "terminal_close"):
         return await administrator_plugin("terminal_control").execute(name, args, base)
     if name in ("v3_workspace_status", "v3_workspace_action"):

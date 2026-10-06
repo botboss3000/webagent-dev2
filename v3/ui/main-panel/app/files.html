@@ -1,0 +1,67 @@
+<div id="files-restricted-overlay" style="display:none;">
+  <div class="files-restricted-card">
+    <div class="files-restricted-icon"><i data-lucide="lock" style="width:32px;height:32px;"></i></div>
+    <div class="files-restricted-title">Restricted Access</div>
+    <div class="files-restricted-desc">File Manager is only available for app admins.</div>
+  </div>
+</div>
+<div id="file-manager" class="admin-tools">
+  <aside id="files-sidebar" class="files-sidebar" data-view="explorer" data-state="split">
+          <!-- File Manager panel (file tree). Git Control is a sibling sidebar
+               mode inside this same top-level Admin Tools view. -->
+          <div class="files-sidebar-panel" id="files-panel-explorer" data-view="explorer" data-explorer-mode="files">
+            <div class="files-sidebar-header">
+              <div class="files-sidebar-actions">
+                <button class="files-icon-btn" id="files-show-git" title="Open Git Control" aria-label="Open Git Control"><i data-lucide="git-branch" class="lucide-icon"></i></button>
+                <button class="files-icon-btn" id="files-new-file" title="New file"><i data-lucide="file-plus" class="lucide-icon"></i></button>
+                <button class="files-icon-btn" id="files-new-folder" title="New folder"><i data-lucide="folder-plus" class="lucide-icon"></i></button>
+                <button class="files-icon-btn" id="files-refresh" title="Refresh"><i data-lucide="refresh-cw" class="lucide-icon"></i></button>
+                <button class="files-icon-btn" id="files-collapse-all" title="Collapse all"><i data-lucide="chevrons-down-up" class="lucide-icon"></i></button>
+                <button class="files-icon-btn" id="files-more-btn" title="Git tracking view" aria-label="Git tracking view" aria-haspopup="true" aria-expanded="false"><i data-lucide="more-horizontal" class="lucide-icon"></i></button>
+              </div>
+            </div>
+            <div id="files-breadcrumb" class="files-breadcrumb" aria-label="Current path">
+              <button class="files-breadcrumb-up" id="files-breadcrumb-up" title="Go to parent directory"><i data-lucide="arrow-up" class="lucide-icon"></i></button>
+              <button class="files-breadcrumb-home" id="files-breadcrumb-home" title="Back to project root"><i data-lucide="home" class="lucide-icon"></i></button>
+              <span class="files-current-path" id="files-current-path" title=""></span>
+            </div>
+            <div id="files-tree" class="files-tree" role="tree"></div>
+          </div>
+          <!-- Git Control has its own header and action area. Only the File
+               Manager navigation button ships now; future Git actions belong
+               in #files-git-header-actions. -->
+          <div class="files-sidebar-panel" id="files-panel-git" data-view="explorer" data-explorer-mode="git" hidden>
+            <div class="files-sidebar-header">
+              <div class="files-sidebar-actions" id="files-git-header-actions">
+                <button class="files-icon-btn" id="files-show-explorer" title="Back to File Manager" aria-label="Back to File Manager"><i data-lucide="folder-tree" class="lucide-icon"></i></button>
+              </div>
+            </div>
+            <div id="fg-body" class="fg-body">
+              <div class="fg-loading">Loading Git Control...</div>
+            </div>
+          </div>
+  </aside>
+  <div id="files-resize-handle" class="files-resize-handle" title="Drag to resize"></div>
+  <button id="files-sidebar-toggle" class="files-sidebar-toggle" title="Toggle sidebar">
+    <i data-lucide="panel-left" class="lucide-icon"></i>
+  </button>
+  <!-- Shared File Manager workspace: file and commit-detail tabs. -->
+        <main class="files-main" id="files-explorer-main" data-view="explorer">
+          <div class="files-tabs-wrap">
+            <button id="files-tabs-prev" class="files-tabs-chev" title="Scroll tabs left"><i data-lucide="chevron-left" class="lucide-icon"></i></button>
+            <div id="files-tabs" class="files-tabs" role="tablist"></div>
+            <button id="files-tabs-next" class="files-tabs-chev" title="Scroll tabs right"><i data-lucide="chevron-right" class="lucide-icon"></i></button>
+          </div>
+          <div id="files-content" class="files-content">
+            <div class="files-welcome">
+              <i data-lucide="folder-tree" class="lucide-icon files-welcome-icon"></i>
+              <div class="files-welcome-title">File Editor</div>
+              <div class="files-welcome-text">Pick a file from the Explorer on the left to open it here.</div>
+            </div>
+          </div>
+          <div id="files-status-bar" class="files-status-bar">
+            <span class="files-status-spacer"></span>
+            <span id="files-status-info" class="files-status-info"></span>
+          </div>
+        </main>
+</div>

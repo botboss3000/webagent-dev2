@@ -291,6 +291,15 @@ checks live installation and tool authority and renews the job's short lease.
 The broker also accepts the development checkout owner over the same Unix socket
 for only work coordination and read-only status/job polling. It derives Codex's
 identity from the Unix peer, never a client-supplied V3 user or credential.
+The V2 Python Administrator reaches the same broker through its authenticated
+private build worker and a separate, protected Python socket. That socket assigns
+a fixed Python identity; neither the V2 caller nor its patch can claim Codex or
+a V3 session identity. The broker requires an open task and exact source digest
+before checking and applying a bounded V3 text patch. It saves an apply receipt
+before the write so restart or timeout cannot silently repeat an uncertain edit.
+V2 Workspace proposals stay isolated until this explicit apply. Closing the last
+Python task has the same automatic development build/deployment effect as a V3
+task, so the V2 finish tool has a separate confirmation gate.
 An unregistered external editor is outside the registry, so the digest remains
 the final source-race fence.
 Computer Control and Program Screenshot remain excluded and unavailable. The

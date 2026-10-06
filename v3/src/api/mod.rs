@@ -15,6 +15,7 @@ mod service_admin;
 mod administrator;
 mod model_catalog;
 mod account_models;
+mod file_manager;
 pub(crate) mod repository;
 pub(crate) use auth::*;
 pub(crate) use admin::*;
@@ -42,6 +43,7 @@ pub(super) fn router(app: App) -> Router {
         .route("/provider/login", post(provider_start))
         .route("/provider/logout", post(provider_logout))
         .route("/control", put(control))
+        .route("/file-manager", post(file_manager::action))
         .route_layer(middleware::from_fn_with_state(app.clone(), admin_auth));
     // Model handlers enforce tenant authority themselves; all retain browser auth and CSRF.
     let api = Router::new()

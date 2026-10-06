@@ -50,18 +50,38 @@ pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->R
     let access=scoped.store.live_access(scoped.store.current_user_id(),&agent).await?;
     let work_finish=name=="v3_build_work_finish";
     let policy_name=if work_finish {"v3_build_work"} else {name};
-    if !access.principal.administrator() || !access.admitted() || live_tool_decision(&scoped,&access,policy_name,
-        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission==access::Permission::Deny {
+    let work_permission=live_tool_decision(&scoped,&access,policy_name,
+        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission;
+    if !access.principal.administrator() || !access.admitted() || work_permission==access::Permission::Deny {
         bail!("Host build authority revoked");
     }
-    // The combined job may replace containers without another model tool call.
-    // Require live automatic deployment authority for its whole lease.
-    if work_finish && live_tool_decision(&scoped,&access,"v3_worker_submit",
-        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission!=access::Permission::Auto {
-        bail!("Automatic V3 deployment is not authorized");
+    // An Ask finish reaches this host only after explicit approval. Its queued job
+    // retains that authorization while the scoped policy fingerprint stays valid.
+    if work_finish {
+        let deployment_permission=live_tool_decision(&scoped,&access,"v3_worker_submit",
+            &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission;
+        if deployment_permission==access::Permission::Deny
+            || (deployment_permission==access::Permission::Ask && work_permission!=access::Permission::Ask) {
+            bail!("Automatic V3 deployment is not authorized");
+        }
     }
     Ok(digest(&json!([scoped.store.current_user_id(),sid,agent,access.context_fingerprint(),
         policy,revision,visibility,state,mode,run["loaded_abilities"],scoped.abilities.live_version()])))
+}
+fn build_work_arguments(args:&Value)->Result<Value> {
+    let object=args.as_object().ok_or_else(||anyhow!("Build work arguments must be an object"))?;
+    const KNOWN:&[&str]=&["action","task_id","summary","mode","expected_inputs_sha256"];
+    if object.keys().any(|key|!KNOWN.contains(&key.as_str())) {bail!("Unknown build work argument");}
+    let relevant:&[&str]=match args["action"].as_str().unwrap_or("") {
+        "status"=>&["action"],
+        "begin"=>&["action","task_id","summary","mode"],
+        "finish"=>&["action","task_id","expected_inputs_sha256"],
+        "abandon"=>&["action","task_id"],
+        _=>bail!("Unknown build work action"),
+    };
+    let mut forwarded=serde_json::Map::new();
+    for key in relevant {if let Some(value)=object.get(*key) {forwarded.insert((*key).into(),value.clone());}}
+    Ok(Value::Object(forwarded))
 }
 async fn host(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,cancel:CancellationToken)->Result<Value> {
     let fingerprint_name=if name=="v3_build_work" && args["action"]=="finish" {"v3_build_work_finish"} else {name};
@@ -72,7 +92,8 @@ async fn host(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,cancel:Cancell
         app.store.put(&format!("administrator_host:{sid}"),&json!({"session_id":sid,
             "run_id":run_id,"tool_name":fingerprint_name,"access_fingerprint":fingerprint})).await?;
     }
-    tools::execute_trusted(name,args,sid,std::path::Path::new("/run/v3/build/build.sock"),Some(trusted),cancel).await
+    let forwarded=if name=="v3_build_work" {build_work_arguments(args)?} else {args.clone()};
+    tools::execute_trusted(name,&forwarded,sid,std::path::Path::new("/run/v3/build/build.sock"),Some(trusted),cancel).await
 }
 
 fn workspace_worker_arguments(args:&Value)->Result<Value> {
@@ -183,7 +204,7 @@ pub async fn execute(app:&App,sid:&str,run_id:&str,name:&str,args:&Value,pending
             Ok(json!({"status":receipt["status"],"uncertain":receipt["result"]["uncertain"]==true,"output":receipt}))
         },
         "v3_workspace_action"=>receipt_action(app,sid,run_id,args,pending_id,policy_version,cancel).await,
-        "v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"|"v3_build_work"=>host(app,sid,run_id,name,args,cancel).await,
+        "v3_build_status"|"v3_build_worker_restart"|"v3_build_image"|"v3_worker_submit"|"v3_worker_job"|"v3_build_work"|"v3_source_read"|"v3_source_apply"|"v3_source_receipt"=>host(app,sid,run_id,name,args,cancel).await,
         "git_tool"|"resolve_conflict"|"commit_and_push"=>{
             let trusted=crate::api::repository::transport(app,sid).await?;
             worker(app,sid,name,args,Some(trusted),cancel).await
@@ -201,6 +222,20 @@ pub fn valid_development_path(path:&str,sid:&str,agent:&str)->bool {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn work_arguments_drop_irrelevant_optional_fields() {
+        let zero="0".repeat(64);
+        let begin=json!({"action":"begin","task_id":"v3-rust-parallel-1005a",
+            "summary":"Rust test","mode":"isolated","expected_inputs_sha256":zero});
+        assert_eq!(build_work_arguments(&begin).unwrap(),json!({"action":"begin",
+            "task_id":"v3-rust-parallel-1005a","summary":"Rust test","mode":"isolated"}));
+        assert_eq!(build_work_arguments(&json!({"action":"status","task_id":"ignored",
+            "expected_inputs_sha256":zero})).unwrap(),json!({"action":"status"}));
+        let finish=json!({"action":"finish","task_id":"v3-rust-parallel-1005a",
+            "expected_inputs_sha256":zero,"summary":"ignored"});
+        assert_eq!(build_work_arguments(&finish).unwrap(),json!({"action":"finish",
+            "task_id":"v3-rust-parallel-1005a","expected_inputs_sha256":zero}));
+        assert!(build_work_arguments(&json!({"action":"begin","unknown":true})).is_err());
+    }
     #[test] fn routes_are_current_session_and_fixed_origin(){
         assert!(valid_development_path("/app?session_id=own","own","agent-a"));
         assert!(!valid_development_path("/app?session_id=other","own","agent-a"));

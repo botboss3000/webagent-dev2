@@ -622,9 +622,56 @@
         "action": {"type": "string", "enum": ["status", "begin", "finish", "abandon"]},
         "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
         "summary": {"type": "string", "maxLength": 200},
+        "mode": {"type": "string", "enum": ["isolated"]},
         "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       },
       "required": ["action"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_source_read",
+    "description": "Read bounded lines from this open isolated V3 task source snapshot",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "path": {"type": "string", "maxLength": 240},
+        "offset": {"type": "integer", "minimum": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200}
+      },
+      "required": ["task_id", "path"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_source_apply",
+    "description": "Apply a checked text patch to this registered isolated V3 task workspace",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "patch": {"type": "string", "maxLength": 1048576},
+        "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "required": ["task_id", "request_id", "patch", "expected_inputs_sha256"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "v3_source_receipt",
+    "description": "Read a durable task workspace patch receipt",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"}
+      },
+      "required": ["task_id", "request_id"],
       "additionalProperties": false
     }
   },

@@ -1,3 +1,3 @@
 # v3_worker_job
 
-Poll the returned worker job ID for durable status and bounded build output. Report success only for succeeded; report readiness and rollback fields for deployments. Failed/interrupted jobs are not successful deployments. Do not busy-poll.
+Read a native durable V3 build/deployment job by its ID. Only a terminal status is a result. Report the job ID, status, phase, and bounded sanitized reason or log excerpt. On completion, confirm both development containers are healthy through v3_build_status. Do not retry an uncertain deployment.

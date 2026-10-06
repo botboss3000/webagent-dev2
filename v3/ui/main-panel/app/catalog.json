@@ -3,8 +3,9 @@
     {
       "id": "files",
       "title": "File Manager",
-      "description": "Browse and edit application files. Independent V3 filesystem support is pending.",
+      "description": "Browse and edit the live development checkout with Git Control.",
       "panelId": "app-files-page",
+      "admin": true,
       "order": 10
     },
     {

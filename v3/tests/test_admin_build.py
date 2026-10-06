@@ -2,6 +2,7 @@ import copy
 import asyncio
 import os
 import socket
+import subprocess
 import importlib.util
 import io
 import json
@@ -21,7 +22,7 @@ spec.loader.exec_module(host)
 
 
 def context(version="one", extra=None):
-    files = {"v3/Dockerfile": "FROM test " + version, "v3/Dockerfile.loop": "FROM test",
+    files = {"v3/Dockerfile": "FROM test " + version,
              "v3/Cargo.toml": "fixture", "v3/Cargo.lock": "locked",
              "v3/data/config/gates/message_visibility_v1.json": "{}",
              "v3/data/config/gates/closing_status_v1.json": "{}"}
@@ -46,6 +47,7 @@ class FakeRunner:
                            "Config": {"Env": ["TOKEN=NEVER-EXPOSE-THIS"]}, "HostConfig": {"Memory": 5}}
                            for name in host.TARGETS}
         self.change_during_build = False
+        self.low_space = False
         self.block = None
         self.fail_create = False
         self.require_both_started = False
@@ -53,6 +55,12 @@ class FakeRunner:
         self.export_release = None
         self.stop_entered = None
         self.stop_release = None
+
+    def check_space(self, minimum):
+        self.calls.append(("space", minimum))
+        if self.low_space:
+            raise ValueError("development build needs more disk space")
+        return minimum
 
     def snapshot(self):
         return self.blob
@@ -87,8 +95,8 @@ class FakeRunner:
         self.calls.append(("rename", name, target))
         self.containers[target] = self.containers.pop(name)
 
-    def create(self, name, image, previous):
-        self.calls.append(("create", name, image))
+    def create(self, name, image, previous, release_root=None):
+        self.calls.append(("create", name, image, release_root))
         if self.fail_create:
             raise RuntimeError("TOKEN=NEVER-EXPOSE-THIS create failure")
         self.containers[name] = copy.deepcopy(previous)
@@ -105,6 +113,10 @@ class FakeRunner:
             if not set(host.TARGETS) <= started:
                 return False
         return self.containers[name]["Image"] == expected and self.containers[name]["State"]["Status"] == "running"
+
+    def promote_checkout(self, before, after, changed):
+        self.calls.append(("promote", tuple(changed)))
+        self.blob = after
 
 
 class BuildTests(unittest.TestCase):
@@ -142,6 +154,148 @@ class BuildTests(unittest.TestCase):
     def deploy(self, source_job, request_id="deploy-fixture"):
         return self.call("v3_worker_submit", {"operation": "deploy", "job_id": source_job["job_id"],
                 "request_id": request_id, "expected_inputs_sha256": source_job["inputs_sha256"]})
+
+    def test_checked_patch_changes_nested_task_workspace(self):
+        root = self.state / "nested-repo"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        source = root / "v3/build-jobs/coordination/trees/task/v3"
+        source.mkdir(parents=True)
+        target = source / "README.md"
+        target.write_text("before\n")
+        patch_text = ("diff --git a/README.md b/README.md\n"
+                      "--- a/README.md\n+++ b/README.md\n"
+                      "@@ -1 +1 @@\n-before\n+after\n")
+        with patch.object(host, "SOURCE", root):
+            with self.assertRaisesRegex(ValueError, "hunk line counts mismatch"):
+                host.inspect_source_patch(source, patch_text + "+ignored trailing line\n")
+            self.assertEqual(["README.md"], host.inspect_source_patch(source, patch_text))
+            host.source_git(source, ["apply", "--whitespace=error", "-"], patch_text.encode())
+        self.assertEqual("after\n", target.read_text())
+
+    def test_release_mounts_pin_source_and_keep_state_writable(self):
+        root = self.state / "release-fixture"
+        for name in ("v3/ui", "v3/config", "v3/plugins/abilities",
+                     "ui/shared/css", "ui/main-panel/agents", "ui/vendor/fonts",
+                     "ui/vendor/lucide"):
+            (root / name).mkdir(parents=True)
+        (root / "ui/favicon.svg").write_text("svg")
+        api = {"Mounts": [
+            {"Type": "bind", "Source": "/old", "Target": "/live-v3"},
+            {"Type": "bind", "Source": "/checkout", "Target": "/live-checkout"},
+            {"Type": "bind", "Source": "/old/ui", "Target": "/opt/v3/ui"},
+            {"Type": "bind", "Source": "/state", "Target": "/state"}]}
+        mounted = host.release.release_mounts(api, root)["Mounts"]
+        by_target = {item["Target"]: item for item in mounted}
+        self.assertEqual(str(root / "v3"), by_target["/live-v3"]["Source"])
+        self.assertTrue(by_target["/live-v3"]["ReadOnly"])
+        self.assertEqual("/checkout", by_target["/live-checkout"]["Source"])
+        self.assertEqual("/state", by_target["/state"]["Source"])
+        loop = {"Mounts": [{"Type": "bind", "Source": "/old/abilities",
+                            "Target": "/opt/v3/plugins/abilities"}]}
+        target = host.release.release_mounts(loop, root)["Mounts"][0]
+        self.assertEqual(str(root / "v3/plugins/abilities"), target["Source"])
+
+    def test_checkout_promotion_checks_conflicts_and_is_idempotent(self):
+        root = self.state / "checkout"
+        path = root / "v3/README.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("before")
+        before = context(extra={"v3/README.md": "before"})
+        after = context(extra={"v3/README.md": "after"})
+        promote = host.release.promote_checkout
+        self.assertEqual(1, promote(root, before, after, ["v3/README.md"], host.context_digest))
+        self.assertEqual("after", path.read_text())
+        self.assertEqual(0, promote(root, before, after, ["v3/README.md"], host.context_digest))
+        path.write_text("unrelated edit")
+        with self.assertRaisesRegex(ValueError, "checkout changed during release"):
+            promote(root, before, after, ["v3/README.md"], host.context_digest)
+        self.assertEqual("unrelated edit", path.read_text())
+
+    def test_isolated_source_read_is_task_scoped_and_bounded(self):
+        task = self.call("v3_build_work", {"action": "begin", "task_id": "read-task",
+            "summary": "Read", "mode": "isolated"})
+        value = self.call("v3_source_read", {"task_id": "read-task",
+            "path": "Cargo.toml", "offset": 1, "limit": 20})
+        self.assertEqual(["fixture"], value["lines"])
+        self.assertEqual(task["workspace_inputs_sha256"], value["workspace_inputs_sha256"])
+        with self.assertRaises(ValueError):
+            self.call("v3_source_read", {"task_id": "read-task", "path": "data/config/gates/closing_status_v1.json"})
+        with self.assertRaises(ValueError):
+            self.call("v3_source_read", {"task_id": "read-task", "path": "../Cargo.toml"})
+        with self.assertRaises(ValueError):
+            self.call("v3_source_read", {"task_id": "read-task", "path": "Cargo.toml", "limit": 1000})
+
+    def test_isolated_tasks_release_in_order_while_other_work_remains_open(self):
+        first = self.call("v3_build_work", {"action": "begin", "task_id": "isolated-one",
+            "summary": "First", "mode": "isolated"})
+        second = self.call("v3_build_work", {"action": "begin", "task_id": "isolated-two",
+            "summary": "Second", "mode": "isolated"})
+        Path(first["workspace_path"], "src").mkdir()
+        Path(first["workspace_path"], "src/first.rs").write_text("first")
+        Path(second["workspace_path"], "src").mkdir()
+        Path(second["workspace_path"], "src/second.rs").write_text("second")
+        status = self.call("v3_build_work", {"action": "status"})["own"]
+        digests = {item["task_id"]: item["workspace_inputs_sha256"] for item in status}
+        one = self.call("v3_build_work", {"action": "finish", "task_id": "isolated-one",
+            "expected_inputs_sha256": digests["isolated-one"]})
+        self.assertIsNotNone(one["job_id"])
+        self.assertEqual(1, one["open_count"])
+        self.assertEqual("completed", self.wait(one)["status"])
+        two = self.call("v3_build_work", {"action": "finish", "task_id": "isolated-two",
+            "expected_inputs_sha256": digests["isolated-two"]})
+        self.assertEqual("completed", self.wait(two)["status"])
+        final = host.release.entries(
+            (self.state / two["job_id"] / "candidate.tar").read_bytes(), host.context_digest)
+        self.assertIn("v3/src/first.rs", final)
+        self.assertIn("v3/src/second.rs", final)
+        self.assertEqual(4, len([call for call in self.runner.calls if call[0] == "build"]))
+        self.assertEqual(2, len([call for call in self.runner.calls if call[0] == "promote"]))
+        self.assertEqual(two["job_id"], self.call("v3_build_work", {
+            "action": "finish", "task_id": "isolated-two",
+            "expected_inputs_sha256": digests["isolated-two"]})["job_id"])
+
+    def test_isolated_finish_queues_during_another_build(self):
+        first = self.call("v3_build_work", {"action": "begin", "task_id": "queued-one",
+            "summary": "First", "mode": "isolated"})
+        second = self.call("v3_build_work", {"action": "begin", "task_id": "queued-two",
+            "summary": "Second", "mode": "isolated"})
+        for item, filename in ((first, "one.rs"), (second, "two.rs")):
+            folder = Path(item["workspace_path"], "src")
+            folder.mkdir()
+            (folder / filename).write_text(filename)
+        digests = {item["task_id"]: item["workspace_inputs_sha256"]
+                   for item in self.call("v3_build_work", {"action": "status"})["own"]}
+        self.runner.block = threading.Event()
+        one = self.call("v3_build_work", {"action": "finish", "task_id": "queued-one",
+            "expected_inputs_sha256": digests["queued-one"]})
+        two = self.call("v3_build_work", {"action": "finish", "task_id": "queued-two",
+            "expected_inputs_sha256": digests["queued-two"]})
+        self.assertEqual("queued", self.call("v3_worker_job", {
+            "job_id": two["job_id"]})["status"])
+        self.runner.block.set()
+        self.assertEqual("completed", self.wait(one)["status"])
+        self.assertEqual("completed", self.wait(two)["status"])
+        self.assertEqual(4, len([call for call in self.runner.calls if call[0] == "build"]))
+
+    def test_isolated_conflict_fails_without_second_deployment(self):
+        first = self.call("v3_build_work", {"action": "begin", "task_id": "conflict-one",
+            "summary": "First", "mode": "isolated"})
+        second = self.call("v3_build_work", {"action": "begin", "task_id": "conflict-two",
+            "summary": "Second", "mode": "isolated"})
+        for item, value in ((first, "one"), (second, "two")):
+            Path(item["workspace_path"], "Cargo.toml").write_text(value)
+        digests = {item["task_id"]: item["workspace_inputs_sha256"]
+                   for item in self.call("v3_build_work", {"action": "status"})["own"]}
+        one = self.call("v3_build_work", {"action": "finish", "task_id": "conflict-one",
+            "expected_inputs_sha256": digests["conflict-one"]})
+        self.assertEqual("completed", self.wait(one)["status"])
+        two = self.call("v3_build_work", {"action": "finish", "task_id": "conflict-two",
+            "expected_inputs_sha256": digests["conflict-two"]})
+        result = self.wait(two)
+        self.assertEqual("failed", result["status"])
+        self.assertIn("source conflict", result["reason"])
+        self.assertEqual(2, len([call for call in self.runner.calls if call[0] == "build"]))
 
     def test_coordinated_work_batches_one_build_and_deployment(self):
         first = self.call("v3_build_work", {"action": "begin", "task_id": "first-task", "summary": "First change"})
@@ -212,6 +366,14 @@ class BuildTests(unittest.TestCase):
             self.call("v3_build_worker_restart", {"request_id": "another-restart"})
         self.broker.active = None
         self.assertEqual(len(calls), 2)
+
+    def test_low_disk_fails_before_build_or_container_replacement(self):
+        self.runner.low_space = True
+        result = self.wait(self.build())
+        self.assertEqual("failed", result["status"])
+        self.assertFalse(any(call[0] == "build" for call in self.runner.calls))
+        self.assertFalse(any(call[0] == "stop" for call in self.runner.calls))
+        self.assertIn(("space", host.MIN_BUILD_FREE), self.runner.calls)
 
     def test_frozen_build_idempotence_and_secret_scrub(self):
         value = self.wait(self.build())

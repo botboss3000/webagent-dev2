@@ -1,21 +1,19 @@
 """Scoped v3 build tools; discovered as an Administrator drop-in ability."""
 from __future__ import annotations
-import asyncio
-import hashlib
 import json
-import os
+import tempfile
+import tarfile
+import socket
+import signal
+import shutil
 from pathlib import Path
+import hashlib
+import asyncio
+import os
 from urllib.parse import urlsplit
 from typing import Any, Dict
-import shutil
-import signal
-import socket
-import tarfile
-import tempfile
-from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[4]
-TASKS = {"check": ["check"], "test": ["test"], "release": ["build", "--release"]}
 CONTEXT = (
     "v3/Dockerfile", "v3/Cargo.toml", "v3/Cargo.lock", "v3/build.rs", "v3/plugins/diagnostics", "v3/.gitignore", "v3/src", "v3/ui",
     "v3/plugins/abilities", "v3/worker.py", "v3/launch.py", "v3/promote.py", "v3/ui-baseline.json",
@@ -29,25 +27,10 @@ CONTEXT = (
 )
 TOOL_SCHEMAS = {
     "v3_build_status": {"type": "object", "properties": {}, "additionalProperties": False},
-    "v3_build_worker_restart": {"type": "object", "properties": {
-        "request_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,80}$"}},
-        "required": ["request_id"], "additionalProperties": False},
-    "v3_cargo_task": {"type": "object", "properties": {
-        "task": {"type": "string", "enum": list(TASKS)},
-        "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800, "default": 600}},
-        "required": ["task"], "additionalProperties": False},
-    "v3_build_image": {"type": "object", "properties": {
-        "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800, "default": 1200}},
-        "additionalProperties": False},
-}
-TOOL_SCHEMAS.update({
-    "v3_worker_submit": {"type": "object", "properties": {
-        "operation": {"type": "string", "enum": ["build", "deploy"]},
-        "request_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,80}$"},
-        "build_job_id": {"type": "string"}}, "required": ["operation", "request_id"], "additionalProperties": False},
+    "v3_build_work_status": {"type": "object", "properties": {}, "additionalProperties": False},
     "v3_worker_job": {"type": "object", "properties": {"job_id": {"type": "string"}},
         "required": ["job_id"], "additionalProperties": False},
-})
+}
 _V3_LOGIN_PARAMETERS: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -109,9 +92,36 @@ async def _request_v3_cookie(origin: str, token: str, caller: str) -> dict:
         raise ValueError("V3 login bridge request failed; check reachability and deployment.") from None
 
 
+TOOL_SCHEMAS.update({
+    "v3_build_work": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["begin", "abandon"]},
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "required": ["action"], "additionalProperties": False},
+    "v3_build_finish": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+        "required": ["task_id", "expected_inputs_sha256"], "additionalProperties": False},
+    "v3_source_read": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "path": {"type": "string", "maxLength": 240},
+        "offset": {"type": "integer", "minimum": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200}},
+        "required": ["task_id", "path"], "additionalProperties": False},
+    "v3_source_apply": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "patch": {"type": "string", "maxLength": 1048576},
+        "expected_inputs_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+        "required": ["task_id", "request_id", "patch", "expected_inputs_sha256"],
+        "additionalProperties": False},
+    "v3_source_receipt": {"type": "object", "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"},
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,80}$"}},
+        "required": ["task_id", "request_id"], "additionalProperties": False},
+})
 TOOL_SCHEMAS["login_as_current_user_v3"] = _V3_LOGIN_PARAMETERS
-DESTRUCTIVE = {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "v3_build_worker_restart", "login_as_current_user_v3"}
-_BUSY = False
+DESTRUCTIVE = {"login_as_current_user_v3", "v3_build_work", "v3_build_finish", "v3_source_apply"}
 
 
 def _env():
@@ -150,30 +160,6 @@ async def _run(argv, *, timeout=15, env=None, stdin=None):
                 "output_tail": log.read().decode("utf-8", "replace"), "output_truncated": size > 24000}
 
 
-async def _probe():
-    tools = {}
-    for name, args in (("rustc", ["--version"]), ("cargo", ["--version"]),
-                       ("cc", ["--version"]), ("docker", ["info", "--format", "{{.ServerVersion}}"] )):
-        exe = shutil.which(name)
-        tools[name] = {"available": bool(exe)}
-        if exe: tools[name].update(await _run([exe, *args]))
-    rust = tools["rustc"]
-    version_ok = rust.get("exit_code") == 0 and rust.get("output_tail", "").startswith("rustc 1.90.")
-    native = version_ok and all(tools[n].get("exit_code") == 0 for n in ("cargo", "cc"))
-    return {"observed_at": datetime.now(timezone.utc).isoformat(), "scope": "webagent_server",
-            "host": socket.gethostname(), "repository": str(ROOT), "tools": tools,
-            "rust_1_90": version_ok, "native_ready": native,
-            "image_ready": tools["docker"].get("exit_code") == 0,
-            "temporary_free_bytes": shutil.disk_usage(tempfile.gettempdir()).free,
-            "dependency_access": "not_probed; requires network access or populated cache"}
-
-
-def _timeout(value):
-    if isinstance(value, bool) or not isinstance(value, int) or not 30 <= value <= 1800:
-        raise ValueError("timeout_seconds must be an integer between 30 and 1800")
-    return value
-
-
 def _context_archive(file):
     baseline = json.loads((ROOT / "v3/ui-baseline.json").read_text())
     for name, expected in baseline["assets"].items():
@@ -207,7 +193,7 @@ async def _worker_request(method, path, body=None):
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
         return {"status": "error", "error": "Worker URL must be an origin without credentials or path"}
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=75, follow_redirects=False, trust_env=False) as client:
             response = await client.request(method, url + path, headers={"Authorization": "Bearer " + token}, json=body)
             if response.status_code == 409:
                 return {"status": "busy", "http_status": 409, "error": "Worker has an active job or is restarting"}
@@ -216,6 +202,15 @@ async def _worker_request(method, path, body=None):
             return response.json()
     except (httpx.HTTPError, ValueError):
         return {"status": "error", "scope": "dedicated_build_worker", "error": "Worker unreachable or response invalid; do not repeat an uncertain submit with a new request_id"}
+
+
+async def _bridge_request(user_id, name, arguments):
+    """V2 authorizes the mapped administrator; the worker's socket gives it a distinct V3 identity."""
+    from app.auth.identity import _is_admin
+    mapped = os.environ.get("V3_BROWSER_LOGIN_CALLER_ID", "")
+    if not user_id or user_id != mapped or not await _is_admin(user_id):
+        return {"status": "denied", "error": "Mapped platform administrator required"}
+    return await _worker_request("POST", "/v1/coordinator", {"name": name, "arguments": arguments})
 
 
 def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="", **ctx):
@@ -282,94 +277,72 @@ def build_tools(*, user_id="", session_id="", agent_id="", agent_template_id="",
             return json.dumps({"status": "error", "message": "V3 browser login or identity verification failed; no verified login is available."})
 
     async def v3_build_status():
-        """Check Rust, Cargo, C compiler, Docker daemon and disk prerequisites for v3."""
-        return json.dumps(await _worker_request("GET", "/v1/status") if os.environ.get("V3_BUILD_WORKER_URL") else await _probe())
-
-    async def v3_build_worker_restart(request_id):
-        """Restart only the dedicated host build worker when no job is active."""
-        import re
-        if not isinstance(request_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", request_id):
-            return json.dumps({"status": "error", "error": "Stable restart request_id required"})
-        from app.auth.identity import _is_admin
-        if not user_id or not await _is_admin(user_id):
-            return json.dumps({"status": "error", "error": "Platform administrator required"})
-        result = await _worker_request("POST", "/v1/restart", {"request_id": request_id})
-        if result.get("status") != "restarting":
-            return json.dumps(result)
-        previous = result.get("previous_pid")
-        for _ in range(40):
-            await asyncio.sleep(0.5)
-            current = await _worker_request("GET", "/v1/status")
-            if current.get("pid") and current["pid"] != previous:
-                return json.dumps({"status": "ok", "service": "v3-build-worker.service",
-                                   "active": True, "interrupted_job": None})
-        return json.dumps({"status": "uncertain", "service": "v3-build-worker.service",
-                           "error": "Restart requested but fresh worker readiness was not confirmed"})
-
-    async def v3_cargo_task(task, timeout_seconds=600):
-        """Run a fixed locked v3 Cargo check, test, or release build; does not deploy."""
-        global _BUSY
-        try:
-            timeout = _timeout(timeout_seconds)
-            if task not in TASKS: raise ValueError("Unknown Cargo task")
-            if _BUSY: return json.dumps({"status": "busy"})
-            _BUSY = True
-        except ValueError as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
-        try:
-            probe = await _probe()
-            if not probe["native_ready"]:
-                return json.dumps({"status": "blocked", "prerequisites": probe})
-            with tempfile.TemporaryDirectory(prefix="webagent-v3-target-") as target:
-                env = _env(); env.update(CARGO_TARGET_DIR=target, CARGO_BUILD_JOBS="2")
-                result = await _run([shutil.which("cargo"), *TASKS[task], "--locked",
-                                    "--manifest-path", str(ROOT / "v3/Cargo.toml"), "-j", "2"],
-                                    timeout=timeout, env=env)
-            return json.dumps({"status": "ok" if result["exit_code"] == 0 else "failed", "task": task,
-                               "artifact_retention": "temporary target removed after verification", **result})
-        finally: _BUSY = False
-
-    async def v3_build_image(timeout_seconds=1200):
-        """Build the allowlisted webagent-dev-v3:local image only; never start containers."""
-        global _BUSY
-        try:
-            timeout = _timeout(timeout_seconds)
-            if _BUSY: return json.dumps({"status": "busy"})
-            _BUSY = True
-        except ValueError as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
-        try:
-            probe = await _probe()
-            if not probe["image_ready"]:
-                return json.dumps({"status": "blocked", "prerequisites": probe})
-            with tempfile.TemporaryFile() as context:
-                try: await asyncio.to_thread(_context_archive, context)
-                except (OSError, ValueError, KeyError) as exc:
-                    return json.dumps({"status": "error", "error": str(exc)})
-                result = await _run([shutil.which("docker"), "build", "-f", "v3/Dockerfile",
-                                    "-t", "webagent-dev-v3:local", "-"], timeout=timeout, stdin=context)
-            return json.dumps({"status": "ok" if result["exit_code"] == 0 else "failed",
-                               "image": "webagent-dev-v3:local", "deployed": False, **result})
-        finally: _BUSY = False
-    async def v3_worker_submit(operation, request_id, build_job_id=None):
-        """Submit a fixed build or deployment to the dedicated v3 development worker."""
-        import re
-        if operation not in ("build", "deploy") or not isinstance(request_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", request_id):
-            return json.dumps({"status": "error", "error": "Invalid operation or request_id"})
-        body = {"operation": operation, "request_id": request_id}
-        if operation == "deploy":
-            if not isinstance(build_job_id, str) or not build_job_id:
-                return json.dumps({"status": "error", "error": "Deployment requires build_job_id"})
-            body["build_job_id"] = build_job_id
-        elif build_job_id not in (None, ""):
-            return json.dumps({"status": "error", "error": "build_job_id is only valid for deployment"})
-        return json.dumps(await _worker_request("POST", "/v1/jobs", body))
+        """Read the native broker's source digest and both development container states."""
+        return json.dumps(await _bridge_request(user_id, "v3_build_status", {}))
 
     async def v3_worker_job(job_id):
-        """Poll durable build/deploy job state and bounded build output from the worker."""
+        """Read a native durable build and deployment receipt."""
         import re
         if not isinstance(job_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", job_id):
             return json.dumps({"status": "error", "error": "Invalid job ID"})
-        return json.dumps(await _worker_request("GET", "/v1/jobs/" + job_id))
+        return json.dumps(await _bridge_request(user_id, "v3_worker_job", {"job_id": job_id}))
 
-    return {"login_as_current_user_v3": login_as_current_user_v3, "v3_worker_submit": v3_worker_submit, "v3_worker_job": v3_worker_job, "v3_build_status": v3_build_status, "v3_build_worker_restart": v3_build_worker_restart, "v3_cargo_task": v3_cargo_task, "v3_build_image": v3_build_image}
+    async def v3_build_work_status():
+        """Read native task receipts and shared open count without mutating work."""
+        return json.dumps(await _bridge_request(user_id, "v3_build_work", {"action": "status"}))
+
+    async def v3_build_work(action, task_id="", summary=""):
+        """Register or abandon source work without scheduling a build."""
+        import re
+        if action not in ("begin", "abandon"):
+            return json.dumps({"status": "error", "error": "Use v3_build_finish for deployment-capable finish"})
+        arguments = {"action": action}
+        if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id):
+            return json.dumps({"status": "error", "error": "Stable task_id required"})
+        arguments["task_id"] = task_id
+        if action == "begin":
+            if not isinstance(summary, str) or not 1 <= len(summary) <= 200:
+                return json.dumps({"status": "error", "error": "Bounded summary required"})
+            arguments["summary"] = summary
+            arguments["mode"] = "isolated"
+        return json.dumps(await _bridge_request(user_id, "v3_build_work", arguments))
+
+    async def v3_build_finish(task_id, expected_inputs_sha256):
+        """Freeze this task and queue its own serialized V3 development release."""
+        import re
+        if (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id)
+                or not isinstance(expected_inputs_sha256, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", expected_inputs_sha256)):
+            return json.dumps({"status": "error", "error": "Stable task ID and source digest required"})
+        return json.dumps(await _bridge_request(user_id, "v3_build_work", {
+            "action": "finish", "task_id": task_id, "expected_inputs_sha256": expected_inputs_sha256}))
+
+    async def v3_source_read(task_id, path, offset=1, limit=200):
+        """Read bounded lines from this open isolated V3 task source snapshot."""
+        return json.dumps(await _bridge_request(user_id, "v3_source_read", {
+            "task_id": task_id, "path": path, "offset": offset, "limit": limit}))
+
+    async def v3_source_apply(task_id, request_id, patch, expected_inputs_sha256):
+        """Apply a checked text patch to this task's isolated V3 source snapshot."""
+        import re
+        if (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", task_id)
+                or not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id)
+                or not isinstance(patch, str) or not 0 < len(patch.encode()) <= 1024 * 1024
+                or not isinstance(expected_inputs_sha256, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", expected_inputs_sha256)):
+            return json.dumps({"status": "error", "error": "Stable IDs, bounded text patch and source digest required"})
+        return json.dumps(await _bridge_request(user_id, "v3_source_apply", {
+            "task_id": task_id, "request_id": request_id, "patch": patch,
+            "expected_inputs_sha256": expected_inputs_sha256}))
+
+    async def v3_source_receipt(task_id, request_id):
+        """Inspect a durable source-apply receipt before any retry."""
+        return json.dumps(await _bridge_request(user_id, "v3_source_receipt", {
+            "task_id": task_id, "request_id": request_id}))
+
+    return {"login_as_current_user_v3": login_as_current_user_v3,
+            "v3_build_status": v3_build_status, "v3_build_work_status": v3_build_work_status,
+            "v3_build_work": v3_build_work,
+            "v3_build_finish": v3_build_finish, "v3_source_read": v3_source_read,
+            "v3_source_apply": v3_source_apply,
+            "v3_source_receipt": v3_source_receipt, "v3_worker_job": v3_worker_job}

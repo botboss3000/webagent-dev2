@@ -180,14 +180,11 @@ def test_http_auth_and_unknown_route(worker):
         with pytest.raises(urllib.error.HTTPError) as error:
             urllib.request.urlopen(urllib.request.Request(url + "/admin", headers={"Authorization": "Bearer " + worker.token}))
         assert error.value.code == 404
-        with patch.object(worker, "execute", return_value=None):
-            request = urllib.request.Request(url + "/v1/jobs", data=json.dumps({"operation": "build", "request_id": "http-1"}).encode(), headers={"Authorization": "Bearer " + worker.token}, method="POST")
-            with urllib.request.urlopen(request) as response:
-                assert response.status == 202
-                job = json.load(response)
-            poll = urllib.request.Request(url + "/v1/jobs/" + job["id"], headers={"Authorization": "Bearer " + worker.token})
-            with urllib.request.urlopen(poll) as response:
-                assert json.load(response)["id"] == job["id"]
+        request = urllib.request.Request(url + "/v1/jobs", data=json.dumps({"operation": "build", "request_id": "http-1"}).encode(), headers={"Authorization": "Bearer " + worker.token}, method="POST")
+        with pytest.raises(urllib.error.HTTPError) as retired:
+            urllib.request.urlopen(request)
+        assert retired.value.code == 410
+        assert worker.jobs == {}
     finally:
         server.shutdown(); server.server_close(); thread.join()
 

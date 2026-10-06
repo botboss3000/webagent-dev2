@@ -13,8 +13,8 @@ import time
 from pathlib import Path
 
 
-def drop(uid, gid=1100):
-    os.setgroups([])
+def drop(uid, gid=1100, groups=()):
+    os.setgroups(groups)
     os.setgid(gid)
     os.setuid(uid)
     # PR_SET_NO_NEW_PRIVS: child executables cannot gain privileges.
@@ -87,7 +87,7 @@ worker = subprocess.Popen(["/usr/bin/python3", "-I", "/opt/v3/worker.py"],
                           env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "V3_TOOL_SOCKET": "/run/v3/worker/tools.sock",
                                "V3_WORKSPACE_ROOT": "/workspaces"},
-                          preexec_fn=lambda: drop(1000))
+                          preexec_fn=lambda: drop(1000, groups=(1001,)))
 for _ in range(100):
     if Path("/run/v3/worker/tools.sock").exists():
         break

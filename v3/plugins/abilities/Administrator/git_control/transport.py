@@ -56,7 +56,7 @@ def connections(trusted):
 
 
 async def authorize(repo, remote, operation):
-    if operation not in ("pull", "push"):
+    if operation not in ("fetch", "pull", "push"):
         raise adapter.Rejected("Unsupported repository transport operation")
     url = (await adapter.command(repo, ["remote", "get-url", remote])).decode().strip()
     exact = normalized(url)

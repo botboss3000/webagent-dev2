@@ -3,14 +3,19 @@
   "kind": "ability",
   "icon": "hammer",
   "color": "#7aa2f7",
-  "description": "Inspect and submit fixed v3 development builds/deployments through the private worker; includes current-caller v3 browser login.",
-  "skill_summary": "Use for v2-to-v3 build operations and current-caller browser validation.",
+  "description": "Authenticated v2 administrator bridge to isolated v3 task snapshots, serial release deployment, and durable build results.",
+  "skill_summary": "Register isolated v3 work, apply checked source, verify, then finish this task for queued automatic development deployment.",
   "simple": true,
   "placeholder": false,
   "order": 9,
   "tools": [
     "v3_build_status",
-    "v3_worker_submit",
+    "v3_build_work_status",
+    "v3_build_work",
+    "v3_source_read",
+    "v3_source_apply",
+    "v3_source_receipt",
+    "v3_build_finish",
     "v3_worker_job",
     "login_as_current_user_v3"
   ],
@@ -18,8 +23,25 @@
     "v3_build_status": {
       "destructive": false
     },
-    "v3_worker_submit": {
+    "v3_build_work_status": {
+      "destructive": false
+    },
+    "v3_build_work": {
       "destructive": true
+    },
+    "v3_source_read": {
+      "destructive": false
+    },
+    "v3_source_apply": {
+      "destructive": true,
+      "requires_confirmation": true
+    },
+    "v3_source_receipt": {
+      "destructive": false
+    },
+    "v3_build_finish": {
+      "destructive": true,
+      "requires_confirmation": true
     },
     "v3_worker_job": {
       "destructive": false

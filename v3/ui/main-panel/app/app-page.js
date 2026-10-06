@@ -3,10 +3,12 @@ import { renderAgentDirectory } from '../agents/pages/catalog.js';
 import { mountUsers, mountPolicies, mountPageAccess } from './users/users.js';
 import { mountAppModels } from './models/models.js';
 import { wirePageTabDrag } from '../../shared/page-tabs.js';
+import { startView as startFiles, stopView as stopFiles, resetExplorerForRemount } from './explorer-view.js';
 
 export async function start(mount) {
   const generation=(mount._appGeneration||0)+1;mount._appGeneration=generation;
   mount._appModelsDispose?.();mount._appModelsDispose=null;
+  mount._appFilesDispose?.();mount._appFilesDispose=null;
   const active=()=>mount._appGeneration===generation;
   mount.replaceChildren();
   if (!mount._identityListener) {
@@ -23,7 +25,7 @@ export async function start(mount) {
   if(!active())return;
   const pages=catalog.pages.filter(page=>!page.admin||me?.is_admin);
   if (!Array.isArray(pages) || pages.some(page => !/^[a-z][a-z0-9-]*$/.test(page.id) || !page.title)) throw Error('Invalid App catalog');
-  mount.innerHTML = '<div class="app-page-framework"><div class="agent-card active agent-card-tabs-only"><div class="agent-card-tabs-wrap"><div class="agent-card-tabs" role="tablist" aria-label="App pages"></div></div></div><div class="agent-detail-panel"><div class="agent-detail-content"><div id="app-config-page" class="agent-detail-body"></div><section id="app-files-page" class="agent-detail-body" hidden><h2>File Manager</h2><p role="status">Pending V3 port: the V2 File Manager requires independent filesystem APIs before browsing or editing is available.</p><p>V2 filesystem, Git, and deployment actions are not connected to this application.</p></section></div></div></div>';
+  mount.innerHTML = '<div class="app-page-framework"><div class="agent-card active agent-card-tabs-only"><div class="agent-card-tabs-wrap"><div class="agent-card-tabs" role="tablist" aria-label="App pages"></div></div></div><div class="agent-detail-panel"><div class="agent-detail-content"><div id="app-config-page" class="agent-detail-body"></div><section id="app-files-page" class="agent-detail-body" hidden><h2>File Manager</h2><p role="status">Checking V3 File Manager…</p></section></div></div></div>';
   for(const page of pages) if(!mount.querySelector('#'+page.panelId)){const panel=document.createElement('section');panel.id=page.panelId;panel.className='agent-detail-body';panel.hidden=true;mount.querySelector('.agent-detail-content').append(panel);}
   if(me?.is_admin){await mountUsers(mount.querySelector('#app-users-page'));if(!active())return;await mountPolicies(mount.querySelector('#app-user-policies-page'));if(!active())return;await mountPageAccess(mount.querySelector('#app-page-access-page'));if(!active())return;const dispose=await mountAppModels(mount.querySelector('#app-models-page'));if(!active()){dispose();return;}mount._appModelsDispose=dispose;}
   const strip = mount.querySelector('[role=tablist]');
@@ -36,6 +38,49 @@ export async function start(mount) {
   let selected = new URL(location.href).searchParams.get('appView') || 'config';
   if (!all.some(p=>p.id===selected)) selected='config';
   const tabs = new Map();
+  let filesMounted=false, filesLoading=false, filesPending=false;
+  mount._appFilesDispose=()=>{ stopFiles(); resetExplorerForRemount(); window.__v3FilesCsrf=''; window.__v3FilesAdmin=false; };
+  async function ensureFiles() {
+    if (filesMounted) { await startFiles(); return; }
+    if (filesLoading) { filesPending=true; return; }
+    filesLoading=true;
+    const panel=mount.querySelector('#app-files-page');
+    try {
+      if (!me?.is_admin) throw Error('File Manager requires administrator access');
+      const probe=await fetch('/api/v3/file-manager',{
+        method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json','x-csrf-token':me.csrf_token},
+        body:JSON.stringify({action:'tree',path:''})
+      });
+      if (!probe.ok) throw Error('V3 File Manager backend is not ready ('+probe.status+')');
+      const response=await fetch('/v3-ui/main-panel/app/files.html',{credentials:'same-origin'});
+      if (!response.ok) throw Error('File Manager view unavailable');
+      const markup=await response.text();
+      if (!active() || selected!=='files') return;
+      panel.innerHTML=markup;
+      window.__v3FilesCsrf=me.csrf_token;
+      window.__v3FilesAdmin=true;
+      resetExplorerForRemount();
+      filesMounted=true;
+      await startFiles();
+      if (!active() || selected!=='files') stopFiles();
+    } catch (error) {
+      if (active() && selected==='files') {
+        panel.replaceChildren();
+        const note=document.createElement('p');
+        note.setAttribute('role','status');
+        note.textContent=error.message;
+        panel.append(note);
+      }
+      filesMounted=false;
+    } finally {
+      filesLoading=false;
+      if (filesPending) {
+        filesPending=false;
+        if (active() && selected==='files' && !filesMounted) void ensureFiles();
+      }
+    }
+  }
   function show(id, route = true) {
     selected=id;
     for (const page of all) {
@@ -48,6 +93,7 @@ export async function start(mount) {
       if (!tab.hidden&&!order.includes(page.id)) strip.append(tab);
     }
     if (route) { const url=new URL(location.href);url.searchParams.set('appView',id);history.replaceState({},'',url); }
+    if (id==='files') void ensureFiles(); else if (filesMounted) stopFiles();
   }
   function sync() {
     for (const id of order) strip.append(tabs.get(id));

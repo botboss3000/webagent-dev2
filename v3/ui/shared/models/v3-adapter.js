@@ -1,6 +1,6 @@
  'use strict';
 // V3 boundary for the actual reference renderer. No v2 network fallback is allowed.
-export const MISSING = 'NEED BACKEND CONTRACT';
+export const MISSING = 'Unavailable in v3';
 const reject = detail => { throw Error(MISSING + ': ' + detail); };
 const response = (data,status=200) => new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
 export function createModelAdapter(request, agentId, onAssignment) {

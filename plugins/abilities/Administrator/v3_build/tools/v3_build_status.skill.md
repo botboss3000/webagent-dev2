@@ -1,3 +1,3 @@
 # v3_build_status
 
-Read-only prerequisite probe for this WebAgent server. Returns timestamp, host identity, Rust/Cargo/C compiler versions, Docker daemon result, and available temporary-space bytes. Native readiness does not prove network/cache availability. Recheck after host or dependency changes.
+Read the native V3 coordinator's full allowlisted input digest, input count, active-job state, and both development container health records. Take a fresh digest only after source writers pause. This read does not schedule a build.

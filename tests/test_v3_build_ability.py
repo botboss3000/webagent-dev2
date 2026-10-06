@@ -14,94 +14,44 @@ def test_discovery_and_schemas():
     feature = abilities.ability_feature_with_skill("v3_build")
     assert feature and feature["display_name"] == "V3 Build"
     assert set(m.build_tools()) == set(m.TOOL_SCHEMAS)
-    assert m.DESTRUCTIVE == {"v3_cargo_task", "v3_build_image", "v3_worker_submit", "v3_build_worker_restart", "login_as_current_user_v3"}
+    assert m.DESTRUCTIVE == {"login_as_current_user_v3", "v3_build_work", "v3_build_finish", "v3_source_apply"}
     descriptor = json.loads(PATH.with_suffix(".json").read_text())
     assert set(descriptor["tools"]) == set(m.TOOL_SCHEMAS)
+    assert descriptor["tool_metadata"]["v3_build_finish"]["requires_confirmation"] is True
+    assert descriptor["tool_metadata"]["v3_source_apply"]["requires_confirmation"] is True
 
-def test_worker_restart_uses_stable_id_and_waits_for_fresh_pid(monkeypatch):
+def test_bridge_requires_mapped_administrator(monkeypatch):
+    import app.auth.identity as identity
     calls = []
     async def request(method, path, body=None):
         calls.append((method, path, body))
-        return {"status": "restarting", "previous_pid": 10} if method == "POST" else {"pid": 11}
-    async def immediate(_): pass
-    monkeypatch.setattr(m, "_worker_request", request)
-    monkeypatch.setattr(m.asyncio, "sleep", immediate)
-    import app.auth.identity as identity
+        return {"open_count": 1, "own": []}
     async def admin(_): return True
+    monkeypatch.setattr(m, "_worker_request", request)
     monkeypatch.setattr(identity, "_is_admin", admin)
-    result = json.loads(asyncio.run(m.build_tools(user_id="admin")["v3_build_worker_restart"]("stable-restart")))
-    assert result["status"] == "ok" and result["active"]
-    assert calls == [("POST", "/v1/restart", {"request_id": "stable-restart"}), ("GET", "/v1/status", None)]
-    assert json.loads(asyncio.run(m.build_tools(user_id="admin")["v3_build_worker_restart"]("../bad")))["status"] == "error"
-    assert json.loads(asyncio.run(m.build_tools()["v3_build_worker_restart"]("another-id")))["status"] == "error"
-    assert len(calls) == 2
+    monkeypatch.setenv("V3_BROWSER_LOGIN_CALLER_ID", "fixture-admin")
+    allowed = asyncio.run(m._bridge_request("fixture-admin", "v3_build_work", {"action": "status"}))
+    denied = asyncio.run(m._bridge_request("other-user", "v3_build_work", {"action": "status"}))
+    assert allowed["open_count"] == 1 and denied["status"] == "denied"
+    assert calls == [("POST", "/v1/coordinator",
+                      {"name": "v3_build_work", "arguments": {"action": "status"}})]
 
 
-def test_reject_arbitrary_task_and_timeout():
-    tools = m.build_tools()
-    for task, timeout in [("clean", 600), ("test; rm -rf /", 600), ("test", 1801), ("test", True)]:
-        result = json.loads(asyncio.run(tools["v3_cargo_task"](task, timeout)))
-        assert result["status"] == "error"
-
-def test_block_without_prerequisites(monkeypatch):
-    async def probe(): return {"native_ready": False, "image_ready": False}
-    monkeypatch.setattr(m, "_probe", probe)
-    for name, args in [("v3_cargo_task", ("check",)), ("v3_build_image", ())]:
-        result = json.loads(asyncio.run(m.build_tools()[name](*args)))
-        assert result["status"] == "blocked"
-    assert not m._BUSY
-
-def test_cargo_fixed_command_and_clean_target(monkeypatch):
+def test_lifecycle_and_apply_use_native_coordinator(monkeypatch):
     calls = []
-    async def probe(): return {"native_ready": True}
-    async def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        assert Path(kwargs["env"]["CARGO_TARGET_DIR"]).is_dir()
-        return {"exit_code": 0, "timed_out": False}
-    monkeypatch.setattr(m, "_probe", probe)
-    monkeypatch.setattr(m, "_run", run)
-    monkeypatch.setattr(m.shutil, "which", lambda name: "/bin/" + name)
-    result = json.loads(asyncio.run(m.build_tools()["v3_cargo_task"]("release")))
-    assert result["status"] == "ok"
-    argv, kwargs = calls[0]
-    assert argv == ["/bin/cargo", "build", "--release", "--locked", "--manifest-path", str(m.ROOT / "v3/Cargo.toml"), "-j", "2"]
-    assert not Path(kwargs["env"]["CARGO_TARGET_DIR"]).exists()
+    async def bridge(user, name, arguments):
+        calls.append((name, arguments))
+        return {"status": "ok"}
+    monkeypatch.setattr(m, "_bridge_request", bridge)
+    tools = m.build_tools(user_id="fixture-admin")
+    assert "v3_worker_submit" not in tools
+    assert json.loads(asyncio.run(tools["v3_build_work"]("finish")))["status"] == "error"
+    assert json.loads(asyncio.run(tools["v3_build_work"]("begin", "task-1234", "Patch V3")))["status"] == "ok"
+    assert json.loads(asyncio.run(tools["v3_source_apply"]("task-1234", "apply-1234", "patch", "a" * 64)))["status"] == "ok"
+    assert json.loads(asyncio.run(tools["v3_build_finish"]("task-1234", "a" * 64)))["status"] == "ok"
+    assert [name for name, _ in calls] == ["v3_build_work", "v3_source_apply", "v3_build_work"]
+    assert calls[-1][1]["action"] == "finish"
 
-def test_environment_does_not_inherit_secrets(monkeypatch):
-    monkeypatch.setenv("V3_MESSAGE_API_TOKEN", "sensitive")
-    monkeypatch.setenv("OPENAI_API_KEY", "sensitive")
-    assert "V3_MESSAGE_API_TOKEN" not in m._env()
-    assert "OPENAI_API_KEY" not in m._env()
-
-def test_archive_excludes_runtime_data_and_rejects_symlink(tmp_path, monkeypatch):
-    import hashlib
-    import tempfile
-    import tarfile
-    (tmp_path / "v3").mkdir()
-    (tmp_path / "v3/input").mkdir()
-    asset = tmp_path / "asset"; asset.write_text("fixture")
-    (tmp_path / "v3/ui-baseline.json").write_text(json.dumps({"assets": {"asset": hashlib.sha256(asset.read_bytes()).hexdigest()}}))
-    (tmp_path / "v3/input/source").write_text("code")
-    (tmp_path / "v3/input/__pycache__").mkdir()
-    (tmp_path / "v3/input/__pycache__/secret.pyc").write_text("cached")
-    (tmp_path / "v3/data").mkdir()
-    (tmp_path / "v3/data/secret").write_text("must not enter image")
-    monkeypatch.setattr(m, "ROOT", tmp_path)
-    monkeypatch.setattr(m, "CONTEXT", ("v3/input",))
-    with tempfile.TemporaryFile() as f:
-        m._context_archive(f)
-        with tarfile.open(fileobj=f) as archive:
-            names = archive.getnames()
-            assert names == ["v3/input", "v3/input/source"]
-    (tmp_path / "v3/input/link").symlink_to(asset)
-    import pytest
-    with tempfile.TemporaryFile() as f, pytest.raises(ValueError, match="link"):
-        m._context_archive(f)
-
-def test_subprocess_timeout():
-    import sys
-    result = asyncio.run(m._run([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.05))
-    assert result["timed_out"] and result["exit_code"] != 0
 
 def test_v3_login_only_in_build_ability():
     from plugins.abilities.Administrator.diagnostics import diagnostics

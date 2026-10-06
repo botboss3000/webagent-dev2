@@ -70,21 +70,45 @@
 
 ## Shared V3 build coordination
 
-For a V3 self-update task that uses automatic validation and deployment, Codex
-and WebAgent share the protected host build broker. Codex runs
+V3, V2 Python, and Codex share the protected host broker for self-updates. Use a
+stable task ID before editing. Codex runs
 `python3 -B /home/ar/webagent-dev2/v3/plugins/abilities/Administrator/v3_build/buildctl.py`
-through SSH on the development server. Use `status` to inspect open work;
-`begin <stable-task-id> <summary>` before editing; `inputs` after source
-review and checks; and `finish <task-id> --expected <inputs_sha256>` when
-the task is ready. The last registered task to finish queues one tested
-build and V3 development deployment. Poll `job <job-id>` for the terminal
-result. An abandoned task can use `abandon <task-id>`; it does not deploy.
-The same broker registry and build lock apply to V3 agent tools and Codex.
+through SSH. `status` reads task receipts; `begin <id> <summary>` creates an
+isolated source snapshot and returns its workspace path and digest. Each worker
+edits its own task workspace. Codex applies checked unified diffs through SSH
+from the checkout root with `git apply --directory=<task-workspace-path-relative-to-checkout>`;
+run the same patch with `--check` first. Running `git apply` from inside a task
+workspace nested in this repository can silently skip the patch. V3 and V2 use
+their reviewed patch tools. Do not edit the serial release snapshot directly.
 
-Only use `finish` when automatic V3 development deployment is authorized for
-the task. A source digest detects edits outside the registry, but source writers
-must still coordinate before starting a build. The CLI cannot choose a host
-command, container name, image tag, or production target.
+Run focused checks against the task source, then use `inputs --task <id>` to
+read its settled `workspace_inputs_sha256`. `finish <id> --expected <digest>`
+freezes that task and immediately assigns one durable job ID. It queues an
+automatic, validated V3 development deployment even if other tasks remain open.
+The broker integrates one candidate at a time against the latest healthy
+release. Changes to the same file conflict and fail safely; start a new task
+from the current release to revise them. Finished IDs remain single use.
+`abandon <id>` closes only an open task without deploying it.
+
+`wait <id> [--timeout SECONDS]` reads the durable job about every 15 seconds
+while Codex is active, for no more than 30 minutes. Exit codes are 0 for
+verified success, 1 for failure, and 3 for still pending. Report the job ID,
+terminal status, final phase, bounded sanitized reason or log excerpt, and
+both container health states. A timeout or connection error is **still
+pending**; resume from the same task or job ID. Do not submit a duplicate build
+or retry an uncertain deployment. Polling cannot wake an idle agent.
+
+The release containers pin code, configuration, abilities, and UI mounts to
+their frozen candidate. After both containers become healthy, the broker copies
+changed release files into the shared checkout if they still match the previous
+or new release. An unexpected checkout edit holds the queue for reconciliation.
+Direct File Manager edits do not join the release queue automatically. Keep
+source digests and required checks on unchanged inputs. Coordinate other writers
+because they can interfere with checkout promotion. Shared Cargo output remains
+serial. Automatic development deployment
+must be authorized for `finish`; production is never a target. Legacy
+shared-checkout registrations are migration only and cannot overlap isolated
+tasks. The CLI cannot choose a host command, container, image tag, or target.
 
 ## V3 reducing build and validation time
 

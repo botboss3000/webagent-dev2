@@ -19,6 +19,7 @@ export function mergeProfile(base, override) {
 }
 
 function surfaceName() {
+  if (window.__CHAT_PORTAL__) return 'chat_widget';
   return (byId('chat-panel')?.clientWidth || window.innerWidth) <= 768 ? 'chat_mobile' : 'chat_desktop';
 }
 
@@ -214,7 +215,7 @@ export function applyChatConfig() {
   if (!profile) return;
   const surface = surfaceName();
   const focused = document.activeElement;
-  const inComposer = byId('chat-input-area')?.contains(focused) || focused?.closest('.v3-context-panel:not([hidden]), .v3-chat-model-list:not([hidden]), .v3-mode-confirm[open]');
+  const inComposer = byId('chat-input-area')?.contains(focused) || focused?.closest('.v3-context-panel:not([hidden]), .v3-chat-model-list:not([hidden])');
   const mode = byId('chat-input').value || focused === byId('chat-input') || (currentFooterMode === 'active' && inComposer) ? 'active' : 'idle';
   if (applyingFooter) return;
   if (surface === currentSurface && mode === currentFooterMode) {

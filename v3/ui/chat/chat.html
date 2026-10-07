@@ -24,7 +24,7 @@
 <select id="sessions" hidden aria-hidden="true" tabindex="-1"></select>
 <div id="chat-messages"><div id="chat-messages-inner"></div></div>
 <form id="composer"><div id="chat-input-area">
-<div id="chat-above-pill" class="chat-above-pill"><div id="runs" aria-live="polite"></div></div>
+<div id="chat-above-pill" class="chat-above-pill"><div id="chat-notifications" aria-live="polite"></div><div id="runs" aria-live="polite"></div></div>
   <div id="chat-composer-react-island"></div>
   <div id="chat-input-row" class="chat-pill chat-pill-boot chat-pill-row-layout chat-pill-send-only">
     <div id="chat-preview-bar" style="display:none;"></div>
@@ -79,7 +79,7 @@
       <span id="chat-abilities-badge" class="csp-badge">0</span>
     </button>
     <button id="chat-target-btn" class="chat-target-btn" type="button" title="Remote Control — choose which device runs your next message" data-header-control="target"><i data-lucide="monitor" style="width:16px;height:16px;"></i><span class="chat-target-label"></span></button>
-    <button id="chat-mode-btn" class="chat-mode-btn" title="Cycle execution mode" data-header-control="mode">Ask</button>
+    <button id="chat-mode-btn" class="chat-mode-btn" type="button" title="Cycle execution mode" data-header-control="mode">Ask</button>
     <button id="chat-model-changer" class="chat-model-changer" data-header-control="model_changer" title="Click for model list — ◀ ▶ arrows to cycle" type="button">
       <svg class="cmc-chev cmc-chev-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       <span class="cmc-name">model</span>

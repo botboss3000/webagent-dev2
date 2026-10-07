@@ -77,6 +77,8 @@ async fn catalog(app:&App,identity:&Value,id:&str,params:&HashMap<String,String>
     let mut visibility=agent_abilities(&scoped).await?;
     let policy=scoped.store.get("policy").await?.unwrap_or_else(policy_default);
     let mut abilities=app.abilities.configuration_catalog(&policy,&visibility);
+    let call_counts = app.store.for_user(caller).await?.tool_call_counts(id).await?;
+    // The counts describe this caller's recorded model calls, including older sessions.
     for ability in &mut abilities {
         let ability_id=ability["id"].as_str().unwrap_or("").to_owned();
         let ready=ability["available"]==true;
@@ -97,6 +99,7 @@ async fn catalog(app:&App,identity:&Value,id:&str,params:&HashMap<String,String>
         if let Some(tools)=ability["tools"].as_array_mut() {
             for tool in tools {
                 let name=tool["name"].as_str().unwrap_or("").to_owned();
+                tool["call_count"]=json!(call_counts.get(&name).copied().unwrap_or(0));
                 let decision=live_tool_decision(&scoped,&access,&name,&policy,&visibility,&active,&loaded,false);
                 if first || (decision.permission!=Permission::Deny && (effective.permission==Permission::Deny
                     || decision.permission==Permission::Auto)) {effective=decision;}

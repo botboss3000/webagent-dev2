@@ -1298,35 +1298,36 @@ details.ac-card:not([open]) > *:not(summary) { display: none; }
 }
 .ac-model-item:hover { background: rgba(var(--brand-rgb),0.08); }
 .ac-model-add-control[hidden] { display: none !important; }
-.ac-model-item-selectable { position: relative; padding-right: 46px; cursor: default; }
-.ac-model-row-selector {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
+.ac-model-item-selectable { cursor: pointer; }
+.ac-model-item-selectable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ac-model-inline-add {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0;
+}
+.ac-model-inline-add label { color: var(--fg-2); font-weight: 600; }
+.ac-model-inline-add input { min-width: 0; width: 100%; }
+.ac-model-inline-plus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 0;
-  padding: 0;
-  color: var(--fg-3);
+  padding: 3px;
+  color: var(--accent);
   background: transparent;
   border: 0;
-  border-radius: 0;
   cursor: pointer;
 }
-.ac-model-row-selector svg { pointer-events: none; }
-.ac-model-row-selector:hover { color: var(--accent); }
-.ac-model-row-selector.is-added { color: var(--success); }
-.ac-model-row-selector.warning,
-.ac-model-row-selector.deleting {
-  color: var(--danger);
+.ac-model-inline-plus:disabled { color: var(--fg-3); cursor: default; opacity: 0.6; }
+.ac-model-inline-plus:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ac-model-inline-error { grid-column: 2 / 4; color: var(--danger); font-size: 11px; }
+.ac-model-inline-error:empty { display: none; }
+@media (max-width: 520px) {
+  .ac-model-inline-add { grid-template-columns: minmax(0, 1fr) auto; }
+  .ac-model-inline-add label { grid-column: 1 / 3; }
+  .ac-model-inline-error { grid-column: 1 / 3; }
 }
-.ac-model-row-selector.warning svg { filter: drop-shadow(0 0 5px var(--danger)); }
-.ac-model-row-selector:disabled { cursor: default; opacity: 0.65; }
-.ac-model-row-selector:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ac-model-item-row { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .ac-model-item-badges { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .ac-model-item-caps { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }

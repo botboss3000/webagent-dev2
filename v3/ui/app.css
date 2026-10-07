@@ -84,6 +84,9 @@ body {
 @media(max-width:800px){body.mobile-mode #mobile-nav-toggle,body.mobile-mode #mobile-back-main-btn{display:inline-flex!important}body.mobile-mode #main-tabs-wrap{display:none!important}}
 
 #chat-toggle-btn{border-radius:8px;padding:6px 12px}
+#chat-toggle-btn.connection-error{color:#ff4d4f;animation:chat-connection-pulse 1.2s ease-in-out infinite}
+@keyframes chat-connection-pulse{50%{opacity:.4}}
+@media(prefers-reduced-motion:reduce){#chat-toggle-btn.connection-error{animation:none}}
 #main-header #user-dropdown-menu.user-dropdown-menu{position:absolute;top:calc(100% - 2px);left:14px;z-index:1100;width:min(280px,calc(100vw - 28px));min-width:0;padding:8px}
 #user-dropdown-menu .user-dropdown-current-row{padding:8px 10px;color:var(--fg-1)}
 #user-dropdown-menu button{display:block;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:var(--fg-1);text-align:left;cursor:pointer}

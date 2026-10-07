@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "trigger_tokens": 40000,
-  "tail_tokens": 10000,
+  "trigger_tokens": 150000,
+  "tail_tokens": 40000,
   "summary_tokens": 2000,
   "characters_per_token": 4,
   "summary_reserve_bytes": 16384,

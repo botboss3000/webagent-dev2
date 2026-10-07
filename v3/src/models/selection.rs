@@ -361,16 +361,16 @@ pub struct Assignment {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-// Capabilities describe support; these six semantic appointments select workflows.
-pub enum ModelRole { #[default] Standard, Premium, ImageIn, ImageOut, System, Voice }
+// Capabilities describe support; explicit semantic appointments select workflows.
+pub enum ModelRole { #[default] Standard, Premium, ImageIn, ImageOut, System, Voice, Decision }
 impl ModelRole {
     pub fn label(self) -> &'static str {
         match self { Self::Standard => "Standard", Self::Premium => "Premium", Self::ImageIn => "Image In",
-            Self::ImageOut => "Image Out", Self::System => "System", Self::Voice => "Voice" }
+            Self::ImageOut => "Image Out", Self::System => "System", Self::Voice => "Voice", Self::Decision => "Decision" }
     }
     pub fn supported_by(self, entry: &ModelEntry) -> bool {
         entry.capabilities.contains(match self { Self::Standard | Self::Premium | Self::System => "text",
-            Self::ImageIn => "image_in", Self::ImageOut => "image_out", Self::Voice => "voice" })
+            Self::ImageIn => "image_in", Self::ImageOut => "image_out", Self::Voice => "voice", Self::Decision => "decision" })
     }
 }
 
@@ -564,6 +564,18 @@ impl FailoverState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn decision_requires_an_explicit_compatible_role() {
+        let mut c = catalog_fixture(); c.migrate_legacy().unwrap();
+        c.entries.get_mut("b").unwrap().capabilities.insert("decision".into());
+        assert!(c.resolve_role("agent-a", ModelRole::Decision).is_err());
+        c.agent_models.get_mut("agent-a").unwrap().roles.insert(ModelRole::Decision, RoleAssignment { entry_id: "b".into(), backup_entry_ids: vec![] });
+        assert_eq!(c.resolve_role("agent-a", ModelRole::Decision).unwrap().candidates[0].entry_id, "b");
+        assert_eq!(serde_json::to_value(ModelRole::Decision).unwrap(), "decision");
+        assert_eq!(c.resolve("agent-a").unwrap().candidates[0].entry_id, "a");
+        c.entries.get_mut("b").unwrap().capabilities.remove("decision");
+        assert!(c.resolve_role("agent-a", ModelRole::Decision).is_err());
+    }
     fn fixture() -> (Assignment, BTreeMap<String, ModelEntry>, BTreeMap<String, Connection>, BTreeMap<String, BackupGroup>) {
         let assignment = Assignment { agent_id: "agent-a".into(), owner_id: "owner".into(), primary_entry_id: "a".into(), backup_group_id: Some("group".into()), revision: 1 };
         let mut entries = BTreeMap::new(); let mut connections = BTreeMap::new();

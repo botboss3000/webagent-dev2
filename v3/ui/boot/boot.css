@@ -7,4 +7,14 @@ body.is-booting > :not(#boot-curtain):not(#cursor-glow):not(script) {visibility:
 #boot-curtain ~ #cursor-glow {z-index:2147483601}
 
 #boot-curtain{pointer-events:none}
-#cursor-glow.boot-is-on{position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle 160px at var(--boot-gx) var(--boot-gy),rgba(var(--brand-rgb),.2),transparent 70%)}
+#cursor-glow.boot-is-on{position:fixed;inset:0;pointer-events:none;background:
+  radial-gradient(
+    var(--glow-radius, 520px) circle at var(--gx, -100%) var(--gy, -100%),
+    var(--glow-color, rgba(var(--brand-rgb), 0.06)) 0%,
+    transparent 60%
+  ),
+  radial-gradient(
+    var(--glow-radius, 520px) circle at var(--boot-gx, -100%) var(--boot-gy, -100%),
+    var(--glow-color, rgba(var(--brand-rgb), 0.06)) 0%,
+    transparent 60%
+  );}

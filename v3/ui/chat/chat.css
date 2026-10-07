@@ -3,12 +3,13 @@
 #chat-messages-inner{box-sizing:border-box;flex:0 0 auto;min-height:100%;width:100%;max-width:var(--v3-content-max-width,100%)!important;margin-inline:auto;padding:var(--v3-chat-header-clearance,100px) 14px calc(var(--v3-chat-footer-clearance,180px) + var(--v3-tail-gap,0px))!important}
 /* Composer geometry is exclusively the canonical v2 shared CSS + chat_ui.json. */
 #composer{display:contents}
+#chat-panel #chat-input{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden;overflow-y:auto}
 #chat-above-pill{width:100%;max-height:25dvh;overflow:auto;pointer-events:auto}
 /* Run controls stay above, and clickable beside either composer layout. */
 #chat-panel #chat-input-area #chat-above-pill{flex-shrink:0;max-height:35dvh;opacity:1;margin:0 auto 6px;overflow:auto;pointer-events:auto;z-index:8}
 /* Keep progress and repository notices visible even without run-control cards. */
-#chat-panel #chat-input-area #chat-above-pill:not(.visible):not(:has(#runs > :not([hidden]),.v3-repository-notice:not([hidden]))){display:none}
-#runs .approval-pill[hidden]{display:none!important}
+#chat-panel #chat-input-area #chat-above-pill:not(.visible):not(:has(#chat-notifications .chat-notification,#runs > :not([hidden]),.v3-repository-notice:not([hidden]))){display:none}
+#chat-notifications{padding:0 4px}
 #runs{max-height:none;overflow:visible;padding:0 4px}
 /* All composer notices share the approval pill surface and chip actions. */
 #runs .run-card{box-sizing:border-box;width:fit-content;max-width:min(100%,var(--chat-pill-current-width,var(--chat-pill-width,500px)));margin:6px auto;padding:8px 12px;border:var(--border-width) solid color-mix(in oklab,var(--fg-1) 22%,transparent);border-radius:22px;background:var(--chat-pill-bg,color-mix(in oklab,var(--bg-elev) 82%,transparent));color:var(--fg-2);backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);font-size:13px;line-height:1.45;overflow-wrap:anywhere;text-align:center}
@@ -22,23 +23,24 @@ body.light-mode #runs .run-card{background:var(--chat-pill-bg,color-mix(in oklab
 #runs .run-card>button:focus-visible,#runs .run-card>textarea:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
 .run-card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:150px;overflow:auto}
 .run-card button{margin:4px}.run-card textarea{display:block;width:100%;background:var(--bg-1);color:var(--fg-1)}
-/* Approval uses the composer's glass surface, with a shallower, compact silhouette. */
-#runs .approval-pill{box-sizing:border-box;width:fit-content;max-width:min(100%,var(--chat-pill-current-width,var(--chat-pill-width,500px)));margin:6px auto;padding:8px 12px;border:var(--border-width) solid color-mix(in oklab,var(--fg-1) 22%,transparent);border-radius:22px;background:var(--chat-pill-bg,color-mix(in oklab,var(--bg-elev) 82%,transparent));color:var(--fg-2);backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);font-size:13px;}
-body.light-mode #runs .approval-pill{background:var(--chat-pill-bg,color-mix(in oklab,var(--bg-elev) 85%,transparent));}
-.approval-heading{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;}
-.approval-heading>span{flex-shrink:0;}
-#runs .approval-tool{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;margin:0;padding:3px 0;border:0;background:transparent;color:var(--fg-1);font:inherit;font-weight:600;overflow-wrap:anywhere;text-align:left;cursor:pointer;}
-.approval-tool::after{content:'';width:6px;height:6px;flex-shrink:0;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin:0 3px 3px;}
-.approval-tool[aria-expanded=true]::after{transform:rotate(225deg);margin-top:5px;}
-.approval-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;margin-top:5px;}
-#runs .approval-chip{margin:0;min-height:28px;padding:3px 10px;border:var(--border-width) solid color-mix(in oklab,currentColor 22%,transparent);border-radius:999px;background:color-mix(in oklab,var(--fg-1) 5%,transparent);color:var(--fg-2);font:inherit;font-size:12px;font-weight:600;cursor:pointer;}
-#runs .approval-approve{color:var(--brand);background:color-mix(in oklab,var(--brand) 10%,transparent);}
-#runs .approval-deny{color:var(--danger);background:color-mix(in oklab,var(--danger) 8%,transparent);}
-#runs .approval-chip:hover{background:color-mix(in oklab,currentColor 15%,transparent);}
-#runs .approval-chip:disabled{opacity:.5;cursor:wait;}
-#runs .approval-tool:focus-visible,#runs .approval-chip:focus-visible{outline:2px solid var(--brand);outline-offset:3px;}
-#runs .approval-pill pre{box-sizing:border-box;max-width:100%;max-height:120px;margin:8px 0;padding:8px 10px;border:var(--border-width) solid var(--border);border-radius:12px;background:var(--bg-1);color:var(--fg-1);font-size:12px;line-height:1.45;}
-#runs .approval-pill pre[hidden]{display:none;}
+/* Mode and tool approvals use one compact composer notification surface. */
+#chat-notifications .chat-notification{box-sizing:border-box;width:fit-content;max-width:min(100%,var(--chat-pill-current-width,var(--chat-pill-width,500px)));margin:6px auto;padding:8px 12px;border:var(--border-width) solid color-mix(in oklab,var(--fg-1) 22%,transparent);border-radius:22px;background:var(--chat-pill-bg,color-mix(in oklab,var(--bg-elev) 82%,transparent));color:var(--fg-2);backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);font-size:13px;line-height:1.45;text-align:center;overflow-wrap:anywhere}
+body.light-mode #chat-notifications .chat-notification{background:var(--chat-pill-bg,color-mix(in oklab,var(--bg-elev) 85%,transparent))}
+.chat-notification-heading{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+.chat-notification-heading strong{font-weight:600;color:var(--fg-1)}
+#chat-notifications .chat-notification-detail-toggle{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;margin:0;padding:3px 0;border:0;background:transparent;color:var(--fg-1);font:inherit;font-weight:600;overflow-wrap:anywhere;text-align:left;cursor:pointer}
+.chat-notification-detail-toggle::after{content:'';width:6px;height:6px;flex-shrink:0;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin:0 3px 3px}
+.chat-notification-detail-toggle[aria-expanded=true]::after{transform:rotate(225deg);margin-top:5px}
+#chat-notifications .chat-notification p{margin:5px 0}
+.chat-notification-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;margin-top:5px}
+#chat-notifications .chat-notification-action{margin:0;min-height:28px;padding:3px 10px;border:var(--border-width) solid color-mix(in oklab,currentColor 22%,transparent);border-radius:999px;background:color-mix(in oklab,var(--fg-1) 5%,transparent);color:var(--fg-2);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+#chat-notifications .chat-notification-approve{color:var(--brand);background:color-mix(in oklab,var(--brand) 10%,transparent)}
+#chat-notifications .chat-notification-deny{color:var(--danger);background:color-mix(in oklab,var(--danger) 8%,transparent)}
+#chat-notifications .chat-notification-action:hover{background:color-mix(in oklab,currentColor 15%,transparent)}
+#chat-notifications .chat-notification-action:disabled{opacity:.5;cursor:wait}
+#chat-notifications .chat-notification-detail-toggle:focus-visible,#chat-notifications .chat-notification-action:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
+#chat-notifications .chat-notification pre{box-sizing:border-box;max-width:100%;max-height:120px;margin:8px 0;padding:8px 10px;border:var(--border-width) solid var(--border);border-radius:12px;background:var(--bg-1);color:var(--fg-1);font-size:12px;line-height:1.45;white-space:pre-wrap;overflow:auto;text-align:left}
+#chat-notifications .chat-notification pre[hidden]{display:none}
 .v3-message{display:flex;flex-direction:column;align-items:flex-start;margin:16px 0}
 .v3-message.user{align-items:flex-end}
 .v3-message .message-content{white-space:pre-wrap;overflow-wrap:anywhere;max-width:95%;border-radius:18px;padding:12px 15px;background:var(--agent-bubble-bg,var(--bg-elev));border:var(--border-width) solid var(--border-soft)}
@@ -79,9 +81,7 @@ body.light .v3-config-bubble,[data-theme=light] .v3-config-bubble{background:var
 .v3-chat-model-list .cml-item{width:100%;color:var(--fg-1);background:transparent;border:0;text-align:left}
 .v3-chat-model-list .cml-item[aria-pressed=true]{background:var(--bg-tint)}
 .v3-chat-model-list .cml-item:disabled{opacity:.5}
-.v3-mode-confirm{max-width:min(420px,calc(100vw - 32px));color:var(--fg-1);background:var(--bg-elev);border:var(--border-width) solid var(--border);border-radius:var(--r-md);padding:20px}
-.v3-mode-confirm::backdrop{background:rgba(0,0,0,.5)}
-.v3-mode-confirm button{padding:8px 12px;margin-right:8px;color:var(--fg-1);background:var(--bg-1);border:var(--border-width) solid var(--border);border-radius:var(--r-sm)}
+
 
 #chat-preview-bar {gap:8px;flex-wrap:wrap;padding:8px 12px;}
 #chat-preview-bar:not([style*="display: none"]):not([style*="display:none"]) {display:flex;}

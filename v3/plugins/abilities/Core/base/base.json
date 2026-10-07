@@ -3,6 +3,7 @@
   "kind": "virtual_core",
   "description": "Core conversation tools for bounded utilities, caller-owned session search, context compaction and recall, prompt and skill edits, task checkpoints, and declarative presentation. Remaining declarations need separate V3 contracts.",
   "tools": [
+    "search_tools",
     "load_tool",
     "load_ability",
     "list_skills",

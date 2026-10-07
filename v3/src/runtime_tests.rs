@@ -1421,7 +1421,7 @@ async fn agent_loop_gates_tool_and_denial_continues_without_worker() {
     });
     app.provider = provider::Provider::for_test(format!("http://{address}/responses"));
     let sid = conversation(&app).await;
-    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "write".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app, &sid).await;
     let id = queued(&app, &sid).await;
     let mut run = app.run(&id).await.unwrap();
@@ -2968,7 +2968,7 @@ async fn prompt_slot_api_requires_auth_csrf_and_current_revision() {
 }
 
 #[tokio::test]
-async fn prompt_slot_tool_waits_for_approval_then_writes_once() {
+async fn prompt_slot_tool_in_auto_writes_once_without_approval() {
     use axum::routing::post;
 
     let (_root, mut app) = fixture().await;
@@ -3022,27 +3022,7 @@ async fn prompt_slot_tool_waits_for_approval_then_writes_once() {
     )
     .await
     .unwrap();
-    let waiting = app.run(&id).await.unwrap();
-    assert_eq!(waiting["status"], "waiting_approval");
-    assert!(app.store.get_prompt_slot("coding").await.unwrap().is_none());
-    let pending_id = waiting["pending"]["id"].as_str().unwrap().to_owned();
-    let approved = approval(
-        State(app.clone()),
-        Path(pending_id),
-        Json(json!({"client_request_id":"slot-approve","decision":"approve"})),
-    )
-    .await
-    .unwrap();
-    assert_eq!(approved.0["status"], "queued");
-    running(&app, &id, "slot-second").await;
-    execute_run(
-        app.clone(),
-        id.clone(),
-        "slot-second".into(),
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap();
+    // Auto crosses the policy's Ask threshold without a per-tool decision.
     assert_eq!(app.run(&id).await.unwrap()["status"], "completed");
     let slot = app.store.get_prompt_slot("coding").await.unwrap().unwrap();
     assert_eq!(slot["content"], "Use checked patches.");
@@ -5006,7 +4986,7 @@ async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call
     config.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
     config.persist(&app.runtime_path).unwrap();
     let sid=conversation(&app).await;
-    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "auto".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
+    session_mode_set(State(app.clone()), Path(sid.clone()), Json(SessionModeBody { mode: "write".into(), expected_revision: Some(session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap()), confirm_write: true })).await.unwrap();
     activate_codebase(&app,&sid).await;
     let id=queued(&app,&sid).await;
     let mut run=app.run(&id).await.unwrap();
@@ -5082,6 +5062,91 @@ async fn parallel_writes_need_independent_approvals_and_reconcile_uncertain_call
     assert!(done["workflow"]["batch_receipts"]["write-two"].is_object());
     assert_eq!(app.store.context(&sid).await.unwrap().iter()
         .filter(|item|item["type"]=="function_call_output").count(),2);
+}
+#[tokio::test]
+async fn existing_auto_approval_is_requeued_without_reusing_its_decision() {
+    let (_root,app)=fixture().await;
+    let sid=conversation(&app).await;
+    session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+        mode:"auto".into(),expected_revision:Some(0),confirm_write:true,
+    })).await.unwrap();
+    let id=queued(&app,&sid).await;
+    let mut run=app.run(&id).await.unwrap();
+    run["phase"]=json!("tools");
+    run["status"]=json!("waiting_approval");
+    run["pending"]=json!({"id":"old-auto-approval","name":"file_write",
+        "state":"waiting","decision":null});
+    app.save(&mut run).await.unwrap();
+    requeue_auto_approval(&app,&id).await.unwrap();
+    let queued=app.run(&id).await.unwrap();
+    assert_eq!(queued["status"],"queued");
+    assert_eq!(queued["pending"]["state"],"requested");
+    assert_ne!(queued["pending"]["id"],"old-auto-approval");
+    assert!(queued["pending"]["decision"].is_null());
+}
+#[tokio::test]
+async fn switching_waiting_parallel_writes_to_auto_runs_without_approval() {
+    use tokio::io::{AsyncBufReadExt,AsyncWriteExt,BufReader};
+    use tokio::net::UnixListener;
+    let (_root,app)=fixture().await;
+    let mut config=loop_runtime::Config::read(&app.runtime_path).unwrap();
+    config.tools.parallel_modes.insert("file_write".into(),"concurrent".into());
+    config.persist(&app.runtime_path).unwrap();
+    let sid=conversation(&app).await;
+    session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+        mode:"write".into(),expected_revision:Some(0),confirm_write:true,
+    })).await.unwrap();
+    activate_codebase(&app,&sid).await;
+    let id=queued(&app,&sid).await;
+    let mut run=app.run(&id).await.unwrap();
+    run["phase"]=json!("tools");
+    run["loaded_abilities"]=json!(["codebase_admin"]);
+    run["calls"]=json!([
+        {"type":"function_call","call_id":"auto-one","name":"file_write",
+            "arguments":"{\"path\":\"one\",\"content\":\"first\"}"},
+        {"type":"function_call","call_id":"auto-two","name":"file_write",
+            "arguments":"{\"path\":\"two\",\"content\":\"second\"}"}
+    ]);
+    app.save(&mut run).await.unwrap();
+    let policy=current_workflow_policy(&app).await.unwrap();
+    let access=app.store.live_access(app.store.current_user_id(),"shared_default").await.unwrap();
+    running(&app,&id,"before-auto").await;
+    let guard=app.gate.lock().await;
+    parallel_batch::execute_parallel_batch(&app,&id,"before-auto",
+        &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard)
+        .await.unwrap();
+    assert_eq!(app.run(&id).await.unwrap()["status"],"waiting_approval");
+    let old_approval=app.run(&id).await.unwrap()["pending"]["id"].as_str().unwrap().to_owned();
+    let revision=session_mode(&app,&sid).await.unwrap()["revision"].as_u64().unwrap();
+    session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+        mode:"auto".into(),expected_revision:Some(revision),confirm_write:true,
+    })).await.unwrap();
+    assert_eq!(app.run(&id).await.unwrap()["status"],"queued");
+    assert!(approval(State(app.clone()),Path(old_approval),Json(json!({
+        "client_request_id":"old-mode-approval","decision":"approve"
+    }))).await.is_err());
+    running(&app,&id,"after-auto").await;
+    let listener=UnixListener::bind(&app.tool_socket).unwrap();
+    let worker=tokio::spawn(async move {
+        for _ in 0..2 {
+            let (stream,_)=listener.accept().await.unwrap();
+            let mut reader=BufReader::new(stream);
+            let mut line=String::new();reader.read_line(&mut line).await.unwrap();
+            let request:Value=serde_json::from_str(&line).unwrap();
+            let reply=json!({"id":request["id"],"status":"success","output":"written"});
+            reader.get_mut().write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+        }
+    });
+    let guard=app.gate.lock().await;
+    tokio::time::timeout(Duration::from_secs(5),
+        parallel_batch::execute_parallel_batch(&app,&id,"after-auto",
+            &CancellationToken::new(),&policy,&access,app.run(&id).await.unwrap(),guard))
+        .await.unwrap().unwrap();
+    worker.await.unwrap();
+    let after=app.run(&id).await.unwrap();
+    assert_ne!(after["status"],"waiting_approval");
+    assert_eq!(after["batch"][0]["state"],"done");
+    assert_eq!(after["batch"][1]["state"],"done");
 }
 
 

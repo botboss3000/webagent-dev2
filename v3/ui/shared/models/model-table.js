@@ -374,9 +374,15 @@ export function mountModelTable(host, opts = {}) {
   // only the caller's own value.
   const userDisplayName = (p) => {
     const stored = String(p?.display_name || '').trim();
-    return isCatalogRow(p) && stored === modelNameOf(p) ? '' : stored;
+    return stored === modelNameOf(p) ? '' : stored;
   };
   const rowDisplayName = (p) => userDisplayName(p) || modelNameOf(p) || '—';
+  // Treat a blank alias as one shared slot, and compare named aliases without case or edge spaces.
+  const displayNameConflict = (candidate, except = null) => {
+    const name = String(candidate || '').trim().toLocaleLowerCase();
+    const exists = S.providers.some(row => row !== except && userDisplayName(row).toLocaleLowerCase() === name);
+    return exists ? (name ? 'Display names must be unique in this agent.' : 'Only one model can have no display name.') : '';
+  };
   const saveRoster = () => adapter.saveRoster({
     providers: S.providers,
     role_assignments: { ...S.roleAssignments },
@@ -590,7 +596,32 @@ export function mountModelTable(host, opts = {}) {
   displayNameInput.placeholder = 'Optional';
   displayNameInput.autocomplete = 'off';
   displayNameCtrl.appendChild(displayNameInput); displayNameRow.appendChild(displayNameCtrl);
+  if (inlineCatalogAdd) displayNameRow.style.display = 'none';
   table.appendChild(displayNameRow);
+  // The v3 picker moves this one input into the selected catalog row.
+  const inlineNameForm = document.createElement('div');
+  inlineNameForm.className = 'ac-model-inline-add';
+  const inlineNameLabel = document.createElement('label');
+  inlineNameLabel.textContent = 'Display name';
+  inlineNameLabel.title = displayNameHelp;
+  const inlineAddBtn = document.createElement('button');
+  inlineAddBtn.type = 'button';
+  inlineAddBtn.className = 'ac-model-inline-plus';
+  inlineAddBtn.setAttribute('aria-label', 'Add selected model');
+  inlineAddBtn.title = 'Add selected model';
+  inlineAddBtn.innerHTML = icon('plus-square', { size: '20px' });
+  const inlineNameError = document.createElement('span');
+  inlineNameError.className = 'ac-model-inline-error';
+  inlineNameError.setAttribute('role', 'status');
+  if (inlineCatalogAdd) inlineNameForm.append(inlineNameLabel, displayNameInput, inlineAddBtn, inlineNameError);
+  displayNameInput.addEventListener('click', (event) => event.stopPropagation());
+  inlineNameForm.addEventListener('click', (event) => event.stopPropagation());
+  const updateInlineNameState = () => {
+    const duplicate = displayNameConflict(displayNameInput.value);
+    inlineNameError.textContent = duplicate;
+    inlineAddBtn.disabled = catalogAddBusy || !!duplicate;
+  };
+  displayNameInput.addEventListener('input', updateInlineNameState);
 
   // Model row (search + caps + Add/Clear)
   const modelRow = document.createElement('div');
@@ -990,73 +1021,29 @@ export function mountModelTable(host, opts = {}) {
         + (badges ? `<div class="ac-model-item-badges">${badges}</div>` : '')
         + `<div class="ac-model-item-caps">${capBadges}</div>`;
       if (inlineCatalogAdd) {
-        const selectedRow = S.providers.find(row => S.currentProvider === 'webagent_catalog'
-          ? row.catalog_source_id === m.id || row.entry_id === m.id
-          : row.provider === S.currentProvider && row.model === m.id);
-        const added = !!selectedRow;
-        const selector = document.createElement('button');
-        selector.type = 'button';
-        selector.className = 'ac-model-row-selector';
-        selector.classList.toggle('is-added', added);
-        selector.disabled = catalogReadOnly || catalogAddBusy;
-        selector.setAttribute('aria-pressed', String(added));
-        selector.setAttribute('aria-label', `${added ? 'Remove' : 'Add'} ${visibleModelName} ${added ? 'from' : 'to'} available models`);
-        selector.title = added ? 'Remove from available models' : 'Add to available models';
-        selector.innerHTML = icon(added ? 'check-square' : 'plus-square', { size: '18px' });
-        selector.addEventListener('click', (event) => {
-          event.stopPropagation();
-          if (catalogAddBusy) return;
-          if (added) {
-            advanceDeleteBtn(selector, {
-              iconName: 'check-square',
-              size: '18px',
-              armTitle: 'Click again to remove from this agent',
-              armLabel: `Confirm removal of ${visibleModelName} from available models`,
-              busyTitle: 'Removing from agent…',
-              busyLabel: `Removing ${visibleModelName} from available models`,
-              onConfirm: async () => {
-                catalogAddBusy = true;
-                modelDd.querySelectorAll('.ac-model-row-selector').forEach(control => { control.disabled = true; });
-                const previousProviders = [...S.providers];
-                const previousRoles = { ...S.roleAssignments };
-                S.providers = S.providers.filter(row => row !== selectedRow);
-                for (const [role, entryId] of Object.entries(S.roleAssignments)) {
-                  if (entryId === selectedRow.entry_id) delete S.roleAssignments[role];
-                }
-                try {
-                  await saveRoster();
-                  renderSaved({ animate: true });
-                  onModelChange();
-                  setModelStatus('');
-                } catch (error) {
-                  S.providers = previousProviders;
-                  S.roleAssignments = previousRoles;
-                  setModelStatus(error?.message || 'Unable to remove model');
-                } finally {
-                  catalogAddBusy = false;
-                  renderModelDropdown(modelSearch.value.toLowerCase());
-                }
-              },
-            });
-            return;
-          }
-          catalogAddBusy = true;
-          modelDd.querySelectorAll('.ac-model-row-selector').forEach(control => { control.disabled = true; });
-          S.selectedModel = m.id;
+        item.tabIndex = catalogReadOnly ? -1 : 0;
+        item.setAttribute('role', 'group');
+        item.setAttribute('aria-label', visibleModelName);
+        const choose = () => {
+          if (catalogReadOnly || catalogAddBusy) return;
+          S.selectedModel = S.selectedModel === m.id ? '' : m.id;
+          displayNameInput.value = '';
           S.selCaps = { text: m.text_capable !== false, image: !!m.image_capable, imageOut: !!m.image_out_capable, voice: !!m.voice_capable, video: !!m.video_capable };
-          (async () => {
-            try {
-              const saved = await addModel();
-              if (saved) setModelStatus('');
-            } catch (error) {
-              setModelStatus(error?.message || 'Unable to add model');
-            } finally {
-              catalogAddBusy = false;
-              renderModelDropdown(modelSearch.value.toLowerCase());
-            }
-          })();
+          setModelStatus('');
+          renderModelDropdown(modelSearch.value.toLowerCase());
+          if (S.selectedModel) displayNameInput.focus();
+        };
+        item.addEventListener('click', choose);
+        item.addEventListener('keydown', (event) => {
+          if (event.target === item && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            choose();
+          }
         });
-        item.appendChild(selector);
+        if (S.selectedModel === m.id && !catalogReadOnly) {
+          item.firstElementChild.after(inlineNameForm);
+          updateInlineNameState();
+        }
       } else {
         item.addEventListener('click', () => {
           S.selectedModel = m.id; modelSearch.value = isPlatformCatalogModel ? visibleModelName : (m.name || visibleModelName);
@@ -2093,7 +2080,9 @@ export function mountModelTable(host, opts = {}) {
     // credentials are app-managed and a BYO key belongs to its own credential
     // control, so this panel only names models.
     const identityHtml = metaLine('Model name:', metaValue(modelNameOf(p)))
-      + metaLine('Provider:', metaValue(provName));
+      + metaLine('Provider:', metaValue(provName))
+      + (subscriptionAuth ? metaLine('Credentials:', metaValue(
+        p.credential_email || (p.credential_configured ? 'Email unavailable' : 'Not connected'))) : '');
     // One continuous list — model name → provider → specs → usage/cost →
     // capabilities → the editable Display name — so every row shares the same
     // grey-label / bright-value pair. The Display name is the user's own alias
@@ -2382,6 +2371,12 @@ export function mountModelTable(host, opts = {}) {
         done = true;
         const next = aliasInput.value.trim();
         if (commit && next !== current) {
+          const conflict = displayNameConflict(next, p);
+          if (conflict) {
+            aliasInput.replaceWith(aliasValue);
+            _flashSaveCheck(aliasLine, false, conflict);
+            return;
+          }
           const previous = current;
           p.display_name = next;
           _markSaving(aliasLine);
@@ -2597,6 +2592,7 @@ export function mountModelTable(host, opts = {}) {
     [
       ['S', 'Standard', 'standard'],
       ['P', 'Premium', 'premium'],
+      ['D', 'Decision', 'decision'],
       ['V', 'Vision', 'image_in'],
       ['I', 'Image', 'image_out'],
       ['⚙', 'System', 'system'],
@@ -2624,6 +2620,7 @@ export function mountModelTable(host, opts = {}) {
     const roleLabels = [];
     if (hasRole(p, 'standard')) roleLabels.push('Standard');
     if (hasRole(p, 'premium')) roleLabels.push('Premium');
+    if (hasRole(p, 'decision')) roleLabels.push('Decision');
     if (hasRole(p, 'image_in')) roleLabels.push('Vision');
     if (hasRole(p, 'image_out')) roleLabels.push('Image');
     if (hasRole(p, 'system')) roleLabels.push('System');
@@ -2702,6 +2699,8 @@ export function mountModelTable(host, opts = {}) {
     _buildRoleToggle(rolesSection, liveVoiceCapable, hasRole(p, 'voice'), 'Voice', 'Live voice input in chat',
       (v, cb) => persistRole('voice', v, cb), locked, lockHint,
       String(p.model || '').toLowerCase().endsWith(':batch') ? 'batch-only models cannot serve live voice' : '');
+    _buildRoleToggle(rolesSection, !!p.decision_capable, hasRole(p, 'decision'), 'Decision', 'Classifier model for tool relevance and routing',
+      (v, cb) => persistRole('decision', v, cb), locked, lockHint);
     popover.appendChild(rolesSection);
 
     // Wire popover open/close
@@ -3146,11 +3145,14 @@ export function mountModelTable(host, opts = {}) {
     });
     if (guardMessage) return setModelStatus(guardMessage);
     if (!dupe) {
+      const requestedName = displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : '');
+      const conflict = displayNameConflict(requestedName);
+      if (conflict) return setModelStatus(conflict);
       const chosen = S.allModels.find(row => row.id === S.selectedModel) || {};
       const subscriptionConnection = subscription ? matchingSubscriptionRow() : null;
       // Persisted IDs are owned by the server. `_uid` is the only client-side row
       // identity; adapters hydrate `entry_id` into this same object after save.
-      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), connection_id: subscriptionConnection?.connection_id || '', catalog_source_id: platformCatalog ? S.selectedModel : '', display_name: displayNameInput.value.trim() || (free ? nextFreeSlotLabel() : ''), provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!subscriptionConnection?.credential_configured : true, credential_email: subscription ? (subscriptionConnection?.credential_email || '') : '', credential_plan_type: subscription ? (subscriptionConnection?.credential_plan_type || '') : '', _uid: ++S.uid };
+      const newP = { entry_id: platformCatalog ? S.selectedModel : (subscription && pendingSubscriptionRow?.entry_id ? pendingSubscriptionRow.entry_id : ''), connection_id: subscriptionConnection?.connection_id || '', catalog_source_id: platformCatalog ? S.selectedModel : '', display_name: requestedName, provider, auth_mode: subscription ? 'chatgpt' : 'api_key', base_url: platformCatalog ? '' : (subscription ? 'codex://chatgpt' : baseUrl), api_key: platformCatalog ? '' : apiKey, model: free ? 'openrouter/free' : S.selectedModel, catalog_origin: platformCatalog ? 'platform' : 'byo', catalog_name: platformCatalog ? (chosen.catalog_name || chosen.display_name || '') : '', routing_mode: free ? 'openrouter_free' : '', text_capable: free || capText, image_capable: free ? false : capImage, image_out_capable: free ? false : capImageOut, voice_capable: free ? false : capVoice, high_effort_capable: false, credential_scope: subscription ? subscriptionScope : '', credential_configured: subscription ? !!subscriptionConnection?.credential_configured : true, credential_email: subscription ? (subscriptionConnection?.credential_email || '') : '', credential_plan_type: subscription ? (subscriptionConnection?.credential_plan_type || '') : '', _uid: ++S.uid };
       newP.video_capable = free ? false : !!chosen.video_capable;
       newP.decision_capable = !!chosen.decision_capable;
       const previousRoles = { ...S.roleAssignments };
@@ -3255,10 +3257,34 @@ export function mountModelTable(host, opts = {}) {
     if (!S.allModels.length && S.currentProvider === 'webagent_catalog') await loadModels();
   });
   modelSearch.addEventListener('input', () => {
-    if (opts.manualModelEntry && S.currentProvider !== 'webagent_catalog') {
+    if (opts.manualModelEntry && S.currentProvider !== 'webagent_catalog' && !inlineCatalogAdd) {
       S.selectedModel = modelSearch.value.trim(); S.selCaps = {text:true,image:false,imageOut:false,voice:false}; renderDetectedCaps(null);
+    } else if (inlineCatalogAdd) {
+      S.selectedModel = '';
+      displayNameInput.value = '';
     }
     renderModelDropdown(modelSearch.value.toLowerCase());
+  });
+  inlineAddBtn.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    if (catalogAddBusy || !S.selectedModel) return;
+    catalogAddBusy = true;
+    inlineAddBtn.disabled = true;
+    try {
+      const saved = await addModel();
+      if (saved) {
+        S.selectedModel = '';
+        modelSearch.value = '';
+        displayNameInput.value = '';
+        renderDetectedCaps(null);
+        setModelStatus('');
+      }
+    } catch (error) {
+      setModelStatus(error?.message || 'Unable to add model');
+    } finally {
+      catalogAddBusy = false;
+      renderModelDropdown(modelSearch.value.toLowerCase());
+    }
   });
   async function submitModel(options = {}) {
     if (addBtn.disabled) return;

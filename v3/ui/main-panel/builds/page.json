@@ -1,0 +1,7 @@
+{
+  "id": "builds",
+  "label": "Builds",
+  "order": 2,
+  "css": ["builds.css"],
+  "entry": "builds-page.js"
+}

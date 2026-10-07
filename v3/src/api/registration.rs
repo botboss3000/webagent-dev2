@@ -315,7 +315,7 @@ pub(crate) fn validate_pages(pages:&Value)->Result<()> {
 pub(crate) fn page_allowed(policy:&Value, scope:&str, id:&str, principal:&access::Principal)->bool {
     if !principal.active() {return false;}
     if principal.administrator() {return true;} // protected administration recovery
-    if scope=="app" && matches!(id,"users"|"user-policies"|"page-access") {return false;}
+    if scope=="app" && matches!(id,"settings"|"users"|"user-policies"|"page-access") {return false;}
     match policy["pages"][scope][id].as_str().unwrap_or("everyone") {
         "everyone"=>true,"registered"=>principal.role!=access::Role::Guest,_=>false,
     }

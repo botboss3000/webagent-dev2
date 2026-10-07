@@ -323,11 +323,18 @@ async fn connection_status(State(app): State<App>, Extension(identity): Extensio
                     && entry.allowed_agents.contains(agent) && access.model_allowed(&entry.upstream_model))));
         if !visible {return Err(denied());}
     }
+    let credential = if connection.revoked { None } else { app.store.get(&connection.credential_ref).await? };
+    let connected = credential.is_some();
+    // The subscription identity comes from the saved provider token and is visible only to its owner.
+    let account_email = if connection.owner_id == caller.user_id
+        && connection.transport == crate::model_selection::Transport::OpenaiSubscription {
+        credential.as_ref().and_then(|value| value["email"].as_str())
+    } else { None };
     let login=app.login.read().await;
     let authorization=login.as_ref().filter(|v| connection.owner_id == caller.user_id && v["connection_id"]==id).map(|v|json!({
         "status":v["status"],"verification_url":v["verification_url"],"user_code":v["user_code"]}));
     Ok(Json(json!({"id":id,"revoked":connection.revoked,
-        "connected":!connection.revoked && app.store.get(&connection.credential_ref).await?.is_some(),"authorization":authorization})))
+        "connected":connected,"account_email":account_email,"authorization":authorization})))
 }
 // Reattach the owner's pending device code after a page reload. Draft
 // connections have no roster entry yet, so connection status alone cannot
@@ -651,6 +658,22 @@ mod tests {
         }
         assert!(app.login.read().await.is_none());
         assert_eq!(after.agent_models["shared_default"].entry_ids,before.agent_models["shared_default"].entry_ids);
+    }
+    #[tokio::test]
+    async fn subscription_status_shows_saved_email_only_to_credential_owner() {
+        let (_root, app) = fixture().await;
+        let catalog = selection_fixture(&app).await;
+        let reference = &catalog.connections["one"].credential_ref;
+        app.store.put(reference, &json!({"access_token":"fixture-token","email":"owner@example.test"})).await.unwrap();
+        let owner = json!({"_user_id":"admin"});
+        let Json(status) = connection_status(State(app.clone()),Extension(owner),
+            Path("one".into()),Query(HashMap::new())).await.unwrap();
+        assert_eq!(status["connected"],true);
+        assert_eq!(status["account_email"],"owner@example.test");
+        assert!(!status.to_string().contains("fixture-token"));
+        let outsider = json!({"_user_id":"other"});
+        assert!(connection_status(State(app),Extension(outsider),
+            Path("one".into()),Query(HashMap::new())).await.is_err());
     }
     #[tokio::test]
     async fn visibility_preferences_preserve_fixed_protocol_and_revision_fence() {

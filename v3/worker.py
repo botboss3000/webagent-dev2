@@ -857,6 +857,38 @@ def file_operation(request, base, args, name):
                     "output": b"".join(output).decode(errors="replace"),
                     "offset": offset, "limit": limit, "total_lines": total,
                     "next_offset": next_offset, "truncated": truncated}
+        elif name == "decision_candidates":
+            offset = args.get("offset", 0)
+            if type(offset) is not int or not 0 <= offset <= 10000:
+                raise ValueError("offset must be between 0 and 10000")
+            fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                         dir_fd=directory)
+            try:
+                names = []
+                with os.scandir(fd) as entries:
+                    for entry in entries:
+                        if len(names) >= 10000:
+                            scan_limited = True
+                            break
+                        # Directory names are untrusted data; do not follow links or
+                        # read file contents on behalf of the Decision model.
+                        try:
+                            entry.name.encode("utf-8")
+                        except UnicodeEncodeError:
+                            scan_limited = True
+                            continue
+                        kind = ("file" if entry.is_file(follow_symlinks=False)
+                                else "directory" if entry.is_dir(follow_symlinks=False)
+                                else "other")
+                        names.append({"name": entry.name, "kind": kind})
+                names.sort(key=lambda item: item["name"])
+                page = names[offset:offset + 32]
+                next_offset = offset + len(page)
+                return {"status": "success", "output": page,
+                        "offset": offset, "next_offset": next_offset if next_offset < len(names) else None,
+                        "total_scanned": len(names), "truncated": scan_limited}
+            finally:
+                os.close(fd)
         elif name in ("file_list", "file_search"):
             if name == "file_list":
                 fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,

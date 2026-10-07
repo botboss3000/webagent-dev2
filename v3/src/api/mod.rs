@@ -17,6 +17,7 @@ mod model_catalog;
 mod account_models;
 mod file_manager;
 mod build_dashboard;
+mod app_settings;
 pub(crate) mod repository;
 pub(crate) use auth::*;
 pub(crate) use admin::*;
@@ -57,6 +58,7 @@ pub(super) fn router(app: App) -> Router {
         .merge(diagnostics::router())
         .route("/status", get(overview))
         .route("/settings", put(settings))
+        .route("/admin/app-settings/encryption", get(app_settings::read).put(app_settings::update))
         .route("/admin/context-compaction", get(context_config_get).put(context_config_put))
         .nest("/admin/access", phase3_api::router())
         .nest("/admin/services", service_admin::router())

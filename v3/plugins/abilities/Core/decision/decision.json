@@ -1,0 +1,13 @@
+{
+  "display_name": "Decision",
+  "kind": "ability",
+  "description": "Ask the assigned TypeSafe Jev model bounded questions or score an authorized directory listing against a search criterion.",
+  "tools": ["decide_with_jev", "score_directory_with_jev"],
+  "icon": "git-branch",
+  "color": "#7dcfff",
+  "order": 12,
+  "readiness": "ready",
+  "config": {},
+  "skill_summary": "Use JSON for open-ended decisions, or let the directory tool enumerate and score names without listing them to the working agent first. Scores do not verify file contents.",
+  "migration_note": "Native Rust adapter uses the agent's explicit Decision model role and its current V3 credential. TypeSafe is the supported transport. No V2 secret or code is used."
+}

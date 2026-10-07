@@ -1,10 +1,10 @@
 use super::*;
 // Recheck all context authority after credential retrieval, under the dispatch gate.
-async fn dispatch_asset_key(app:&App,sid:&str,agent_id:&str,loaded:&Value)->Result<String> {
+async fn dispatch_asset_key(app:&App,sid:&str,agent_id:&str,loaded:&Value,selected:&Value)->Result<String> {
     let access=app.store.live_access(app.store.current_user_id(),agent_id).await?;
     let (policy,_,visibility,state)=ability_controls(app,sid).await?;
     let mode=session_mode(app,sid).await?;
-    Ok(digest(&json!([app.abilities.live_version(),policy,visibility,state,loaded,
+    Ok(digest(&json!([app.abilities.live_version(),policy,visibility,state,loaded,selected,
         mode,access.context_fingerprint()])))
 }
 pub(crate) async fn execute_run(
@@ -120,11 +120,12 @@ pub(crate) async fn execute_run(
             // grants), live bundle validity, policy, visibility, loaded state and session mode.
             // Hash only in memory; never publish private grant data in reports.
             let asset_key = digest(&json!([app.abilities.live_version(), policy, visibility,
-                ability_state, run["loaded_abilities"], mode, access.context_fingerprint()]));
+                ability_state, run["loaded_abilities"], run["selected_tools"], mode, access.context_fingerprint()]));
             if context_assets.as_ref().map(|entry| &entry.0) != Some(&asset_key) {
                 let schemas = app.abilities.schemas_with(&policy, &run["loaded_abilities"], &visibility, &ability_state)
                     .into_iter().filter(|schema| {
                         let name=schema["name"].as_str().unwrap_or("");
+                        if !tools::core_tool_search::selected(&run,name) {return false;}
                         if abilities::is_discovery(name) {
                             let installation=access::Permission::from_policy(policy_decision(&policy,name))
                                 .unwrap_or(access::Permission::Deny);
@@ -141,6 +142,16 @@ pub(crate) async fn execute_run(
                 let mut entries=app.abilities.catalog_with(&policy,&visibility,&ability_state);
                 entries.retain_mut(|entry|filter_ability_entry(&app,&access,entry,
                     &policy,&visibility,&ability_state,&run["loaded_abilities"],read_only));
+                // After selection the main model receives only the shortlist, not
+                // the catalog which Jev scored. Discovery remains an escape hatch.
+                if run["selected_tools"].is_array() {
+                    entries.retain_mut(|entry| {
+                        if let Some(items)=entry["tools"].as_array_mut() {
+                            items.retain(|t|tools::core_tool_search::selected(&run,t["name"].as_str().unwrap_or("")));
+                            !items.is_empty()
+                        } else {false}
+                    });
+                }
                 let index=abilities::Catalog::model_index(&entries,&schemas);
                 let visible=app.abilities.visible_guidance_filtered(&policy,&visibility,
                     &ability_state,
@@ -148,6 +159,9 @@ pub(crate) async fn execute_run(
                     |name|live_tool_decision(&app,&access,name,&policy,&visibility,
                         &ability_state,&run["loaded_abilities"],read_only)
                         .permission!=access::Permission::Deny);
+                let visible=if run["selected_tools"].is_array() {
+                    tools::core_tool_search::guidance(&app,&schemas,&visibility)
+                } else {visible};
                 let guidance=format!("{index}{visible}");
                 context_assets = Some((asset_key, schemas, guidance));
             }
@@ -339,7 +353,7 @@ pub(crate) async fn execute_run(
                 || live_choice.as_ref().and_then(|v|v["revision"].as_u64()).unwrap_or(0)!=current["chat_model_revision"].as_u64().unwrap_or(0) {
                 drop(sender);drop(dispatch_guard);let _=drain.await;continue;
             }
-            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
+            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"],&current["selected_tools"]).await
                     .is_ok_and(|key|key==assembled_asset_key) {
                     current["status"]=json!("stopped");
                     current["error"]=json!("Ability access or bundle changed before model dispatch; review and resume");
@@ -521,7 +535,7 @@ pub(crate) async fn execute_run(
                 || live_choice.as_ref().and_then(|v|v["revision"].as_u64()).unwrap_or(0)!=current["chat_model_revision"].as_u64().unwrap_or(0) {
                 drop(sender);drop(dispatch_guard);let _=collector.await;continue;
             }
-            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"]).await
+            if !dispatch_asset_key(&app,&sid,&agent_id,&current["loaded_abilities"],&current["selected_tools"]).await
                 .is_ok_and(|key|key==assembled_asset_key) {
                 current["status"]=json!("stopped");
                 current["error"]=json!("Ability access or bundle changed before model dispatch; review and resume");
@@ -871,7 +885,8 @@ pub(crate) async fn execute_run(
             }
             let (policy, mode_revision, visibility, mut ability_state) =
                 ability_controls(&app, &sid).await?;
-            let read_only=session_mode(&app,&sid).await?["mode"]=="read_only";
+            let mode=session_mode(&app,&sid).await?;
+            let read_only=mode["mode"]=="read_only";
             let mut effective=if abilities::is_discovery(&name) {
                 let installation=access::Permission::from_policy(policy_decision(&policy,&name))
                     .unwrap_or(access::Permission::Deny);
@@ -880,6 +895,7 @@ pub(crate) async fn execute_run(
                 live_tool_decision(&app,&access,&name,&policy,&visibility,
                     &ability_state,&run["loaded_abilities"],read_only)
             };
+            effective=effective.for_execution_mode(&mode);
             workflow::record(&mut run, &workflow_policy,
                 &workflow::Input::PreTool(workflow::PreToolInput {
                     name:name.clone(), arguments_digest:digest(&args),

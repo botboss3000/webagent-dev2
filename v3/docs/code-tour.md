@@ -14,6 +14,21 @@ checks it before requeuing safe interrupted work. Uncertain writes still require
 reconciliation regardless of that setting.
 See [ability port ledger](ability-port-ledger.md) for explicit remaining gaps.
 
+## Jev tool selection
+
+Base's `search_tools` follows `tool_search_adapter.rs`: live grants filter the
+catalog, an adopted TypeSafe decision model scores independent Noul questions,
+and Rust returns ranked percentages. Successful activation replaces run-only
+tool markers. `agent_loop/mod.rs` records them; `run.rs` rebuilds the shortlist
+schemas and guidance. Session grants and approval requirements never change.
+
+Core's Decision ability follows `plugins/abilities/Core/decision/adapter.rs`
+and `directory_adapter.rs`. The agent can supply bounded System One JSON,
+or ask for one directory page to be scored without first listing its entries.
+Rust checks file_list permission, the worker lists names, and Rust sends them
+to the session agent's assigned TypeSafe Decision model. Jev cannot read files
+or execute tools; directory scores use names only and need source verification.
+The ordinary tool gate still decides whether this call is allowed.
 
 This is a map for someone reading v3 code for the first time. The
 [README](../README.md) has deployment commands and the detailed contracts.
@@ -41,10 +56,11 @@ must grant an agent access. Rust mints credential references; browser input
 cannot select another owner's stored secret.
 
 [models/selection.rs](../src/models/selection.rs) separates roster membership,
-capabilities and six explicit role appointments. Standard routes chat; System
+capabilities and seven explicit role appointments. Standard routes chat; System
 routes compaction. Image In describes uploaded images, and Voice handles transcription and
 ephemeral conversation routing. Premium and Image Out remain configurable
-without a separate workflow. Each role has independent ordered backups. A permitted
+without a separate workflow. Decision selects Jev for bounded judgments.
+Each role has independent ordered backups. A permitted
 custom choice selects one roster entry without changing Standard. The chat footer
 reads permitted choices through api/chat_controls.rs. Its revisioned preference
 and retry receipt live in the owning user session; admission rechecks the choice
@@ -138,8 +154,10 @@ existing storage and API contracts stay stable through this source move.
    the server-owned protocol only in manual mode; closing-notification guidance
    accompanies the separate closing protocol.
 6. **Handle tool requests, if any.** Rust checks today's access and tool policy
-   again. Some actions need human approval. Eligible independent calls can run
-   together under each tool's concurrency setting; rejected calls get their own
+   again. Auto mode proceeds without per-tool approval after all Deny checks;
+   Ask decisions in other modes still pause for a person. A mode switch revokes
+   pending approvals and rechecks each undispatched call. Eligible independent
+   calls can run together under each tool's concurrency setting; rejected calls get their own
    result. Only a permitted low-level action reaches the Python tool worker.
    The private `publish_main_message` and `set_closer_status` controls stay in
    Rust. Manual promotion makes a valid working update a nonterminal assistant
@@ -175,6 +193,12 @@ counts mean zero, while invalid or excessive stored counts appear as unknown.
   Python gate receives neither.
 - **Transient sockets:** `v3/runtime` connects web and loop;
   `v3/gate-runtime` connects loop and gate. They are not chat backups.
+
+App Settings exposes the fixed admin account's record encryption policy through
+`api/app_settings.rs`. Both API and loop storage writers reread the shared
+`/state/config/app-settings.json` before each admin user-plane write. Turning
+encryption back on affects subsequent writes; previously readable records are
+not converted. Application, agent, and other-user records stay encrypted.
 
 [storage/mod.rs](../src/storage/mod.rs), [storage/access.rs](../src/storage/access.rs), and
 [storage/agent.rs](../src/storage/agent.rs) implement these boundaries.

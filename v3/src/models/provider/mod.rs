@@ -14,8 +14,8 @@ const ISSUER: &str = "https://auth.openai.com";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
 const SUBSCRIPTION_MODELS: &str = "https://chatgpt.com/backend-api/codex/models";
-// GPT-6 Luna requires at least Codex 0.155 in the current model catalog.
-const CODEX_MODEL_CLIENT_VERSION: &str = "0.155.0";
+// Discovery uses a current Codex client version so newly released models can appear.
+const CODEX_MODEL_CLIENT_VERSION: &str = "0.160.1";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const MAX_INSTRUCTIONS: usize = 96 * 1024;
 pub const DEFAULT_INSTRUCTIONS: &str = "You are WebAgent, a helpful assistant. Use only the tools made available to you. When asked what abilities or tools are available, check list_abilities; an empty loaded list does not mean the catalog is empty. When a task needs workspace access, search list_abilities using a few task words (or no query for the full permitted catalog), then load_ability to reveal its tools. For development source work, file tools, approved shell and Python commands start in /live-checkout, including its v3 subtree and v2 source. Their reach is determined by container OS permissions; an empty session workspace does not mean source is unavailable. In read-only mode explain that edits require a write-capable mode.";

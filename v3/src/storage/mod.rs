@@ -89,7 +89,6 @@ pub struct Store {
     user_states: Arc<RwLock<HashMap<String, UserState>>>,
     agent_states: Arc<RwLock<HashMap<String, SqlitePool>>>,
     cipher: Aes256Gcm,
-    admin_database_encryption: bool,
     cache: Arc<Mutex<Cache>>,
     context_cache: Arc<Mutex<ContextCache>>,
     context_gate: Arc<RwLock<()>>,
@@ -242,19 +241,32 @@ pub(crate) async fn open_pool(path: &Path, events: bool, runs: bool) -> Result<S
     Ok(pool)
 }
 
+// Both API and loop processes read the same data-root policy. A missing file
+// keeps encryption on; a malformed policy stops writes instead of exposing data.
+pub(crate) fn read_app_settings(root: &Path) -> Result<Value> {
+    match std::fs::read(root.join("config/app-settings.json")) {
+        Ok(bytes) => {
+            let value: Value = serde_json::from_slice(&bytes)?;
+            if !value.is_object() { return Err(anyhow!("app-settings.json must be an object")); }
+            Ok(value)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub(crate) fn admin_encryption_enabled(settings: &Value) -> Result<bool> {
+    match settings.get("admin_database_encryption") {
+        None => Ok(true),
+        Some(value) => value["enabled"].as_bool()
+            .ok_or_else(|| anyhow!("app-settings.json requires admin_database_encryption.enabled boolean")),
+    }
+}
+
 impl Store {
     pub async fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
-        let settings_path = root.join("config/app-settings.json");
-        let admin_database_encryption = match std::fs::read(&settings_path) {
-            Ok(bytes) => {
-                let settings: Value = serde_json::from_slice(&bytes)?;
-                settings["admin_database_encryption"]["enabled"].as_bool()
-                    .ok_or_else(|| anyhow!("app-settings.json requires admin_database_encryption.enabled boolean"))?
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-            Err(e) => return Err(e.into()),
-        };
+        admin_encryption_enabled(&read_app_settings(root)?)?;
         let key = load_or_create_key(root)?;
         // Keep the administrator's original data path during migration.
         let admin_state = UserState::new(open_pool(&root.join("user_data/admin/admin.db"),true,true).await?);
@@ -272,7 +284,6 @@ impl Store {
             agent_id: "shared_default".to_owned(),
             user_states: Arc::new(RwLock::new(user_states)),
             agent_states: Arc::new(RwLock::new(agent_states)),
-            admin_database_encryption,
             cipher: Aes256Gcm::new_from_slice(&key)
                 .map_err(|_| anyhow!("Invalid encryption key"))?,
             cache: admin_state.cache,
@@ -327,7 +338,7 @@ impl Store {
             agent_pool:self.agent_pool.clone(),root:self.root.clone(),
             user_id:user_id.to_owned(),agent_id:self.agent_id.clone(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
-            cipher:self.cipher.clone(),admin_database_encryption:self.admin_database_encryption,cache:state.cache,
+            cipher:self.cipher.clone(),cache:state.cache,
             context_cache:state.context_cache,context_gate:state.context_gate};
         handle.migrate_session_metadata().await?;
         Ok(handle)
@@ -354,7 +365,7 @@ impl Store {
             agent_pool:pool,root:self.root.clone(),
             user_id:self.user_id.clone(),agent_id:agent_id.to_owned(),
             user_states:self.user_states.clone(),agent_states:self.agent_states.clone(),
-            cipher:self.cipher.clone(),admin_database_encryption:self.admin_database_encryption,
+            cipher:self.cipher.clone(),
             cache:self.cache.clone(),context_cache:self.context_cache.clone(),
             context_gate:self.context_gate.clone()})
     }
@@ -1003,7 +1014,8 @@ impl Store {
     // Only user-plane writers may call this. seal() remains encrypted for
     // application/agent secrets and authenticated search continuation cursors.
     fn encode_user_record(&self, value: &Value) -> Result<Vec<u8>> {
-        if self.user_id != "admin" || self.admin_database_encryption { return self.seal(value); }
+        if self.user_id != "admin" { return self.seal(value); }
+        if admin_encryption_enabled(&read_app_settings(&self.root)?)? { return self.seal(value); }
         let mut nonce = [0; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
         let aad = serde_json::to_vec(&json!(["v3-admin-plaintext-v1", value]))?;
@@ -3226,6 +3238,14 @@ mod admin_storage_policy_tests {
         let raw: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='memory:new'").fetch_one(&store.pool).await.unwrap();
         let mut envelope: Value = serde_json::from_slice(&raw).unwrap();
         assert_eq!(envelope["value"], value);
+        configure(root.path(), true);
+        store.put("memory:live_encrypted", &value).await.unwrap();
+        let live_encrypted: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='memory:live_encrypted'").fetch_one(&store.pool).await.unwrap();
+        assert!(serde_json::from_slice::<Value>(&live_encrypted).is_err());
+        configure(root.path(), false);
+        store.put("memory:live_plaintext", &value).await.unwrap();
+        let live_plaintext: Vec<u8> = sqlx::query_scalar("SELECT value FROM docs WHERE key='memory:live_plaintext'").fetch_one(&store.pool).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&live_plaintext).unwrap()["value"], value);
         envelope["value"]["private"] = json!("tampered");
         assert!(store.unseal(&serde_json::to_vec(&envelope).unwrap()).is_err());
         store.put("credential:fixture", &value).await.unwrap();

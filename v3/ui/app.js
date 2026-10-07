@@ -147,7 +147,7 @@ const ids=new Map();
 const keyId=key=>{if(!ids.has(key))ids.set(key,crypto.randomUUID());return ids.get(key);};
 const note=text=>{$('notice').textContent=text;};
 async function api(path,method='GET',body){const response=await fetch('/api/v3'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(method==='GET'?{}:{'x-csrf-token':csrf})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401)out();const error=Error(data.error||data.message||'Request failed ('+response.status+')');error.status=response.status;throw error;}return data;}
-const guard=fn=>async event=>{event?.preventDefault();try{await fn(event);note('');}catch(error){note(error.message);}};
+const guard=fn=>async event=>{event?.preventDefault();try{await fn(event);note('');}catch(error){if(error.status===401&&error.message==='Sign in required'){note('');return;}note(error.message);}};
 const chat = await mountChatPanel({request:api, guard, note, keyId, forgetKey:key=>ids.delete(key), refresh, getState:()=>state, getAgentId:()=>agentId, getIdentity:()=>accountMe});
 await loadMainPages();
 
@@ -197,7 +197,7 @@ function saveAgentTabs(){
 syncAgentTabs();
 wirePageTabDrag(document.querySelector('#agents-grid .agent-card-tabs'), { getOrder: () => agentTabOrder, save: saveAgentTabs, prefix: 'agent-tab-' });
 async function loadGuestPolicy(){try{const policy=await api('/auth/access-mode');$('guest-login').hidden=!policy.guest_access;document.querySelector('.private-access-approval').hidden=!!policy.guest_access;}catch{$('guest-login').hidden=true;}}
-$('guest-login').onclick=async()=>{const btn=$('guest-login');btn.disabled=true;try{const result=await api('/auth/guest-login','POST',{});csrf=result.csrf_token;await boot();}catch(error){$('registration-status').textContent=error.message;}finally{btn.disabled=false;}};
+$('guest-login').onclick=async()=>{const btn=$('guest-login');btn.disabled=true;try{const result=await api('/auth/guest-login','POST',{});csrf=result.csrf_token;note('');await boot();}catch(error){$('registration-status').textContent=error.message;}finally{btn.disabled=false;}};
 function out(){availableModelsDispose?.();availableModelsDispose=null;window.dispatchEvent(new Event('v3-identity-changed'));loadGuestPolicy();csrf='';chat.disconnect();clearInterval(poll);closeMobileNav();closeAccountMenu();$('app').hidden=true;privateVisible(true);window.__boot?.reveal();}
 async function refresh(){if(accountMe&&!accountMe.is_admin){state=await api('/user/status');$('shutoff').hidden=true;chat.runs(state.runs||[]);return;}state=await api('/status');agentModel=state.model||agentModel;$('shutoff').textContent=state.shutoff?'Execution shut off — enable':'Shut off execution';$('connection').textContent=state.provider?.connected?'Connected':'Connection required';$('connect').hidden=!!state.provider?.connected;$('disconnect').hidden=!state.provider?.connected;if(document.activeElement!==$('model'))$('model').value=agentModel||state.model||'';$('device').replaceChildren();const login=state.provider?.login;if(login?.verification_url){const link=document.createElement('a');link.href=login.verification_url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT authorization';const code=document.createElement('p');code.textContent='Code: '+login.user_code+' — '+(login.status||'Waiting');$('device').append(link,code);}if(!$('rules').children.length)for(const [tool,rule]of Object.entries(state.policy?.rules||{})){const label=document.createElement('label');label.textContent=tool;const select=document.createElement('select');select.name=tool;for(const value of ['allow','deny','require_approval']){const option=document.createElement('option');option.value=value;option.textContent=value.replaceAll('_',' ');select.append(option);}select.value=rule;label.append(select);$('rules').append(label);}chat.runs(state.runs||[]);}
 // Explicit role administration replaces the legacy default-model form for every agent.
@@ -289,7 +289,7 @@ $('login-form').onsubmit=async event=>{
       $('registration-status').textContent='Account created and waiting for administrator approval.';
       return;
     }
-    csrf=result.csrf_token;$('login-form').reset();await boot();
+    csrf=result.csrf_token;$('login-form').reset();note('');await boot();
     $('registration-status').textContent='';
   }catch(error){$('registration-status').textContent=error.message;}
   finally{submit.disabled=false;}
@@ -302,6 +302,14 @@ document.addEventListener?.('keydown',event=>{if(event.key==='Escape')closeAccou
 let accountMe=null;
 function renderAccount(me){
   accountMe=me;
+  // Main-page visibility follows the authenticated identity, including on sign-in changes.
+  for(const page of mainPages.filter(page=>page.id==='builds')){
+    $('tab-button-'+page.id).hidden=!me.is_admin;
+    $('mobile-nav-'+page.id).hidden=!me.is_admin;
+    const option=$('main-tab-select').querySelector('option[value="'+page.id+'"]');
+    if(option) option.disabled=!me.is_admin;
+  }
+  if(!me.is_admin&&activeMainPage==='builds') showMainPage('agents','replace');
   const guest=me.role==='guest';
   for(const id of ['account-profile-form','account-password-form','account-session-policy-form'])$(id).hidden=guest;
   $('shutoff').hidden=!me.is_admin;
@@ -317,7 +325,7 @@ function renderAccount(me){
 }
 function showAccountPanel(routeMode='push'){showMainPage('account',routeMode);}
 function showMainPage(id,routeMode='push'){
-  if(!mainPages.some(page=>page.id===id))return;
+  if(!mainPages.some(page=>page.id===id)||id==='builds'&&!accountMe?.is_admin)return;
   closeMobileNav();
   activeMainPage=id;
   updateMainPageState();

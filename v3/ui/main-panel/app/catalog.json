@@ -1,20 +1,20 @@
 {
   "pages": [
     {
+      "id": "settings",
+      "title": "App Settings",
+      "description": "Configure application storage and troubleshooting.",
+      "panelId": "app-settings-page",
+      "admin": true,
+      "order": 5
+    },
+    {
       "id": "files",
       "title": "File Manager",
       "description": "Browse and edit the live development checkout with Git Control.",
       "panelId": "app-files-page",
       "admin": true,
       "order": 10
-    },
-    {
-      "id": "builds",
-      "title": "Builds",
-      "description": "Follow development build, test, and deployment progress.",
-      "panelId": "app-builds-page",
-      "admin": true,
-      "order": 15
     },
     {
       "id": "users",

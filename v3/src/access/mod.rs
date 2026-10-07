@@ -210,6 +210,18 @@ impl ToolFactors {
         } else { Reason::Allowed } }
     }
 }
+impl ToolDecision {
+    /// Auto waives a human tool checkpoint after every independent denial has
+    /// been resolved. Legacy write mode and read-only modes keep Ask semantics.
+    pub fn for_execution_mode(self, mode: &Value) -> Self {
+        if mode["mode"] == "write" && mode["execution_mode"] == "auto"
+            && self.permission == Permission::Ask {
+            Self { permission: Permission::Auto, reason: Reason::Allowed }
+        } else {
+            self
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -253,6 +265,18 @@ mod tests {
             Reason::ReadOnly);
         assert_eq!(ToolFactors {read_only:true,is_read:true,..base}.resolve().permission,
             Permission::Auto);
+    }
+    #[test]
+    fn auto_mode_skips_only_approval_and_keeps_denials() {
+        let ask=ToolDecision{permission:Permission::Ask,reason:Reason::ApprovalRequired};
+        let denied=ToolDecision{permission:Permission::Deny,reason:Reason::TierDenied};
+        let auto=json!({"mode":"write","execution_mode":"auto"});
+        assert_eq!(ask.for_execution_mode(&auto).permission,Permission::Auto);
+        assert_eq!(ask.for_execution_mode(&auto).reason,Reason::Allowed);
+        assert_eq!(denied.for_execution_mode(&auto),denied);
+        assert_eq!(ask.for_execution_mode(&json!({"mode":"read_only","execution_mode":"ask"})),ask);
+        assert_eq!(ask.for_execution_mode(&json!({"mode":"read_only","execution_mode":"auto"})),ask);
+        assert_eq!(ask.for_execution_mode(&json!({"mode":"write"})),ask);
     }
     #[test]
     fn byo_downgrade_blocks_use_and_growth_but_allows_reduction() {

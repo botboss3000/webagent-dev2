@@ -1,5 +1,22 @@
 //! Claim queued runs and renew their leases while the loop is alive.
 use super::*;
+// A frozen Auto release can inherit runs paused by the previous approval policy.
+// Only an undispatched tool is requeued; the claimed run checks live Deny again.
+pub(crate) async fn requeue_auto_approval(app:&App,id:&str)->Result<()> {
+    if app.active.lock().await.contains_key(id) {return Ok(());}
+    let mut run=app.run(id).await?;
+    let sid=run["session_id"].as_str().unwrap_or("").to_owned();
+    if status(&run)!="waiting_approval" || run["pending"]["state"]!="waiting"
+        || !session_mode(app,&sid).await.is_ok_and(|mode|
+            mode["mode"]=="write" && mode["execution_mode"]=="auto") {
+        return Ok(());
+    }
+    run["pending"]["id"]=json!(uuid());
+    run["pending"]["state"]=json!("requested");
+    run["pending"]["decision"]=Value::Null;
+    run["status"]=json!("queued");
+    app.save(&mut run).await
+}
 // Retire compacted reasoning outside the run loop. Each user-store job commits
 // atomically and remains queued after a failed attempt or process restart.
 async fn reasoning_cleanup_worker(app: App) {
@@ -53,10 +70,14 @@ pub(crate) async fn scheduler(app: App) {
             }
             if let Ok(runs) = user_app.store.active_runs().await {
                 for view in runs {
-                    if status(&view) != "queued" {
+                    let id = view["id"].as_str().unwrap().to_owned();
+                    if status(&view) == "waiting_approval" {
+                        if let Err(error)=requeue_auto_approval(&user_app,&id).await {
+                            tracing::warn!(run_id=%id,"Auto approval reconciliation deferred: {error}");
+                        }
                         continue;
                     }
-                    let id = view["id"].as_str().unwrap().to_owned();
+                    if status(&view) != "queued" {continue;}
                     let mut run = match user_app.run(&id).await {
                         Ok(r) => r,
                         Err(_) => continue,

@@ -4,6 +4,7 @@ mod run;
 pub(crate) use run::execute_run;
 pub(super) fn append_tool(run: &mut Value, result: &Value) -> Result<()> {
     workflow::record_tool_result(run, result)?;
+    tools::core_tool_search::apply_selection(run,result);
     let call_id = run["pending"]["call_id"].clone();
     run["input"]
         .as_array_mut()
@@ -16,6 +17,6 @@ pub(super) fn append_tool(run: &mut Value, result: &Value) -> Result<()> {
 mod recovery;
 pub(crate) use recovery::{attach_external_build_result, reconcile_late_tool_result, user_apps, recover};
 mod scheduler;
-pub(crate) use scheduler::scheduler;
+pub(crate) use scheduler::{scheduler,requeue_auto_approval};
 // Follow one claimed run through the fixed workflow. At the relevant
 // checkpoints, reread access and policy so earlier permission cannot linger.

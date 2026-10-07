@@ -154,7 +154,7 @@ export async function renderAbilities(host, request, options) {
             });
           }
           expandedAbility = ability.id;
-          await rerender({});
+          await rerender({ administratorNotice: 'Tool permission saved.' });
         } catch (error) {
           status.textContent = error.status === 409 ? 'Settings changed. Reload before saving: ' + error.message : error.message;
           throw error;
@@ -163,7 +163,11 @@ export async function renderAbilities(host, request, options) {
       const toolRow = _buildToolRow({
         ...tool,
         description: tool.description || '',
-        permMode: tool.mode === 'off' ? 'deny' : effectiveTool.effective?.permission || 'deny',
+        callCount: tool.call_count,
+        // The control edits the agent's configured layer. Effective access can
+        // still be Deny because of the account tier, visibility or port status.
+        permMode: data.permissions?.tool_permissions?.[tool.name] ||
+          data.permissions?.tool_permissions?.['*'] || 'auto',
       }, {
         canEdit: canManage && !previewUser && !levelId,
         showPerm: true,
@@ -221,15 +225,17 @@ export async function renderAbilities(host, request, options) {
       toggle.disabled = !canManage || !!levelId || !!previewUser;
       toggle.checked = ability.visibility !== 'off';
       toggle.setAttribute('aria-label',
-        ability.name + ' availability: ' + ability.visibility + '. Choose availability.');
+        ability.name + ' availability: ' + ability.visibility + '. Toggle on or off.');
       const menu = modeMenu(ability, 'ability', ability.visibility, null, true);
-      menu._floatingMenuOwner = toggleWrap;
       toggle.addEventListener('click', event => {
-        event.preventDefault();
         event.stopPropagation();
-        const rect = toggle.getBoundingClientRect();
-        menu._floatingMenuAnchorPoint = { x: event.clientX || rect.right, y: event.clientY || rect.bottom };
-        menu.click();
+      });
+      // The switch saves immediately; the adjacent menu offers Discoverable.
+      toggle.addEventListener('change', () => {
+        const mode = toggle.checked ? 'visible' : 'off';
+        save(ability, 'ability', mode, toggle).catch(() => {
+          toggle.checked = ability.visibility !== 'off';
+        });
       });
       toggleWrap.append(toggle, node('span', 'conn-toggle-track'));
       header.append(chevron, icon, label, toggleWrap, menu);

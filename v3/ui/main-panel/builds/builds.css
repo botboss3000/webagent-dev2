@@ -1,0 +1,42 @@
+#tab-builds{width:100%;padding:clamp(16px,2vw,32px);color:var(--fg-1)}
+#tab-builds .build-header,#tab-builds .build-list,#tab-builds .build-summary{max-width:1200px;margin-left:auto;margin-right:auto}
+#tab-builds .build-header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+#tab-builds .build-header h2{margin:0;font-size:1.55rem}
+#tab-builds .build-header p{margin:4px 0 0;color:var(--fg-3)}
+#tab-builds .build-summary{margin-top:14px;margin-bottom:14px;color:var(--fg-2)}
+#tab-builds .build-list{display:grid;gap:14px}
+#tab-builds .build-update{flex:none;padding:8px 14px;border:var(--border-width) solid var(--border);border-radius:var(--r-md);background:var(--bg-elev);color:var(--fg-1);cursor:pointer}
+#tab-builds .build-update:hover{background:var(--accent-soft)}
+#tab-builds .build-update:disabled{opacity:.6;cursor:wait}
+#tab-builds .build-card{min-width:0;padding:18px 20px;border:var(--border-width) solid var(--border);border-radius:var(--r-lg);background:var(--bg-elev)}
+#tab-builds .build-card.linked{outline:2px solid var(--accent);outline-offset:2px}
+#tab-builds .build-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+#tab-builds .build-card h3{margin:0;font-size:1.08rem;overflow-wrap:anywhere}
+#tab-builds .build-flag{display:inline-flex;align-items:center;gap:6px;flex:none;font-weight:700;white-space:nowrap}
+#tab-builds .build-flag [aria-hidden]{font-size:1.3rem;line-height:1}
+#tab-builds .build-card[data-status=success] .build-flag{color:var(--success)}
+#tab-builds .build-card[data-status=danger] .build-flag{color:var(--danger)}
+#tab-builds .build-card[data-status=progress] .build-flag{color:var(--warning)}
+#tab-builds .build-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr));gap:12px 22px;margin:18px 0}
+#tab-builds .build-fact{min-width:0}
+#tab-builds .build-fact dt{font-size:.78rem;color:var(--fg-3)}
+#tab-builds .build-fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+#tab-builds .build-reason{padding:10px 12px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),.1);color:var(--danger)}
+#tab-builds .build-card h4{margin:18px 0 8px;font-size:.9rem}
+#tab-builds .build-phases{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:0}
+#tab-builds .build-phases li{padding:4px 8px;border-radius:var(--r-sm);background:var(--bg-1);font-size:.78rem;overflow-wrap:anywhere}
+#tab-builds .build-phases li.current{color:var(--accent);background:var(--accent-soft);font-weight:700}
+#tab-builds .build-phases li.completed{color:var(--success)}
+#tab-builds .build-phases li.upcoming{color:var(--fg-3)}
+#tab-builds .build-phases li.stopped{color:var(--danger);font-weight:700}
+#tab-builds .build-card details{margin-top:14px}
+#tab-builds .build-card summary{cursor:pointer}
+#tab-builds .build-log{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto}
+#tab-builds .build-missing{margin:0;color:var(--warning)}
+@media(max-width:700px){#tab-builds .build-card-top{flex-direction:column}#tab-builds .build-flag{white-space:normal}#tab-builds .build-card{padding:14px}}
+
+/* The admin Builds feed drives this header indicator while the page is in the background. */
+.build-header-spinner{display:inline-block;width:13px;height:13px;flex:none;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:build-header-spin .75s linear infinite}
+@keyframes build-header-spin{to{transform:rotate(360deg)}}
+body.v3-build-active:has(#tab-builds.active) #mobile-back-main-btn::after{content:'';display:inline-block;width:13px;height:13px;margin-left:7px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:build-header-spin .75s linear infinite}
+@media(prefers-reduced-motion:reduce){.build-header-spinner,body.v3-build-active #mobile-back-main-btn::after{animation:none}}

@@ -213,8 +213,14 @@ export function _buildToolRow(toolMeta, opts) {
   const canOpenSkill = !!(opts && opts.abilityId && hasToolSkill && typeof opts.onOpenToolSkill === 'function');
   const nameEl = document.createElement(canOpenSkill ? 'button' : 'span');
   nameEl.className = 'ac-ability-name ac-tool-name' + (canOpenSkill ? ' ac-tool-skill-link' : '');
-  nameEl.textContent = toolMeta.name;
-  nameEl.title = canOpenSkill ? `Open ${toolMeta.name} tool skill` : toolMeta.name;
+  // Only the per-agent V3 catalog supplies callCount. Other shared row callers
+  // retain their existing labels.
+  const count = Number.isSafeInteger(toolMeta.callCount) && toolMeta.callCount >= 0
+    ? ` (${toolMeta.callCount})` : '';
+  nameEl.textContent = toolMeta.name + count;
+  nameEl.title = count
+    ? `${toolMeta.name}: ${toolMeta.callCount} recorded calls in your sessions with this agent`
+    : (canOpenSkill ? `Open ${toolMeta.name} tool skill` : toolMeta.name);
   if (canOpenSkill) {
     nameEl.type = 'button';
     nameEl.addEventListener('click', (event) => {
@@ -407,15 +413,19 @@ function _buildToolStateControl(toolMeta, opts) {
     paint();                                   // optimistic
     _markSaving(tri);
     let ok = true;
+    let failureMessage = '';
     try {
       const r = isPerm
         ? onPermissionChange(toolMeta.name, next)
         : onVisibilityChange(toolMeta.name, next);
       // Same contract as before: resolve `false` or throw → revert.
       if (r && typeof r.then === 'function') ok = (await r) !== false;
-    } catch (_) { ok = false; }
+    } catch (error) {
+      ok = false;
+      failureMessage = error?.message || 'Not saved';
+    }
     if (!ok) { if (isPerm) perm = cur; else vis = cur; paint(); }
-    _flashSaveCheck(tri, ok);
+    _flashSaveCheck(tri, ok, failureMessage);
     return ok;
   }
 

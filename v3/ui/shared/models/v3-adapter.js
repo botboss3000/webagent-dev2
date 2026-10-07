@@ -46,7 +46,9 @@ export function createModelAdapter(request, agentId, onAssignment) {
     return {entry_id:e.id,connection_id:c.id,catalog_source_id:data.adoptions?.[e.id]?.source_id||(catalog.platform_sources?.[e.id]?'':'byo:'+e.id),provider:c.transport,model:e.upstream_model,display_name:data.adoptions?.[e.id]?.alias||e.display_name,
       base_url:c.transport==='deepseek'?'https://api.deepseek.com':'codex://chatgpt',api_key:'',
       ...catalogCapabilityFlags(e.capabilities,c.transport),
-      credential_configured:!!statuses.get(c.id)?.connected,catalog_origin:catalog.platform_sources?.[e.id]?'platform':'byo'};
+      credential_configured:!!statuses.get(c.id)?.connected,
+      credential_email:c.owner_id===data.caller_id ? (statuses.get(c.id)?.account_email||'') : '',
+      catalog_origin:catalog.platform_sources?.[e.id]?'platform':'byo'};
   });
   async function save({providers,role_assignments={}}){
     if(destroyed)throw Error('Models page closed');
@@ -193,7 +195,7 @@ export function createModelAdapter(request, agentId, onAssignment) {
         const connectionId=catalog.entries[entryId]?.connection_id||drafts.get(entryId);
         if(!connectionId)return response({chatgpt_authorized:false});
         const state=await request('/models/connections/'+encodeURIComponent(connectionId)+'?agent_id='+encodeURIComponent(agentId));
-        return response({chatgpt_authorized:state.connected,account:{},authorization:state.authorization});
+        return response({chatgpt_authorized:state.connected,account:{email:state.account_email||''},authorization:state.authorization});
       }
       return response({detail:MISSING+': '+url.pathname},501);
     }

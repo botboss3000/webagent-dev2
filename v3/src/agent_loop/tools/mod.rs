@@ -2,6 +2,10 @@ use anyhow::{bail, Context, Result};
 // Single and parallel turns share the same Rust dispatch for native and worker tools.
 #[path = "../../../plugins/abilities/Web/web_access/adapter.rs"]
 pub(crate) mod web_access;
+#[path = "../../../plugins/abilities/Core/decision/adapter.rs"]
+pub(crate) mod core_decision;
+#[path = "../../../plugins/abilities/Core/decision/directory_adapter.rs"]
+pub(crate) mod core_directory_decision;
 #[path = "../../../plugins/abilities/Core/base/adapter.rs"]
 pub(crate) mod core_utilities;
 #[path = "../../../plugins/abilities/Core/base/session_adapter.rs"]
@@ -12,6 +16,8 @@ pub(crate) mod core_skills;
 pub(crate) mod core_prompt;
 #[path = "../../../plugins/abilities/Core/base/search_adapter.rs"]
 pub(crate) mod core_search;
+#[path = "../../../plugins/abilities/Core/base/tool_search_adapter.rs"]
+pub(crate) mod core_tool_search;
 #[path = "../../../plugins/abilities/Core/base/self_edit_adapter.rs"]
 pub(crate) mod core_self_edit;
 #[path = "../../../plugins/abilities/Core/base/task_adapter.rs"]
@@ -36,7 +42,10 @@ use tokio_util::sync::CancellationToken;
 pub fn is_read(name: &str) -> bool {
     matches!(
         name,
-        "get_time"
+        "search_tools"
+            | "decide_with_jev"
+            | "score_directory_with_jev"
+            | "get_time"
             | "get_date"
             | "calculate"
             | "read_attachment"
@@ -83,28 +92,31 @@ pub fn schemas() -> Vec<Value> {
         ("file_list", "List a directory by absolute container path or relative live-checkout path", json!({"path":{"type":"string"}}), vec![]),
         ("file_read", "Read a bounded page of file lines from a container or live-checkout path", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1,"maximum":10000000},"limit":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
         ("file_search", "Search container or live-checkout files by literal or regex query; outline comments in one file", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"file_glob":{"type":"string"},"comments_only":{"type":"boolean"}}), vec![]),
-        ("file_write", "Write a container or live-checkout file; requires approval", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path","content"]),
-        ("file_edit", "Replace exactly one matching span in an existing container or live-checkout file; requires approval", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string"}}), vec!["path","old_text","new_text"]),
-        ("workspace_seed", "Copy the audited WebAgent v3 source snapshot into this session workspace and create a Git baseline; requires approval", json!({}), vec![]),
+        ("file_write", "Write a container or live-checkout file; policy-gated", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path","content"]),
+        ("file_edit", "Replace exactly one matching span in an existing container or live-checkout file; policy-gated", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string"}}), vec!["path","old_text","new_text"]),
+        ("workspace_seed", "Copy the audited WebAgent v3 source snapshot into this session workspace and create a Git baseline; policy-gated", json!({}), vec![]),
         ("source_review", "Review tracked and new changes in the seeded v3 source without modifying its Git index", json!({}), vec![]),
         ("prompt_slot_read", "List or read the current agent's ordered instruction slots", json!({"action":{"type":"string","enum":["list","get"]},"slot_name":{"type":"string"}}), vec!["action"]),
-        ("prompt_slot_write", "Create, update or delete a current-agent instruction slot; requires approval", json!({"action":{"type":"string","enum":["put","delete"]},"slot_name":{"type":"string"},"content":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"order_index":{"type":"integer"},"lock":{"type":"boolean"},"merge_mode":{"type":"string","enum":["replace","append"]}}), vec!["action","slot_name","expected_revision"]),
+        ("prompt_slot_write", "Create, update or delete a current-agent instruction slot; policy-gated", json!({"action":{"type":"string","enum":["put","delete"]},"slot_name":{"type":"string"},"content":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"order_index":{"type":"integer"},"lock":{"type":"boolean"},"merge_mode":{"type":"string","enum":["replace","append"]}}), vec!["action","slot_name","expected_revision"]),
         ("state_inspect", "Read bounded public metadata for the current session; catalog, session, chat, or runs", json!({"resource":{"type":"string","enum":["catalog","session","chat","runs"]},"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}), vec!["resource"]),
-        ("source_patch", "Apply a checked text patch to the seeded v3 source; requires approval", json!({"patch":{"type":"string"},"expected_review_sha256":{"type":"string"}}), vec!["patch","expected_review_sha256"]),
+        ("source_patch", "Apply a checked text patch to the seeded v3 source; policy-gated", json!({"patch":{"type":"string"},"expected_review_sha256":{"type":"string"}}), vec!["patch","expected_review_sha256"]),
         ("promotion_propose", "Submit the current reviewed v3 source patch for administrator approval; does not change live source", json!({"expected_review_sha256":{"type":"string"},"summary":{"type":"string"}}), vec!["expected_review_sha256","summary"]),
-        ("shell", "Execute a shell command from the live development checkout; requires approval", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["command"]),
-        ("python", "Execute Python from the live development checkout; requires approval", json!({"code":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["code"]),
+        ("shell", "Execute a shell command from the live development checkout; policy-gated", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["command"]),
+        ("python", "Execute Python from the live development checkout; policy-gated", json!({"code":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}}), vec!["code"]),
     ].into_iter().map(|(name, description, properties, required)| json!({
         "type":"function", "name":name, "description":description,
         "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}
     })).collect();
         schemas.extend(administrator::schemas());
         schemas.extend(web_access::schemas());
+        schemas.extend(core_decision::schemas());
+        schemas.extend(core_directory_decision::schemas());
         schemas.extend(core_utilities::schemas());
         schemas.extend(core_session::schemas());
         schemas.extend(core_skills::schemas());
         schemas.extend(core_prompt::schemas());
         schemas.extend(core_search::schemas());
+        schemas.extend(core_tool_search::schemas());
         schemas.extend(core_self_edit::schemas());
         schemas.extend(core_task::schemas());
         schemas.extend(core_compaction::schemas());

@@ -3,6 +3,7 @@ import { createChatClient } from './client.js';
 import {mountTranscriptAnchor} from './transcript-anchor.js';
 import {mountComposerMedia} from '../controls/composer-media.js';
 import {mountSessionControls} from '../controls/session-controls.js';
+import {mountChatNotifications} from './chat-notifications.js';
 import {mountUsageStats} from '../controls/usage-stats.js';
 import {createMessage} from './message-view.js';
 import {closeGutterOverlays,updateGutterTimes} from './bubble-gutters.js';
@@ -29,26 +30,27 @@ export async function mountChatPanel({request, guard, note, keyId, forgetKey, re
   const client = createChatClient({request, note});
   function button(text,fn){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=guard(fn);return node;}
 async function mountChat(){
-  const response=await fetch('/v3-ui/chat/chat.html?v=chat-partial-20260930',{credentials:'same-origin'});
+  const response=await fetch('/v3-ui/chat/chat.html?v=chat-partial-20261007-notifications',{credentials:'same-origin'});
   if(!response.ok)throw Error('Chat shell unavailable');
   const template=document.createElement('template');
   template.innerHTML=await response.text();
-  for(const id of ['chat-header','chat-messages','chat-messages-inner','sessions','new','runs','composer','chat-input','chat-send','chat-stop-btn']){
+  for(const id of ['chat-header','chat-messages','chat-messages-inner','sessions','new','chat-notifications','runs','composer','chat-input','chat-send','chat-stop-btn']){
     if(!template.content.querySelector('#'+id))throw Error('Chat shell is incomplete: '+id);
   }
   root.replaceChildren(template.content);
 }
 await mountChat();
+const notifications=mountChatNotifications({root,guard});
 const anchor=mountTranscriptAnchor({scroller:$('chat-messages'),inner:$('chat-messages-inner'),header:$('chat-header'),getProfile:currentChatProfile});
 const progress=mountComposerProgress({root,getProfile:currentChatProfile,isAdmin:()=>!!getIdentity().is_admin});
 const stats=mountUsageStats({root,client,note});
 const gutterClock=setInterval(()=>{if(document.visibilityState==='visible')updateGutterTimes(root);},1000);
-const controls=mountSessionControls({root,client,guard,note,ensureSession,onState:data=>{media?.setAvailable(data?.composer?.attachments===true,data?.composer?.attachment_limits);}});
+const controls=mountSessionControls({root,client,guard,note,ensureSession,notifications,onState:data=>{media?.setAvailable(data?.composer?.attachments===true,data?.composer?.attachment_limits);}});
 let submitting=false,sessionGeneration=0,creatingSession=null,media=null;
 media=mountComposerMedia({root,client,ensureSession,note,guard,getState,refresh,changed:()=>{applyChatConfig();runs(activityRuns);}});
 let sessionItems=[];
 const dropdown=mountSessionDropdown($('session-dropdown'),{refresh:()=>sessions(),select:open,guard,resetSearch:()=>sessionList.reset()});
-const sessionList=createSessionList($('session-dropdown'),{guard,refresh:()=>sessions(),select:open,client,recycled:()=>{anchor.reset();progress.reset();activity.disconnect();resetReads();session='';stats.disconnect();++sessionGeneration;controls.open('');media.open('');client.disconnect();$('chat-messages-inner').replaceChildren();$('runs').replaceChildren();const url=new URL(location.href);url.searchParams.delete('session_id');history.replaceState({},'',url);}});
+const sessionList=createSessionList($('session-dropdown'),{guard,refresh:()=>sessions(),select:open,client,recycled:()=>{anchor.reset();progress.reset();activity.disconnect();resetReads();session='';stats.disconnect();++sessionGeneration;controls.open('');media.open('');client.disconnect();$('chat-messages-inner').replaceChildren();notifications.clearTools();$('runs').replaceChildren();const url=new URL(location.href);url.searchParams.delete('session_id');history.replaceState({},'',url);}});
 $('session-dropdown').configure=cfg=>sessionList.configure(cfg);
 const chatPanel=root;
 const updateChatClearance=()=>{
@@ -103,10 +105,13 @@ function components(items){
   }
 }
 
+// Focus follows a session load only while the initiating focus choice is unchanged.
+function watchFocus(){const source=document.activeElement;let moved=false;const onFocus=()=>{if(document.activeElement!==source)moved=true;};document.addEventListener('focusin',onFocus);return {unchanged:()=>!moved&&(document.activeElement===source||(!source.isConnected&&document.activeElement===document.body)),stop:()=>document.removeEventListener('focusin',onFocus)};}
+function shouldFocusComposer(kind){const value=currentChatProfile()?.composer?.keyboard_focus?.[kind];return kind==='new_session'?value!==false:value===true;}
 async function sessions(){const data=await client.sessions();$('sessions').replaceChildren();for(const item of data.sessions){const option=document.createElement('option');option.value=item.id;option.textContent=(item.title||'Conversation')+' — '+(item.agent_id||'shared_default');$('sessions').append(option);}$('sessions').value=session;sessionItems=data.sessions;sessionList.update(sessionItems,session);return data.sessions;}
-async function open(id,routeMode='push'){anchor.reset();progress.open(id);closeGutterOverlays();gutterRuns.clear();++sessionGeneration;session=id;stats.open(id);media.open(id);activity.disconnect();closeChatElementFullView();resetReads();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);if(url.href!==location.href)history[routeMode==='replace'?'replaceState':'pushState']({},'',url);controls.open(id).catch(error=>{if(id===session)note(error.message);});await client.open(id,data=>{readThrough=data.session.read_through_seq||0;const sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;sessionList.update(sessionItems,id);document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item);components(data.components||[]);runs(data.runs||[]);anchor.focus();},item=>{message(item);media.published(item);if(item.role==='assistant')void refreshGutterRuns();void stats.refresh(true);anchor.published(item);});}
+async function open(id,routeMode='push',focusKind='existing_session',focusWatch=watchFocus()){try{anchor.reset();progress.open(id);notifications.clearTools();$('runs').replaceChildren();closeGutterOverlays();gutterRuns.clear();++sessionGeneration;session=id;stats.open(id);media.open(id);activity.disconnect();closeChatElementFullView();resetReads();session=id;const url=new URL(location.href);url.searchParams.set('session_id',id);if(url.href!==location.href)history[routeMode==='replace'?'replaceState':'pushState']({},'',url);controls.open(id).catch(error=>{if(id===session)note(error.message);});const focusGeneration=sessionGeneration;await client.open(id,data=>{readThrough=data.session.read_through_seq||0;const sessionAgentId=data.session.agent_id||'shared_default';$('chat-input-row').title='Conversation agent: '+sessionAgentId;$('sessions').value=id;sessionList.update(sessionItems,id);document.dispatchEvent(new Event('v3:session-open'));$('chat-messages-inner').replaceChildren();for(const item of data.messages)message(item);components(data.components||[]);runs(data.runs||[]);anchor.focus();},item=>{message(item);media.published(item);if(item.role==='assistant')void refreshGutterRuns();void stats.refresh(true);anchor.published(item);});if(session===id&&focusGeneration===sessionGeneration&&focusWatch.unchanged()&&shouldFocusComposer(focusKind))$('chat-input').focus({preventScroll:true});}finally{focusWatch.stop();}}
 async function cancel(id){progress.note('Stopping…');try{await client.cancel(id,{client_request_id:keyId('cancel:'+id)});}finally{await refresh();}}
-function runs(items){anchor.updateRuns(items.filter(run=>run.session_id===session||!run.session_id));progress.update(items);void stats.refresh();controls.updateRuns(items.filter(run=>run.session_id===session||!run.session_id));activityRuns=items.filter(run=>run.session_id===session||!run.session_id);rememberRuns(activityRuns);if(session)paintActivity();$('runs').replaceChildren();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!getState().shutoff||submitting||!!media?.uploading;
+function runs(items){anchor.updateRuns(items.filter(run=>run.session_id===session||!run.session_id));progress.update(items);void stats.refresh();controls.updateRuns(items.filter(run=>run.session_id===session||!run.session_id));activityRuns=items.filter(run=>run.session_id===session||!run.session_id);rememberRuns(activityRuns);if(session)paintActivity();$('runs').replaceChildren();notifications.clearTools();const relevant=items.filter(run=>run.session_id===session||!run.session_id);const active=relevant.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));$('chat-input-row').dataset.runStatus=active?.status||relevant[0]?.status||'Ready';$('chat-stop-btn').hidden=!active||$('chat-stop-btn').dataset.configEnabled==='false';$('chat-stop-btn').dataset.run=active?.id||'';$('chat-stop-btn').style.display=$('chat-stop-btn').hidden?'none':'';$('chat-send').disabled=!!active||!!getState().shutoff||submitting||!!media?.uploading;
 const continuing=!active&&!media?.count&&!$('chat-input').value.trim()&&$('chat-continue-btn').dataset.configEnabled!=='false';
 $('chat-continue-btn').hidden=!continuing;$('chat-continue-btn').style.display=continuing?'':'none';
 $('chat-continue-btn').disabled=!!getState().shutoff||submitting;
@@ -115,37 +120,39 @@ $('chat-continue-btn').disabled=!!getState().shutoff||submitting;
 // Approval and recovery cards retain their explicit decisions.
 for(const run of relevant){if(run.status==='completed'||(!run.uncertain&&['queued','running','waiting_gate'].includes(run.status)))continue;const card=document.createElement('section');card.className='run-card';const title=document.createElement('strong');title.textContent=run.status+(run.error?' — '+run.error:'');card.append(title);
 if(run.pending && run.status==='waiting_approval'){
-  const p=run.pending;card.classList.add('approval-pill');title.remove();
-  const heading=document.createElement('div');heading.className='approval-heading';
-  const label=document.createElement('span');label.textContent='Need approval:';
-  const pre=document.createElement('pre');pre.id='approval-details-'+p.id;pre.hidden=!expandedApprovals.has(p.id);pre.textContent=JSON.stringify(p.arguments,null,2);
-  const toggle=button(p.name,()=>{pre.hidden=!pre.hidden;if(pre.hidden)expandedApprovals.delete(p.id);else expandedApprovals.add(p.id);toggle.setAttribute('aria-expanded',String(!pre.hidden));});
-  toggle.className='approval-tool';toggle.setAttribute('aria-expanded',String(!pre.hidden));toggle.setAttribute('aria-controls',pre.id);toggle.title='Show tool call details';
-  heading.append(label,toggle);card.append(heading,pre);
-  const actions=document.createElement('div');actions.className='approval-actions';
-  for(const decision of ['approve','deny']){const action=button(decision==='approve'?'Approve':'Deny',async()=>{await client.decide(p.id,{decision,client_request_id:keyId('approval:'+p.id+':'+decision)});await refresh();});action.className='approval-chip approval-'+decision;actions.append(action);}
-  if(active?.id===run.id){const action=button('Cancel run',()=>cancel(run.id));action.className='approval-chip';actions.append(action);}
-  card.append(actions);
+  const p=run.pending;
+  notifications.showTool({approval:p,run,active,expanded:expandedApprovals,decide:async decision=>{await client.decide(p.id,{decision,client_request_id:keyId('approval:'+p.id+':'+decision)});await refresh();},cancel:()=>cancel(run.id)});
+  continue;
 }
 if(run.uncertain || run.status==='recovery'){const text=document.createElement('p');text.textContent='The previous action may have completed. Verify its outcome before retrying.';const output=document.createElement('textarea');output.placeholder='Known result to accept';output.setAttribute('aria-label','Known action result');card.append(text,output);for(const decision of ['accept','retry','abandon'])card.append(button({accept:'Accept known result',retry:'Authorize retry',abandon:'Abandon run'}[decision],async()=>{await client.recover(run.id,{decision,output:output.value,client_request_id:keyId('recovery:'+run.id+':'+decision+':'+output.value)});await refresh();}));}
-if(!run.uncertain && ['paused','stopped','failed'].includes(run.status))card.append(button('Resume run',async()=>{await client.resume(run.id,{client_request_id:crypto.randomUUID()});await refresh();}));if(active?.id===run.id&&!card.classList.contains('approval-pill'))card.append(button('Cancel run',()=>cancel(run.id)));$('runs').append(card);}}
+if(!run.uncertain && ['paused','stopped','failed'].includes(run.status))card.append(button('Resume run',async()=>{await client.resume(run.id,{client_request_id:crypto.randomUUID()});await refresh();}));if(active?.id===run.id)card.append(button('Cancel run',()=>cancel(run.id)));$('runs').append(card);}}
 $('sessions').onchange=guard(()=>open($('sessions').value));
 async function ensureSession(title='New conversation'){
   if(session)return session;
   if(creatingSession)return creatingSession;
   const epoch=sessionGeneration;
   creatingSession=(async()=>{
-    const requestKey='session:'+getAgentId()+':'+title;
-    const item=await client.create({title:title.slice(0,60),agent_id:getAgentId(),client_request_id:keyId(requestKey)});
-    forgetKey(requestKey);
-    if(epoch!==sessionGeneration)throw Error('Conversation changed; repeat the action in the selected conversation.');
-    await sessions();
-    if(epoch!==sessionGeneration)throw Error('Conversation changed; repeat the action.');
-    await open(item.id);return item.id;
+    const focusWatch=watchFocus();
+    try {
+      const requestKey='session:'+getAgentId()+':'+title;
+      const item=await client.create({title:title.slice(0,60),agent_id:getAgentId(),client_request_id:keyId(requestKey)});
+      forgetKey(requestKey);
+      if(epoch!==sessionGeneration)throw Error('Conversation changed; repeat the action in the selected conversation.');
+      await sessions();
+      if(epoch!==sessionGeneration)throw Error('Conversation changed; repeat the action.');
+      await open(item.id,'push','new_session',focusWatch);return item.id;
+    } finally {focusWatch.stop();}
   })().finally(()=>{creatingSession=null;});
   return creatingSession;
 }
-$('new').onclick=guard(async()=>{const item=await client.create({title:'New conversation',agent_id:getAgentId(),client_request_id:crypto.randomUUID()});await sessions();await open(item.id);});
+$('new').onclick=guard(async()=>{
+  const focusWatch=watchFocus();
+  try{
+    const item=await client.create({title:'New conversation',agent_id:getAgentId(),client_request_id:crypto.randomUUID()});
+    await sessions();
+    await open(item.id,'push','new_session',focusWatch);
+  }finally{focusWatch.stop();}
+});
 async function submit(text,clearInput=false){
   if((!text&&!media.count)||submitting||getState().shutoff||$('chat-send').disabled)return;
   const origin=session,epoch=sessionGeneration,draft=$('chat-input').value;
@@ -167,9 +174,9 @@ $('chat-continue-btn').onclick=guard(()=>submit('Continue'));
 $('chat-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!$('chat-send').disabled)$('composer').requestSubmit();}};
 $('chat-stop-btn').onclick=guard(()=>cancel($('chat-stop-btn').dataset.run));
 
-  function disconnect(){anchor.reset();progress.reset();closeGutterOverlays();gutterRuns.clear();stats.disconnect();media.disconnect();controls.disconnect();activity.disconnect();closeChatElementFullView();window.speechSynthesis?.cancel();resetReads();client.disconnect();}
+  function disconnect(){anchor.reset();progress.reset();notifications.clearTools();$('runs').replaceChildren();closeGutterOverlays();gutterRuns.clear();stats.disconnect();media.disconnect();controls.disconnect();activity.disconnect();closeChatElementFullView();window.speechSynthesis?.cancel();resetReads();client.disconnect();}
   function destroy(){
-    disconnect();anchor.destroy();progress.destroy();clearInterval(gutterClock);stats.destroy();media.destroy();controls.destroy();sessionList.destroy();dropdown.destroy();readAbort.abort();chatClearanceObserver.disconnect();
+    disconnect();notifications.destroy();anchor.destroy();progress.destroy();clearInterval(gutterClock);stats.destroy();media.destroy();controls.destroy();sessionList.destroy();dropdown.destroy();readAbort.abort();chatClearanceObserver.disconnect();
     $('sessions').onchange=null;$('new').onclick=null;$('composer').onsubmit=null;
     $('chat-input').onkeydown=null;$('chat-stop-btn').onclick=null;$('chat-continue-btn').onclick=null;
   }

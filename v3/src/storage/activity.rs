@@ -1,5 +1,6 @@
 //! Read-only private projection. Public chat is never hydrated from this journal.
 use super::*;
+use std::collections::{HashMap, HashSet};
 fn boundary(row: &SqliteRow) -> String {
     row.get::<Option<String>,_>("boundary_item_id").unwrap_or_else(||format!("user:{}",row.get::<String,_>("run_id")))
 }
@@ -42,6 +43,35 @@ impl Store {
         }
         Ok(None)
     }
+    /// Count model-issued tool calls in this user's sessions for one agent.
+    /// Session ownership stays with the user store; the catalog receives counts,
+    /// never encrypted interaction content or another user's activity.
+    pub async fn tool_call_counts(&self, agent_id: &str) -> Result<HashMap<String, u64>> {
+        let sessions = sqlx::query("SELECT value FROM docs WHERE key LIKE 'session:%'")
+            .fetch_all(&self.pool).await?;
+        let mut ids = HashSet::new();
+        for row in sessions {
+            let session = self.unseal(&row.get::<Vec<u8>, _>("value"))?;
+            if session["agent_id"].as_str().unwrap_or("shared_default") == agent_id {
+                if let Some(id) = session["id"].as_str() { ids.insert(id.to_owned()); }
+            }
+        }
+        if ids.is_empty() { return Ok(HashMap::new()); }
+        let rows = sqlx::query(
+            "SELECT session_id,item FROM interactions WHERE step LIKE 'model:%' ORDER BY seq")
+            .fetch_all(&self.pool).await?;
+        let mut counts = HashMap::new();
+        for row in rows {
+            if !ids.contains(row.get::<&str, _>("session_id")) { continue; }
+            let item = self.unseal(&row.get::<Vec<u8>, _>("item"))?;
+            if item["type"] == "function_call" {
+                if let Some(name) = item["name"].as_str() {
+                    *counts.entry(name.to_owned()).or_insert(0) += 1;
+                }
+            }
+        }
+        Ok(counts)
+    }
     pub async fn private_activity(&self,sid:&str,after:i64)->Result<Value> {
         let mut tx=self.pool.begin().await?;
         let rows=sqlx::query("SELECT i.seq,i.run_id,i.item,i.created_at,b.boundary_item_id FROM interactions i LEFT JOIN activity_boundaries b ON b.interaction_seq=i.seq WHERE i.session_id=? AND i.seq>? ORDER BY i.seq LIMIT 201")
@@ -66,6 +96,26 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn counts_recorded_calls_for_only_the_selected_agent() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(root.path()).await.unwrap();
+        for (sid, agent) in [("first", "shared_default"), ("second", "other")] {
+            store.put(&format!("session:{sid}"),
+                &json!({"id":sid,"agent_id":agent,"status":"active","created_at":1}))
+                .await.unwrap();
+        }
+        let mut tx = store.pool.begin().await.unwrap();
+        let call = json!({"type":"function_call","call_id":"c1","name":"file_read","arguments":"{}"});
+        store.insert_interaction(&mut tx, "first", "r1", "model:1:0", &call).await.unwrap();
+        store.insert_interaction(&mut tx, "first", "r1", "model:1:0", &call).await.unwrap();
+        store.insert_interaction(&mut tx, "first", "r1", "model:1:1",
+            &json!({"type":"message","content":"done"})).await.unwrap();
+        store.insert_interaction(&mut tx, "second", "r2", "model:1:0", &call).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(store.tool_call_counts("shared_default").await.unwrap().get("file_read"), Some(&1));
+        assert_eq!(store.tool_call_counts("other").await.unwrap().get("file_read"), Some(&1));
+    }
     #[tokio::test]
     async fn boundaries_split_at_promotion_and_retries_keep_original_anchor() {
         let root=tempfile::tempdir().unwrap();let store=Store::open(root.path()).await.unwrap();

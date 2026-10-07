@@ -619,6 +619,25 @@ print("SEEDED" if result["baseline_commit"] else "FAILED")
         self.assertTrue(result["truncated"])
         self.assertLessEqual(len(result["output"].splitlines()), 10000)
 
+    async def test_decision_candidates_return_bounded_names_without_contents(self):
+        base = worker.workspace_path(self.session)
+        folder = base / "candidates"
+        folder.mkdir()
+        for index in range(35):
+            (folder / f"{index:02}.rs").write_text("secret content")
+        (folder / "linked").symlink_to(folder / "00.rs")
+        first = await self.run_tool("decision_candidates", {"path": str(folder)})
+        self.assertEqual(first["status"], "success")
+        self.assertEqual(len(first["output"]), 32)
+        self.assertEqual(first["output"][0], {"name": "00.rs", "kind": "file"})
+        self.assertEqual(first["next_offset"], 32)
+        self.assertNotIn("secret content", str(first))
+        second = await self.run_tool("decision_candidates",
+                                     {"path": str(folder), "offset": first["next_offset"]})
+        self.assertEqual(len(second["output"]), 4)
+        self.assertEqual(second["output"][-1], {"name": "linked", "kind": "other"})
+        self.assertIsNone(second["next_offset"])
+
     async def test_control_lock_released_while_file_operation_runs(self):
         started, release = threading.Event(), threading.Event()
         original = worker.file_operation

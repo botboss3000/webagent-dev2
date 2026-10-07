@@ -304,7 +304,7 @@ fn policy_default() -> Value {
     for schema in tools::core_mode::schemas().into_iter()
         .chain(tools::core_search::schemas()).chain(tools::core_compaction::schemas())
         .chain(tools::core_recall::schemas()).chain(tools::core_self_edit::schemas())
-        .chain(tools::core_task::schemas()) {
+        .chain(tools::core_task::schemas()).chain(tools::core_tool_search::schemas()).chain(tools::core_decision::schemas()).chain(tools::core_directory_decision::schemas()) {
         let name=schema["name"].as_str().unwrap();
         policy["rules"][name]=json!(if tools::is_read(name){"allow"}else{"require_approval"});
     }
@@ -420,6 +420,10 @@ async fn effective_policy(app: &App, sid: &str) -> Result<(Value, u64)> {
         .get("policy")
         .await?
         .unwrap_or_else(policy_default);
+    // New Base discovery is available by default; an explicit saved denial wins.
+    if policy["rules"].get("search_tools").is_none() {
+        policy["rules"]["search_tools"]=json!("allow");
+    }
     let mode = session_mode(app, sid).await?;
     if mode["mode"] == "read_only" {
         for schema in tools::schemas() {
@@ -491,7 +495,7 @@ impl App {
                     entry_id:account_catalog::platform_id(&previous.roster_id,&previous.entry.id)};
                 let pin=self.store.pin_platform_source(self.store.current_user_id(),&source).await?;
                 if pin.entry.transport!=candidate.transport {return Err(anyhow!("Adopted platform transport changed"));}
-                let capability=match plan.role {model_selection::ModelRole::ImageIn=>"image_in",model_selection::ModelRole::ImageOut=>"image_out",model_selection::ModelRole::Voice=>"voice",_=>"text"};
+                let capability=match plan.role {model_selection::ModelRole::ImageIn=>"image_in",model_selection::ModelRole::ImageOut=>"image_out",model_selection::ModelRole::Voice=>"voice",model_selection::ModelRole::Decision=>"decision",_=>"text"};
                 if !pin.entry.capabilities.contains(capability) {return Err(anyhow!("Published model lacks role capability"));}
                 candidate.upstream_model=pin.entry.upstream_model.clone();candidate.platform=Some(pin);
             } else if !self.store.live_access(self.store.current_user_id(),&plan.agent_id).await?.model_allowed(&candidate.upstream_model) {

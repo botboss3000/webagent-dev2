@@ -25,8 +25,8 @@ fs2 = "0.4"
 tower-http = { version = "0.6", features = ["fs", "limit", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

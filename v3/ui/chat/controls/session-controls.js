@@ -1,16 +1,15 @@
 // V2 cycle/picker presentation with session-scoped, revision-fenced Rust writes.
-export function mountSessionControls({root,client,guard,note,ensureSession,onState=()=>{}}) {
+export function mountSessionControls({root,client,guard,note,ensureSession,notifications,onState=()=>{}}) {
   const $=id=>root.querySelector('#'+id);
   const mode=$('chat-mode-btn'), model=$('chat-model-changer');
   const abort=new AbortController();
-  let session='',generation=0,state=null,busy=false,inflight=null,active=null,confirmation=null;
+  let session='',generation=0,state=null,busy=false,inflight=null,active=null;
   const picker=document.createElement('div');
   picker.className='chat-skill-picker chat-model-list-panel v3-chat-model-list';
   picker.hidden=true;picker.setAttribute('role','dialog');picker.setAttribute('aria-label','Conversation model');
   document.body.append(picker);
   model.setAttribute('aria-haspopup','dialog');model.setAttribute('aria-expanded','false');
   function close(){picker.hidden=true;model.setAttribute('aria-expanded','false');}
-  function cancelConfirmation(){confirmation?.close();confirmation?.remove();confirmation=null;}
   function paint(){
     const modes=state?.execution_modes||[];
     const definition=modes.find(item=>item.id===state?.mode.execution_mode);
@@ -40,27 +39,6 @@ export function mountSessionControls({root,client,guard,note,ensureSession,onSta
     await load();
     if(!state)throw Error('Conversation controls are not ready');
   }
-  function confirmWrite(next){
-    cancelConfirmation();
-    return new Promise(resolve=>{
-      const dialog=document.createElement('dialog');
-      dialog.className='v3-mode-confirm';dialog.setAttribute('aria-label','Confirm execution mode');
-      const title=document.createElement('h3');title.textContent='Switch to '+next.label+'?';
-      const text=document.createElement('p');text.textContent='This conversation will allow write-capable tools. Existing tool policies and approvals still apply.';
-      const actions=document.createElement('div');
-      for(const [label,value] of [['Cancel',false],['Confirm write-capable mode',true]]){
-        const button=document.createElement('button');button.type='button';button.textContent=label;
-        button.onclick=()=>{dialog.close(value?'confirm':'cancel');};actions.append(button);
-      }
-      dialog.append(title,text,actions);document.body.append(dialog);confirmation=dialog;
-      dialog.addEventListener('close',()=>{const accepted=dialog.returnValue==='confirm';dialog.remove();if(confirmation===dialog)confirmation=null;resolve(accepted);},{once:true});
-      const restoreComposer=document.activeElement===$('chat-input');
-      dialog.addEventListener('close',()=>{
-        if(restoreComposer && $('chat-input')?.isConnected)$('chat-input').focus({preventScroll:true});
-      },{once:true});
-      dialog.showModal();actions.firstChild.focus();
-    });
-  }
   async function cycleMode(){
     if(busy)return;
     await ready();
@@ -70,12 +48,13 @@ export function mountSessionControls({root,client,guard,note,ensureSession,onSta
     const index=modes.findIndex(item=>item.id===snapshot.execution_mode);
     const next=modes[(index+1)%modes.length];
     const widening=snapshot.mode==='read_only'&&next.permission_policy==='write';
-    if(widening&&!await confirmWrite(next))return;
+    const confirmationRequired=widening&&(next.id!=='auto'||state.confirm_auto_mode!==false);
+    if(confirmationRequired&&!await notifications.confirmMode(next.label))return;
     if(sid!==session||epoch!==generation)return;
     state={...state,mode:{...snapshot,execution_mode:next.id,mode:next.permission_policy}};
     busy=true;paint();
     try{
-      await client.mode(sid,{mode:next.id,expected_revision:snapshot.revision,confirm_write:widening});
+      await client.mode(sid,{mode:next.id,expected_revision:snapshot.revision,confirm_write:confirmationRequired});
       if(sid===session&&epoch===generation)note('Execution mode changed to '+next.label);
     }finally{if(sid===session&&epoch===generation){busy=false;await load();paint();}}
   }
@@ -129,9 +108,9 @@ export function mountSessionControls({root,client,guard,note,ensureSession,onSta
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!picker.hidden){close();model.focus();}},{signal:abort.signal});
   window.addEventListener('resize',close,{signal:abort.signal});
   return {
-    async open(id){generation++;session=id;state=null;inflight=null;active=null;busy=false;close();cancelConfirmation();paint();await load();},
+    async open(id){generation++;session=id;state=null;inflight=null;active=null;busy=false;close();notifications.cancelMode();paint();await load();},
     updateRuns(items){active=items.find(run=>['queued','running','waiting_approval','waiting_gate'].includes(run.status));paint();if(session&&!busy)void load().catch(error=>note(error.message));},
-    disconnect(){generation++;session='';state=null;inflight=null;active=null;busy=false;close();cancelConfirmation();paint();},
+    disconnect(){generation++;session='';state=null;inflight=null;active=null;busy=false;close();notifications.cancelMode();paint();},
     destroy(){this.disconnect();abort.abort();picker.remove();}
   };
 }

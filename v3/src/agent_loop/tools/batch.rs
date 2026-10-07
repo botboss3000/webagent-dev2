@@ -49,7 +49,8 @@ pub(super) async fn execute_parallel_batch(
     let sid=run["session_id"].as_str().ok_or_else(||anyhow!("Missing session"))?.to_owned();
     let agent_id=run["agent_id"].as_str().unwrap_or("shared_default").to_owned();
     let (policy,mode_revision,visibility,ability_state)=ability_controls(app,&sid).await?;
-    let read_only=session_mode(app,&sid).await?["mode"]=="read_only";
+    let execution_mode=session_mode(app,&sid).await?;
+    let read_only=execution_mode["mode"]=="read_only";
     let saved_index=run["call_index"].as_u64().unwrap_or(0);
     let mut accepted=0usize;
     for (idx,model_call) in calls.iter().enumerate() {
@@ -73,7 +74,7 @@ pub(super) async fn execute_parallel_batch(
             "access_revision":access.revision.clone(),"state":"requested","decision":null});
         let mode=config.tools.parallel_modes.get(&name).map(String::as_str).unwrap_or("reject");
         let effective=live_tool_decision(app,access,&name,&policy,&visibility,
-            &ability_state,&run["loaded_abilities"],read_only);
+            &ability_state,&run["loaded_abilities"],read_only).for_execution_mode(&execution_mode);
         let result=if mode!="concurrent" {
             Some(denied("Tool rejects parallel execution; request it in a separate turn"))
         } else if accepted>=config.tools.max_parallel_calls {
@@ -92,6 +93,19 @@ pub(super) async fn execute_parallel_batch(
 
     // APPROVAL-IDENTITY: only the matching call consumes the administrator's
     // decision. Other calls retain distinct IDs, revisions, and arguments.
+    // A mode switch revokes the old approval and queues this run. Convert only
+    // calls that had not dispatched; their other policy revisions are checked
+    // again below before any worker sees them.
+    if execution_mode["mode"]=="write" && execution_mode["execution_mode"]=="auto" {
+        for item in run["batch"].as_array_mut().unwrap() {
+            if item["state"]!="waiting" {continue;}
+            item["state"]=json!("requested");
+            item["pending"]["id"]=json!(uuid());
+            item["pending"]["mode_revision"]=json!(mode_revision);
+            item["pending"]["decision"]=Value::Null;
+        }
+        run["pending"]=Value::Null;
+    }
     if !run["pending"].is_null() {
         let approval_id=run["pending"]["id"].clone();
         for idx in 0..calls.len() {
@@ -131,7 +145,7 @@ pub(super) async fn execute_parallel_batch(
         let name=pending["name"].as_str().unwrap_or("").to_owned();
         let args=pending["arguments"].clone();
         let effective=live_tool_decision(app,&fresh_access,&name,&policy,&visibility,
-            &ability_state,&run["loaded_abilities"],read_only);
+            &ability_state,&run["loaded_abilities"],read_only).for_execution_mode(&execution_mode);
         let fresh=pending["policy_version"]==policy["version"]
             && pending["access_revision"]==json!(fresh_access.revision.clone())
             && pending["mode_revision"]==json!(mode_revision)

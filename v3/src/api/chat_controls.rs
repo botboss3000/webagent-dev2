@@ -48,10 +48,11 @@ async fn choices(app: &App, sid: &str) -> Result<Value, ApiError> {
         })
         .collect();
     let mode = session_mode(app, sid).await?;
+    let chat=crate::execution_modes::chat_preferences(&app.chat_ui_config_path).await?;
     let attachment_limits = uploads::limits(app).await?;
     Ok(
         json!({"composer":{"attachments":true,"voice":true,"attachment_limits":{"max_file_size_mb":attachment_limits.max_file_size_mb,"max_per_message":attachment_limits.max_per_message}},"agent_id":agent,"model":saved,"models":models,"mode":{"mode":mode["mode"],"execution_mode":mode["execution_mode"],"revision":mode["revision"]},
-        "execution_modes":modes}),
+        "execution_modes":modes,"confirm_auto_mode":chat.confirm_auto_mode}),
     )
 }
 pub(crate) async fn chat_usage_get(State(app):State<App>,Path(sid):Path<String>)->Api{
@@ -347,5 +348,52 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(session_mode(&app, &sid).await.unwrap()["mode"], "write");
+    }
+
+    #[tokio::test]
+    async fn chat_json_controls_new_session_default_and_auto_confirmation() {
+        let (root, mut app) = fixture().await;
+        app.chat_ui_config_path = root.path().join("config/chat.json");
+        std::fs::create_dir_all(app.chat_ui_config_path.parent().unwrap()).unwrap();
+        let write = |default: &str, confirm: bool| std::fs::write(
+            &app.chat_ui_config_path,
+            json!({"chat_common":{"execution_mode":{
+                "default_mode":default,"confirm_auto_mode":confirm}}}).to_string(),
+        ).unwrap();
+        write("auto", false);
+        let Json(session) = create_session(State(app.clone()),
+            Json(json!({"client_request_id":uuid()}))).await.unwrap();
+        let sid = session["id"].as_str().unwrap().to_owned();
+        let mode = session_mode(&app, &sid).await.unwrap();
+        assert_eq!(mode["execution_mode"], "auto");
+        assert_eq!(mode["mode"], "write");
+        let Json(controls) = chat_controls_get(State(app.clone()),Path(sid.clone())).await.unwrap();
+        assert_eq!(controls["confirm_auto_mode"], false);
+        session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"plan".into(),expected_revision:Some(0),confirm_write:false,
+        })).await.unwrap();
+        assert!(session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"auto".into(),expected_revision:None,confirm_write:false,
+        })).await.is_err());
+        session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"auto".into(),expected_revision:Some(1),confirm_write:false,
+        })).await.unwrap();
+        session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"plan".into(),expected_revision:Some(2),confirm_write:false,
+        })).await.unwrap();
+        write("ask", true);
+        let Json(controls) = chat_controls_get(State(app.clone()),Path(sid.clone())).await.unwrap();
+        assert_eq!(controls["confirm_auto_mode"], true);
+        assert!(session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"auto".into(),expected_revision:Some(3),confirm_write:false,
+        })).await.is_err());
+        session_mode_set(State(app.clone()),Path(sid.clone()),Json(SessionModeBody {
+            mode:"auto".into(),expected_revision:Some(3),confirm_write:true,
+        })).await.unwrap();
+        let Json(next) = create_session(State(app.clone()),
+            Json(json!({"client_request_id":uuid()}))).await.unwrap();
+        let next_mode = session_mode(&app,next["id"].as_str().unwrap()).await.unwrap();
+        assert_eq!(next_mode["execution_mode"], "ask");
+        assert_eq!(next_mode["mode"], "read_only");
     }
 }

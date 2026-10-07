@@ -52,7 +52,7 @@ pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->R
     let work_finish=name=="v3_build_work_finish";
     let policy_name=if work_finish {"v3_build_work"} else {name};
     let work_permission=live_tool_decision(&scoped,&access,policy_name,
-        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission;
+        &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").for_execution_mode(&mode).permission;
     if !access.principal.administrator() || !access.admitted() || work_permission==access::Permission::Deny {
         bail!("Host build authority revoked");
     }
@@ -60,7 +60,7 @@ pub(crate) async fn host_fingerprint(app:&App,sid:&str,run_id:&str,name:&str)->R
     // retains that authorization while the scoped policy fingerprint stays valid.
     if work_finish {
         let deployment_permission=live_tool_decision(&scoped,&access,"v3_worker_submit",
-            &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").permission;
+            &policy,&visibility,&state,&run["loaded_abilities"],mode["mode"]=="read_only").for_execution_mode(&mode).permission;
         if deployment_permission==access::Permission::Deny
             || (deployment_permission==access::Permission::Ask && work_permission!=access::Permission::Ask) {
             bail!("Automatic V3 deployment is not authorized");

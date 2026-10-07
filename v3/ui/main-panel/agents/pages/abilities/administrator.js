@@ -42,19 +42,24 @@ export function buildAdministratorControls({ ability, data, repository, request,
     control.value = cautions.includes(current) ? current : 'cautious';
   }
   control.disabled = !enabled;
-  const save = node('button', 'ac-btn ac-btn-sm', 'Save settings'); save.type = 'button'; save.disabled = !enabled;
-  save.onclick = async () => {
-    if (!enabled || save.disabled) return;
-    save.disabled = true; control.disabled = true; status.textContent = 'Saving agent settings…';
+  const savedValue = ability.id === 'git_control' ? control.checked : control.value;
+  // Persist each setting change while its current revision is still on screen.
+  control.onchange = async () => {
+    if (!enabled || control.disabled) return;
+    control.disabled = true;
+    status.textContent = 'Saving agent settings…';
     try {
       await request(scope + '/abilities/' + encodeURIComponent(ability.id) + '/settings', 'PUT',
         { expected_revision: data.revision, settings: { [key]: ability.id === 'git_control' ? control.checked : control.value } });
       await rerender({ administratorNotice: 'Agent settings saved.' });
     } catch (error) {
-      status.textContent = message(error); save.disabled = !enabled; control.disabled = !enabled;
+      if (ability.id === 'git_control') control.checked = savedValue;
+      else control.value = savedValue;
+      status.textContent = message(error);
+      control.disabled = false;
     }
   };
-  panel.append(row(title, control), row('Save agent configuration', save));
+  panel.append(row(title, control));
   if (ability.id !== 'git_control') return panel;
   panel.append(node('p', 'ac-hint', 'Repository connections belong to this agent. Only the connection owner can edit it. Tokens are write-only.'));
   if (repository?.load_failed || !repository || repository.agent_id !== data.agent_id) {

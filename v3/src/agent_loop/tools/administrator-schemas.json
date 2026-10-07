@@ -364,7 +364,7 @@
   {
     "type": "function",
     "name": "terminal_open",
-    "description": "Open a persistent isolated workspace PTY; approval required",
+    "description": "Open a persistent isolated workspace PTY; policy-gated",
     "parameters": {
       "type": "object",
       "properties": {
@@ -412,7 +412,7 @@
   {
     "type": "function",
     "name": "terminal_send",
-    "description": "Send text or a named key after a fresh observation; approval required",
+    "description": "Send text or a named key after a fresh observation; policy-gated",
     "parameters": {
       "type": "object",
       "properties": {
@@ -481,7 +481,7 @@
   {
     "type": "function",
     "name": "terminal_close",
-    "description": "Close a PTY and its descendant processes; approval required",
+    "description": "Close a PTY and its descendant processes; policy-gated",
     "parameters": {
       "type": "object",
       "properties": {
@@ -509,7 +509,7 @@
   {
     "type": "function",
     "name": "v3_workspace_action",
-    "description": "Perform a fixed source operation with a durable request receipt; approval required",
+    "description": "Perform a fixed source operation with a durable request receipt; policy-gated",
     "parameters": {
       "type": "object",
       "properties": {
@@ -583,7 +583,7 @@
   {
     "type": "function",
     "name": "v3_cargo_task",
-    "description": "Run fixed locked Cargo verification on a reviewed isolated snapshot; approval required",
+    "description": "Run fixed locked Cargo verification on a reviewed isolated snapshot; policy-gated",
     "parameters": {
       "type": "object",
       "properties": {

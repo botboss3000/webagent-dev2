@@ -680,6 +680,7 @@ impl Catalog {
         let supported = Self::supported(name);
         let mut available = false;
         let mut visible = false;
+        let selected=Self::contains_id(loaded,&crate::tools::core_tool_search::marker(name));
         for ability in &self.abilities {
             if !Self::executable(ability) || !ability.tools.iter().any(|tool| tool == name) {
                 continue;
@@ -688,10 +689,12 @@ impl Catalog {
             visible |= supported
                 && match Self::tool_mode(visibility, name) {
                     "off" => false,
-                    "discoverable" => Self::contains_id(loaded, &ability.id),
+                    "discoverable" => Self::contains_id(loaded, &ability.id) || selected,
                     _ => true,
                 }
-                && Self::available(ability, visibility, state);
+                && (Self::available(ability, visibility, state)
+                    || (selected && !Self::is_off(visibility,&ability.id)
+                        && !Self::suppressed(state,&ability.id)));
         }
         (available, visible)
     }
@@ -1608,17 +1611,34 @@ mod tests {
     }
 
     #[test]
+    fn selected_tool_markers_preserve_off_and_suppressed_controls() {
+        let root=Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities");
+        let catalog=Catalog::load(&root).unwrap();
+        let loaded=json!(["tool:file_read"]);
+        let mut visibility=json!({"visibility":{"codebase_admin":"discoverable"},
+            "tool_modes":{"file_read":"discoverable"}});
+        let state=json!({"active":[],"suppressed":[]});
+        assert!(catalog.tool_available("file_read",&visibility,&state,&loaded));
+        visibility["visibility"]["codebase_admin"]=json!("off");
+        assert!(!catalog.tool_available("file_read",&visibility,&state,&loaded));
+        visibility["visibility"]["codebase_admin"]=json!("discoverable");
+        assert!(!catalog.tool_available("file_read",&visibility,&json!({"active":[],"suppressed":["codebase_admin"]}),&loaded));
+        assert_eq!(state,json!({"active":[],"suppressed":[]}));
+    }
+
+    #[test]
     fn production_seed_manifest_loads() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/abilities");
         let catalog = Catalog::load(&root).unwrap();
-        assert_eq!(catalog.abilities.len(), 82);
-        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 10);
-        assert_eq!(catalog.abilities.iter().filter(|entry| entry.readiness == Readiness::Ready).count(), 9);
+        assert_eq!(catalog.abilities.len(), 83);
+        assert_eq!(catalog.abilities.iter().filter(|entry| Catalog::executable(entry)).count(), 11);
+        assert_eq!(catalog.abilities.iter().filter(|entry| entry.readiness == Readiness::Ready).count(), 10);
         assert_eq!(catalog.abilities.iter().filter(|entry| entry.readiness == Readiness::Partial).count(), 1);
+        assert!(catalog.abilities.iter().any(|entry| entry.id == "decision" && entry.tools == ["decide_with_jev", "score_directory_with_jev"]));
         let base = catalog.abilities.iter().find(|entry| entry.id == "base").unwrap();
         let mut installed: Vec<_> = base.tools.iter().filter(|name| Catalog::supported(name)).map(String::as_str).collect();
         installed.sort();
-        assert_eq!(installed, ["calculate", "compact_context", "edit_own_prompt", "get_date", "get_task_checkpoint", "get_time", "list_skills", "load_skill", "present_chat_component", "present_plan", "read_attachment", "read_own_prompt", "recall_compacted", "remove_own_skill", "save_own_skill", "search_this_session", "session_search", "set_execution_mode", "similar_sessions", "update_task_checkpoint"]);
+        assert_eq!(installed, ["calculate", "compact_context", "edit_own_prompt", "get_date", "get_task_checkpoint", "get_time", "list_skills", "load_skill", "present_chat_component", "present_plan", "read_attachment", "read_own_prompt", "recall_compacted", "remove_own_skill", "save_own_skill", "search_this_session", "search_tools", "session_search", "set_execution_mode", "similar_sessions", "update_task_checkpoint"]);
         assert!(catalog.abilities.iter().any(|ability| ability.id == "codebase_admin"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "diagnostics"));
         assert!(catalog.abilities.iter().any(|ability| ability.id == "terminal_control"));

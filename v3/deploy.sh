@@ -35,6 +35,14 @@ case "${1:-build}" in
     mkdir -p v3/data/config
     if [ ! -f v3/data/config/chat.json ]; then
       cp data/config/chat_ui.json v3/data/config/chat.json
+      python3 - <<'PYCONFIG'
+import json
+from pathlib import Path
+path = Path('v3/data/config/chat.json')
+config = json.loads(path.read_text())
+config['chat_common']['execution_mode'] = {'default_mode': 'auto', 'confirm_auto_mode': False}
+path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n')
+PYCONFIG
     fi
     # Seed the documented admin storage policy once, never overwrite edits.
     if [ ! -f v3/data/config/app-settings.json ]; then

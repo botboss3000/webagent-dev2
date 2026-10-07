@@ -78,7 +78,9 @@ pub(crate) async fn create_session(State(app): State<App>, Json(body): Json<Valu
                 (key("session", &id), value),
                 (key("session_mode", &id), {
                     let config=crate::execution_modes::config(&app.store,agent_id).await?;
-                    let entry=crate::execution_modes::resolve(&config,config["default_execution_mode"].as_str().unwrap()).map_err(ApiError::from)?;
+                    let chat=crate::execution_modes::chat_preferences(&app.chat_ui_config_path).await?;
+                    let default=chat.default_mode.as_deref().unwrap_or(config["default_execution_mode"].as_str().unwrap());
+                    let entry=crate::execution_modes::resolve(&config,default).map_err(|_|bad("Unknown chat default execution mode"))?;
                     json!({"mode":entry["permission_policy"],"execution_mode":entry["id"],"revision":0})
                 }),
                 (receipt_key, json!({"digest":digest(&body),"result":result})),
@@ -544,9 +546,13 @@ async fn change_session_mode_authorized(
         Some(crate::execution_modes::resolve(&config,mode).map_err(|_|bad("Unknown execution mode"))?)
     };
     let target_policy=named.as_ref().map(|m|m["permission_policy"].as_str().unwrap()).unwrap_or(mode);
-    // Browser widening needs deliberate confirmation; model calls retain their approval gate.
+    // A chat.json setting may waive only the browser confirmation for Auto.
+    // Revision fencing and model-call authorization remain mandatory.
+    let confirm_auto=if tool.is_none() && named.as_ref().is_some_and(|entry|entry["id"]=="auto") {
+        crate::execution_modes::chat_preferences(&app.chat_ui_config_path).await?.confirm_auto_mode
+    } else { true };
     if tool.is_none() && current["mode"]=="read_only" && target_policy=="write"
-        && (!human_confirmed || expected_revision.is_none()) {
+        && (expected_revision.is_none() || (confirm_auto && !human_confirmed)) {
         return Err(ApiError(StatusCode::FORBIDDEN,"Confirm write-capable mode with the current revision".into()));
     }
     let receipt = tool.map(|call| {

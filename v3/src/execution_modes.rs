@@ -1,10 +1,40 @@
 //! Named execution modes layer guidance over the existing capability boundary.
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
+use std::path::Path;
+
+pub struct ChatModePreferences {
+    pub default_mode: Option<String>,
+    pub confirm_auto_mode: bool,
+}
+
+pub async fn chat_preferences(path: &Path) -> Result<ChatModePreferences> {
+    let fallback = ChatModePreferences { default_mode: None, confirm_auto_mode: true };
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(fallback),
+        Err(error) => return Err(error.into()),
+    };
+    let document: Value = serde_json::from_slice(&bytes)?;
+    let settings = &document["chat_common"]["execution_mode"];
+    if settings.is_null() { return Ok(fallback); }
+    let object = settings.as_object().ok_or_else(||anyhow::anyhow!("Invalid chat execution mode configuration"))?;
+    let default_mode = match object.get("default_mode") {
+        None => None,
+        Some(Value::String(mode)) if !mode.is_empty() && mode.len() <= 32 => Some(mode.clone()),
+        _ => bail!("Invalid chat default execution mode"),
+    };
+    let confirm_auto_mode = match object.get("confirm_auto_mode") {
+        None => true,
+        Some(Value::Bool(value)) => *value,
+        _ => bail!("Invalid Auto mode confirmation setting"),
+    };
+    Ok(ChatModePreferences { default_mode, confirm_auto_mode })
+}
 pub fn defaults() -> Value { json!([
  {"id":"ask","label":"Ask","description":"Investigate, answer, and recommend without making changes.","permission_policy":"read_only","prompt":"Investigate with read-only tools and deliver an answer or proposal. Do not execute changes.","builtin":true},
  {"id":"plan","label":"Plan","description":"Investigate deeply and deliver an execution-ready plan.","permission_policy":"read_only","prompt":"Research with read-only tools and deliver an execution-ready plan. Maintain Plan Overview and canonical Task Progress; implementation stays pending. Do not execute changes.","builtin":true},
- {"id":"auto","label":"Auto","description":"Work autonomously with write-capable permissions.","permission_policy":"write","prompt":"Execute the requested work autonomously within all existing permission and approval boundaries. Verify results before claiming completion.","builtin":true}
+ {"id":"auto","label":"Auto","description":"Work autonomously with write-capable permissions; tool calls do not ask for approval.","permission_policy":"write","prompt":"Execute the requested work autonomously. Denied tools and access limits still apply; tool calls that would otherwise ask for approval proceed automatically. Verify results before claiming completion.","builtin":true}
 ]) }
 pub fn normalize(raw: &Value) -> Result<Value> {
  let mut modes=defaults().as_array().unwrap().clone();

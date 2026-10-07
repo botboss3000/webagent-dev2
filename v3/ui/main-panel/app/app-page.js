@@ -1,8 +1,8 @@
 'use strict';
 import { renderAgentDirectory } from '../agents/pages/catalog.js';
 import { mountUsers, mountPolicies, mountPageAccess } from './users/users.js';
+import { mountAppSettings } from './settings.js';
 import { mountAppModels } from './models/models.js';
-import { mountBuilds } from './builds.js';
 import { wirePageTabDrag } from '../../shared/page-tabs.js';
 import { startView as startFiles, stopView as stopFiles, resetExplorerForRemount } from './explorer-view.js';
 
@@ -10,7 +10,6 @@ export async function start(mount) {
   const generation=(mount._appGeneration||0)+1;mount._appGeneration=generation;
   mount._appModelsDispose?.();mount._appModelsDispose=null;
   mount._appFilesDispose?.();mount._appFilesDispose=null;
-  mount._appBuildsDispose?.();mount._appBuildsDispose=null;
   const active=()=>mount._appGeneration===generation;
   mount.replaceChildren();
   if (!mount._identityListener) {
@@ -29,6 +28,7 @@ export async function start(mount) {
   if (!Array.isArray(pages) || pages.some(page => !/^[a-z][a-z0-9-]*$/.test(page.id) || !page.title)) throw Error('Invalid App catalog');
   mount.innerHTML = '<div class="app-page-framework"><div class="agent-card active agent-card-tabs-only"><div class="agent-card-tabs-wrap"><div class="agent-card-tabs" role="tablist" aria-label="App pages"></div></div></div><div class="agent-detail-panel"><div class="agent-detail-content"><div id="app-config-page" class="agent-detail-body"></div><section id="app-files-page" class="agent-detail-body" hidden><h2>File Manager</h2><p role="status">Checking V3 File Manager…</p></section></div></div></div>';
   for(const page of pages) if(!mount.querySelector('#'+page.panelId)){const panel=document.createElement('section');panel.id=page.panelId;panel.className='agent-detail-body';panel.hidden=true;mount.querySelector('.agent-detail-content').append(panel);}
+  if(me?.is_admin){mountAppSettings(mount.querySelector('#app-settings-page'));}
   if(me?.is_admin){await mountUsers(mount.querySelector('#app-users-page'));if(!active())return;await mountPolicies(mount.querySelector('#app-user-policies-page'));if(!active())return;await mountPageAccess(mount.querySelector('#app-page-access-page'));if(!active())return;const dispose=await mountAppModels(mount.querySelector('#app-models-page'));if(!active()){dispose();return;}mount._appModelsDispose=dispose;}
   const strip = mount.querySelector('[role=tablist]');
   const all = [{id:'config',title:'Config',panelId:'app-config-page'}, ...pages];
@@ -41,8 +41,6 @@ export async function start(mount) {
   if (!all.some(p=>p.id===selected)) selected='config';
   const tabs = new Map();
   let filesMounted=false, filesLoading=false, filesPending=false;
-  let buildsDispose=null;
-  mount._appBuildsDispose=()=>{buildsDispose?.();buildsDispose=null;};
   mount._appFilesDispose=()=>{ stopFiles(); resetExplorerForRemount(); window.__v3FilesCsrf=''; window.__v3FilesAdmin=false; };
   async function ensureFiles() {
     if (filesMounted) { await startFiles(); return; }
@@ -98,8 +96,6 @@ export async function start(mount) {
     }
     if (route) { const url=new URL(location.href);url.searchParams.set('appView',id);if(url.href!==location.href)history.pushState({},'',url); }
     if (id==='files') void ensureFiles(); else if (filesMounted) stopFiles();
-    if (id==='builds' && !buildsDispose) buildsDispose=mountBuilds(mount.querySelector('#app-builds-page'));
-    else if (id!=='builds' && buildsDispose) {buildsDispose();buildsDispose=null;}
   }
   function sync() {
     for (const id of order) strip.append(tabs.get(id));
